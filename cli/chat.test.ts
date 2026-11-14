@@ -221,3 +221,13 @@ test('shutdown interrupts polling without another read or timeout notice', async
   assert.equal(result.sleeps.length, 1)
   assert.ok(!result.output.includes('Still working'))
 })
+
+
+test('polls and refreshes use a 30-entry tail while explicit history can read 50', async () => {
+  const reply = entry('reply', 'Done', 1)
+  const result = await chat(['1', 'Hello', '/r', '/m 50', '/q'], {
+    threads: [[], [], [reply], [reply], [reply]]
+  })
+  assert.deepEqual(result.sleeps, [3000, 3000])
+  assert.deepEqual(result.reads.map(read => read.limit), [10, 30, 30, 30, 50])
+})
