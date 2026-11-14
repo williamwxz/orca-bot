@@ -373,6 +373,8 @@ Bot Deck maps every HTTP 409 from `sendPrompt`, regardless of response wording,
 to code `server_bot` and preserves status 409. The worker's client then makes
 one backend send with the same nonce (see [server-api.md](server-api.md)).
 This is fallback after definite rejection, never replay after an unclear outcome.
+When backend fallback is not configured, the error says: "This bot runs on
+Grok Bot's server. Open the Grok Bot app and sign in, then retry."
 
 ## 5. Routines and workflow skills
 

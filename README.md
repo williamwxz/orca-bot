@@ -45,7 +45,8 @@ open in the Grok Bot app. The bot's computer view is not shown.
 - `src/worker.ts`: handlers for panel actions
 - `src/session.ts`: reads the signed-in desktop app's session
 - `src/connection.ts`: owns the connection route and refreshes it when needed
-- `src/gateway.ts`: shared HTTP transport and gateway/backend routing
+- `src/transport.ts`: shared HTTP transport, credential checks and backend headers
+- `src/gateway.ts`: gateway calls and gateway/backend routing
 - `src/server.ts`: backend roster, send and delete calls
 - `shared/model.ts`: data shapes and message wording used by both panel and worker
 

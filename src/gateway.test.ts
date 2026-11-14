@@ -135,7 +135,7 @@ test('sendPrompt 409 is a definite server-bot rejection regardless of its body',
     const f = fake([response])
     await assert.rejects(f.client.sendMessage('example-bot', 'Hello'), (e: any) => {
       assert.equal(e.code, 'server_bot')
-      assert.equal(e.message, "This bot runs on Grok Bot's server and requires a backend connection.")
+      assert.equal(e.message, "This bot runs on Grok Bot's server. Open the Grok Bot app and sign in, then retry.")
       assert.equal(e.status, 409)
       assert.equal(e.method, 'sendPrompt')
       assert.equal(e.delivery, undefined)

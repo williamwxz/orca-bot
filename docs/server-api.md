@@ -93,7 +93,7 @@ five auth/context headers listed in
 `x-cursor-team-id` when selected. The server answers. Unary JSON therefore works
 for at least this method without the additional optional headers below; it
 remains untested for every other method documented here. Header construction
-is also visible in `ensureSandbox` in `src/gateway.ts`.
+is shared by `ensureSandbox` and the backend calls in `src/transport.ts`.
 
 The examples here use protobuf-JSON field names for readability: camelCase;
 64-bit integers as decimal strings; bytes as base64; enum numbers shown where
