@@ -5,9 +5,9 @@ import {
   scheduleMessage,
   type Bot,
   type Entry
-} from '../shared/model'
-import type { Requests } from '../src/protocol'
-import { renderMarkdown } from './markdown'
+} from '../shared/model.ts'
+import type { Requests } from '../src/protocol.ts'
+import { renderMarkdown } from './markdown.ts'
 
 type FrameApi = {
   locale: string

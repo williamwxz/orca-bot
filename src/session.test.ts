@@ -1,7 +1,7 @@
 import { createCipheriv, pbkdf2Sync } from 'node:crypto'
 import { basename } from 'node:path'
 import { assert, test } from 'orca/testing'
-import { decryptSafeStorage, readDesktopSession, type SessionErrorCode } from './session'
+import { decryptSafeStorage, readDesktopSession, type SessionErrorCode } from './session.ts'
 
 const PASSWORD = 'fixture-password-only'
 const TOKEN = 'fixture-access-secret'

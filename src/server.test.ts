@@ -1,6 +1,6 @@
 import { assert, test } from 'orca/testing'
-import { deleteServerBot, listServerBots, sendServerMessage } from './server'
-import { request } from './gateway'
+import { deleteServerBot, listServerBots, sendServerMessage } from './server.ts'
+import { request } from './gateway.ts'
 
 const account = { key: 'fixture-account', accessToken: 'fixture-access-token', teamId: '42' }
 const input = { agentId: 'fixture-runtime-id', messageId: 'fixture-nonce', text: 'Hello' }

@@ -1,7 +1,7 @@
 // Owns the gateway route: where it comes from, when it is replaced, and whose account it
 // belongs to. The gateway client asks here for a route on every call and never keeps its own.
-import { ensureSandbox, type Account, type Dependencies, type Route } from './gateway'
-import { readDesktopSession, type DesktopSession, type SessionDependencies } from './session'
+import { ensureSandbox, type Account, type Dependencies, type Route } from './gateway.ts'
+import { readDesktopSession, type DesktopSession, type SessionDependencies } from './session.ts'
 
 export type ConnectionDeps = {
   readSession?: (deps?: SessionDependencies) => Promise<DesktopSession>

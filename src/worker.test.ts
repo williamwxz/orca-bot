@@ -2,9 +2,9 @@
 // keychain or reaches a real Grok Bot account. Always go through mount() below: it is the
 // only place that builds a worker, and it never uses the real defaults.
 import { assert, mockHost, mountWorker, test } from 'orca/testing'
-import { removeRoutineMessage, routinesFrom, scheduleMessage, toEntry } from '../shared/model'
-import type { DesktopSession } from './session'
-import { register } from './worker'
+import { removeRoutineMessage, routinesFrom, scheduleMessage, toEntry } from '../shared/model.ts'
+import type { DesktopSession } from './session.ts'
+import { register } from './worker.ts'
 
 const BOT = '11111111-2222-4333-8444-555555555555'
 const GATEWAY = 'https://box.example.cursorvm.com'

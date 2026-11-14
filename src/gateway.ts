@@ -1,14 +1,14 @@
 import { randomUUID } from 'node:crypto'
-import { listServerBots, sendServerMessage, deleteServerBot } from './server'
-import { toBot, toEntry } from '../shared/model'
+import { listServerBots, sendServerMessage, deleteServerBot } from './server.ts'
+import { toBot, toEntry } from '../shared/model.ts'
 import {
   assertAllowedCredentialUrl, normalizeHeaders, backendHeaders, request, READ_METHODS,
   type Account, type Dependencies
-} from './transport'
+} from './transport.ts'
 export {
   assertAllowedCredentialUrl, normalizeHeaders, backendHeaders, request, redact,
   type Account, type Dependencies
-} from './transport'
+} from './transport.ts'
 
 
 export type Route = { gatewayUrl: string; gatewayToken: string; headers: Record<string, string> }
