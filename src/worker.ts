@@ -1,104 +1,97 @@
-// The plugin's worker: every panel action becomes one gbot call against the real Grok Bot.
+// The plugin's worker: every panel action becomes one call to the real Grok Bot, made by our
+// own client (src/gateway.ts) with the session of the signed-in Grok Bot desktop app
+// (src/session.ts). Nothing is stored: the session lives in this process's memory only.
 import type { OrcaWorkerApi } from 'orca/worker'
-import { toBot, toEntry, type Bot } from '../shared/model'
-import { findGbot, GbotError, runGbot } from './gbot'
+import type { Bot } from '../shared/model'
+import { createConnection, type ConnectionDeps } from './connection'
+import { createGatewayClient } from './gateway'
 
-// Grok Bot ids are UUIDs. Refusing anything else keeps a name (which could match a group, or
-// start with "-") from ever reaching gbot as a target.
+// Grok Bot ids are UUIDs. Refusing anything else keeps unexpected text out of request bodies.
 const ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
+function invalid(message: string): Error {
+  return Object.assign(new Error(message), { code: 'invalid_params' })
+}
+
 function requireId(id: unknown): string {
-  if (typeof id !== 'string' || !ID.test(id)) throw new GbotError('invalid_params', 'Unknown bot id')
+  if (typeof id !== 'string' || !ID.test(id)) throw invalid('Unknown bot id')
   return id
 }
 
 function requireText(value: unknown, label: string, max: number): string {
-  if (typeof value !== 'string' || !value.trim()) {
-    throw new GbotError('invalid_params', `${label} is required`)
-  }
-  if (value.length > max) throw new GbotError('invalid_params', `${label} is too long`)
+  if (typeof value !== 'string' || !value.trim()) throw invalid(`${label} is required`)
+  if (value.length > max) throw invalid(`${label} is too long`)
   return value
 }
 
-export default function activate(orca: OrcaWorkerApi): void {
-  async function gbot(args: string[], signal?: AbortSignal, timeoutMs?: number): Promise<unknown> {
-    const configured = await orca.settings.get('gbotPath')
-    const bin = findGbot(typeof configured === 'string' ? configured : '')
-    return runGbot(bin, args, { signal, timeoutMs })
-  }
-
-  async function listBots(signal?: AbortSignal): Promise<Bot[]> {
-    const raw = await gbot(['bots', 'list', '--json'], signal)
-    return (Array.isArray(raw) ? raw : []).map(toBot).filter((bot) => bot.id)
-  }
+/** Registers the panel's handlers. Tests pass fakes for the session and the network. */
+export function register(orca: OrcaWorkerApi, deps: ConnectionDeps = {}): void {
+  const connection = createConnection(deps)
+  const client = createGatewayClient({
+    ...deps.network,
+    getRoute: connection.getRoute,
+    refreshRoute: connection.refreshRoute
+  })
 
   const handle = orca.panels.handle as (
     name: string,
-    handler: (input: any, context: { signal: AbortSignal }) => Promise<unknown>
+    handler: (input: any) => Promise<unknown>
   ) => void
 
-  handle('status', async (_input, { signal }) => {
+  // Also the panel's Refresh: it re-reads the desktop app, so a newly signed-in account is used.
+  handle('status', async () => {
+    connection.reset()
     try {
-      const raw = (await gbot(['doctor', '--json'], signal)) as {
-        gatewayAuthPresent?: boolean
-        grokBotAppSession?: { usable?: boolean }
-      } | null
-      const signedIn = raw?.grokBotAppSession?.usable === true || raw?.gatewayAuthPresent === true
-      return signedIn
-        ? { ok: true, message: '' }
-        : { ok: false, message: 'Open the Grok Bot desktop app and sign in, then retry.' }
+      await connection.getRoute()
+      return { ok: true, message: '' }
     } catch (error) {
-      return { ok: false, message: error instanceof Error ? error.message : String(error) }
+      return { ok: false, message: error instanceof Error ? error.message : 'Could not connect' }
     }
   })
 
-  handle('bots.list', (_input, { signal }) => listBots(signal))
+  handle('bots.list', () => client.listBots())
 
-  handle('bots.create', async ({ name, instructions }, { signal }) => {
-    const args = ['bots', 'create', '--json', `--name=${requireText(name, 'Name', 80)}`]
-    if (typeof instructions === 'string' && instructions.trim()) {
-      args.push(`--description=${requireText(instructions, 'Instructions', 8000)}`)
+  handle('bots.create', async ({ name, instructions }): Promise<Bot[]> => {
+    await client.createBot({
+      name: requireText(name, 'Name', 80),
+      instructions:
+        typeof instructions === 'string' && instructions.trim()
+          ? requireText(instructions, 'Instructions', 8000)
+          : ''
+    })
+    return client.listBots()
+  })
+
+  handle('bots.update', async ({ id, name, instructions, hidden }): Promise<Bot[]> => {
+    if (typeof instructions === 'string' && instructions.length > 8000) {
+      throw invalid('Instructions are too long')
     }
-    await gbot(args, signal)
-    return listBots(signal)
+    await client.updateBot(requireId(id), {
+      name: name === undefined ? undefined : requireText(name, 'Name', 80),
+      instructions: typeof instructions === 'string' ? instructions : undefined,
+      hidden: typeof hidden === 'boolean' ? hidden : undefined
+    })
+    return client.listBots()
   })
 
-  handle('bots.update', async ({ id, name, instructions, hidden }, { signal }) => {
-    const args = ['bots', 'update', '--json']
-    if (name !== undefined) args.push(`--name=${requireText(name, 'Name', 80)}`)
-    if (typeof instructions === 'string') {
-      if (instructions.length > 8000) throw new GbotError('invalid_params', 'Instructions are too long')
-      args.push(`--description=${instructions}`)
-    }
-    if (typeof hidden === 'boolean') args.push(`--hidden=${hidden ? 'on' : 'off'}`)
-    args.push(requireId(id))
-    await gbot(args, signal)
-    return listBots(signal)
+  handle('bots.delete', async ({ id }): Promise<Bot[]> => {
+    await client.deleteBot(requireId(id))
+    return client.listBots()
   })
 
-  handle('bots.delete', async ({ id }, { signal }) => {
-    await gbot(['bots', 'delete', '--json', requireId(id)], signal)
-    return listBots(signal)
-  })
+  handle('thread.read', ({ id, limit }) =>
+    client.readThread(requireId(id), Number.isInteger(limit) ? limit : 60)
+  )
 
-  handle('thread.read', async ({ id, limit }, { signal }) => {
-    const count = Math.min(200, Math.max(1, Number.isInteger(limit) ? limit : 60))
-    const raw = (await gbot(
-      ['thread', '--json', '--no-history', `--limit=${count}`, requireId(id)],
-      signal
-    )) as { transcript?: { entries?: unknown[] } } | null
-    return (raw?.transcript?.entries ?? []).map(toEntry).filter((entry) => entry.id)
-  })
-
-  handle('message.send', async ({ id, text }, { signal }) => {
-    // `--` ends gbot's options, so a message that starts with "-" is still just text.
-    await gbot(
-      ['send', '--json', '--no-history', requireId(id), '--', requireText(text, 'Message', 16000)],
-      signal,
-      60_000
-    )
+  handle('message.send', async ({ id, text }) => {
+    // Never resent here: a send whose outcome is unclear fails with "check before trying again".
+    await client.sendMessage(requireId(id), requireText(text, 'Message', 16000))
     return { sent: true }
   })
 
   orca.log('Bot Deck worker ready')
+}
+
+export default function activate(orca: OrcaWorkerApi): void {
+  register(orca)
 }

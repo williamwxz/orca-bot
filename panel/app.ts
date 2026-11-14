@@ -605,9 +605,8 @@ function showSetup(message: string): void {
   $('empty').replaceChildren(
     el('h2', {}, 'Connect to Grok Bot'),
     el('p', {}, message),
-    el('p', { class: 'muted' }, 'Bot Deck drives Grok Bot through the gbot command line tool, which uses the Grok Bot desktop app you are signed in to. To set it up:'),
-    el('pre', {}, 'npm install --global grok-bot-cli'),
-    el('p', { class: 'muted' }, 'Then open the Grok Bot desktop app, sign in, and press Retry. If gbot is installed somewhere unusual, set its path in this plugin’s settings.'),
+    el('p', { class: 'muted' }, 'Bot Deck uses the Grok Bot desktop app you are signed in to on this Mac. Open the Grok Bot app, sign in, then press Retry.'),
+    el('p', { class: 'muted' }, 'To do that it reads the app’s saved login from your keychain. macOS may ask you to allow this the first time. The login stays in memory and is only sent to Grok Bot.'),
     retry
   )
   app.dataset.view = 'empty'
