@@ -370,9 +370,9 @@ Do not automatically replay a send (`sendPrompt`, `gatewayCall`).
 returns HTTP 409 with the JSON `message`: "This Bot runs on the server, and this
 version of the app can't message it. Update the app and try again."
 Bot Deck maps every HTTP 409 from `sendPrompt`, regardless of response wording,
-to code `server_bot`, preserves status 409, and shows: "This bot runs on Grok Bot's
-server, which Bot Deck cannot reach yet. Use the Grok Bot app for this bot."
-This is a definite rejection: it is never retried or reported as an unknown outcome.
+to code `server_bot` and preserves status 409. The worker's client then makes
+one backend send with the same nonce (see [server-api.md](server-api.md)).
+This is fallback after definite rejection, never replay after an unclear outcome.
 
 ## 5. Routines and workflow skills
 
@@ -483,11 +483,10 @@ used on that path. Linux/Windows have no app-bundle version fallback
 
 ## Open questions
 
-- **Observed:** the Grok Bot app deletes server-managed ("temporal" harness)
-  bots through a separate server call before the gateway call, and reads routines
-  from the server. gbot knows neither server operation, and this client does not
-  implement them yet. Sending to these bots through `sendPrompt` is refused too
-  (HTTP 409, documented above). What are their request and response contracts?
+- **Observed:** server-managed ("temporal" harness) bots reject gateway sends
+  and may refuse gateway deletion. Bot Deck now uses the backend send/delete
+  contracts in [server-api.md](server-api.md); server transcripts and routines
+  remain outside this implementation.
 
 - **Observed:** `nextBeforeSeq` suggests the server pages backwards, but gbot
   never sends a matching request field. How should a client request older pages?

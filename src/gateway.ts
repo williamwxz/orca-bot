@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { listServerBots, sendServerMessage, deleteServerBot } from './server'
 import { toBot, toEntry } from '../shared/model'
 
 export type Route = { gatewayUrl: string; gatewayToken: string; headers: Record<string, string> }
@@ -38,7 +39,7 @@ export function normalizeHeaders(value: unknown): Record<string, string> {
     .map(([k, v]) => [k.toLowerCase(), String(v)])
   return Object.fromEntries(entries)
 }
-function redact(text: string, secrets: string[]) {
+export function redact(text: string, secrets: string[]) {
   for (const secret of secrets.filter(Boolean).sort((a, b) => b.length - a.length)) {
     text = text.split(secret).join('[redacted]').split(encodeURIComponent(secret)).join('[redacted]')
   }
@@ -47,7 +48,7 @@ function redact(text: string, secrets: string[]) {
 const TIMEOUT_MS = 30_000
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 const APP_VERSION_PATTERN = /^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?$/
-const READ_METHODS = new Set(['EnsureSandBox', 'listAgents', 'getAgentTranscriptTail'])
+const READ_METHODS = new Set(['EnsureSandBox', 'ListGrokBotAgents', 'listAgents', 'getAgentTranscriptTail'])
 
 async function readCapped(response: Response): Promise<string> {
   const reader = response.body?.getReader()
@@ -79,16 +80,25 @@ function parseBody(text: string, ok: boolean): any {
     return { raw: text }
   }
 }
+const CONNECT_CODES = new Set([
+  'unauthenticated', 'permission_denied', 'unimplemented', 'not_found',
+  'deadline_exceeded', 'unavailable', 'internal', 'unknown', 'data_loss'
+])
 function httpError(response: Response, data: any, method: string, secrets: string[]) {
   const detail = redact(String(data?.message ?? data?.error ?? data?.raw ?? response.statusText), secrets).slice(0, 300)
   return Object.assign(failure('gateway_error', `Request failed (${response.status})${detail ? `: ${detail}` : ''}`), {
     status: response.status,
+    connectCode: CONNECT_CODES.has(data?.code) ? data.code : undefined,
     method,
     hibernated: response.headers.get('x-anyrun-error-source') === 'anyrun-proxy' &&
       response.headers.get('x-anyrun-failure-reason') === 'pod_hibernated'
   })
 }
-async function request(url: string, headers: Record<string, string>, body: unknown, method: string, deps: Dependencies, secrets: string[]) {
+export async function request(
+  url: string, headers: Record<string, string>, body: unknown, method: string,
+  deps: Dependencies, secrets: string[], kind: 'backend' | 'gateway' = 'gateway'
+) {
+  assertAllowedCredentialUrl(url, kind)
   const controller = new AbortController()
   const start = deps.setTimeout ?? globalThis.setTimeout
   const stop = deps.clearTimeout ?? globalThis.clearTimeout
@@ -105,7 +115,7 @@ async function request(url: string, headers: Record<string, string>, body: unkno
     // The status establishes rejection even if the response body cannot be read.
     if (method === 'sendPrompt' && response.status === 409) {
       void response.body?.cancel().catch(() => {})
-      throw Object.assign(failure('server_bot', "This bot runs on Grok Bot's server, which Bot Deck cannot reach yet. Use the Grok Bot app for this bot."), {
+      throw Object.assign(failure('server_bot', "This bot runs on Grok Bot's server and requires a backend connection."), {
         status: response.status,
         method
       })
@@ -141,7 +151,7 @@ async function request(url: string, headers: Record<string, string>, body: unkno
     if (timer !== undefined) stop(timer)
   }
 }
-export async function ensureSandbox(account: Account, appVersion?: string, deps: Dependencies = {}): Promise<Route> {
+export function backendHeaders(account: Account, appVersion?: string): Record<string, string> {
   const headers: Record<string, string> = {
     'content-type': 'application/json',
     'connect-protocol-version': '1',
@@ -151,9 +161,13 @@ export async function ensureSandbox(account: Account, appVersion?: string, deps:
     'x-sand-box-namespace': 'prod'
   }
   if (account.teamId) headers['x-cursor-team-id'] = account.teamId
+  return headers
+}
+export async function ensureSandbox(account: Account, appVersion?: string, deps: Dependencies = {}): Promise<Route> {
+  const headers = backendHeaders(account, appVersion)
   const url = 'https://api2.cursor.sh/aiserver.v1.GrokBotService/EnsureSandBox'
   assertAllowedCredentialUrl(url, 'backend')
-  const r = record(await request(url, headers, {}, 'EnsureSandBox', deps, [account.accessToken]))
+  const r = record(await request(url, headers, {}, 'EnsureSandBox', deps, [account.accessToken], 'backend'))
   const gatewayUrl = r.gatewayUrl || r.gateway_url
   const gatewayToken = r.gatewayToken || r.gateway_token
   if (typeof gatewayUrl !== 'string' || !gatewayUrl || typeof gatewayToken !== 'string' || !gatewayToken) throw unsupported()
@@ -190,9 +204,23 @@ type ClientOptions = Dependencies & {
   getRoute: () => Route | Promise<Route>
   // The session provider checks account identity before and after refresh and discards changed accounts.
   refreshRoute: () => Route | Promise<Route>
+  getAccount?: () => { account: Account; appVersion?: string } | Promise<{ account: Account; appVersion?: string }>
   randomUUID?: () => string
 }
 export function createGatewayClient(options: ClientOptions) {
+  let harnesses = new Map<string, string>()
+  async function serverAccount() {
+    if (!options.getAccount) throw failure('not_signed_in', 'Open the Grok Bot app and sign in, then retry.')
+    return options.getAccount()
+  }
+  async function serverSend(agentId: string, text: string, messageId: string) {
+    const { account, appVersion } = await serverAccount()
+    return sendServerMessage(account, appVersion, { agentId, text, messageId }, options)
+  }
+  async function serverDelete(id: string) {
+    const { account, appVersion } = await serverAccount()
+    return deleteServerBot(account, appVersion, id, options)
+  }
   let refreshing: Promise<Route> | undefined
   async function call(method: string, body: unknown) {
     const route = await options.getRoute()
@@ -256,7 +284,18 @@ export function createGatewayClient(options: ClientOptions) {
   }
   return {
     async listBots() {
-      return (await agents()).map(toBot)
+      const rows = await agents()
+      let serverHarnesses = new Map<string, string>()
+      if (rows.some(row => row.harness == null) && options.getAccount) {
+        try {
+          const { account, appVersion } = await serverAccount()
+          const serverRows = await listServerBots(account, appVersion, options)
+          serverHarnesses = new Map(serverRows.map(row => [row.agentId, row.harness]))
+        } catch { /* Roster enrichment must not make gateway bots unavailable. */ }
+      }
+      const enriched = rows.map(row => ({ ...row, harness: row.harness ?? serverHarnesses.get(rowId(row)) }))
+      harnesses = new Map(enriched.map(row => [rowId(row), row.harness]))
+      return enriched.map(toBot)
     },
     async createBot(input: { name: string; instructions?: string }) {
       const r = await write('createAgent', {
@@ -285,8 +324,10 @@ export function createGatewayClient(options: ClientOptions) {
       })
     },
     async deleteBot(id: string) {
+      if (harnesses.get(id) === 'temporal') return serverDelete(id)
       const result = await write('deleteAgent', { id })
       if (Array.isArray(result?.refusedAgentIds) && result.refusedAgentIds.includes(id)) {
+        if (options.getAccount) return serverDelete(id)
         throw failure('delete_refused', 'Grok Bot refused to delete this bot. Delete it in the Grok Bot app.')
       }
       if (Array.isArray(result?.failedAgentIds) && result.failedAgentIds.includes(id)) {
@@ -300,7 +341,14 @@ export function createGatewayClient(options: ClientOptions) {
     async sendMessage(id: string, value: string): Promise<{ delivery: 'accepted' | 'unknown'; messageId?: string }> {
       const prompt = text(value, 'Message')
       const clientNonce = (options.randomUUID ?? randomUUID)()
-      const r = await write('sendPrompt', { agentId: id, prompt, clientNonce })
+      if (harnesses.get(id) === 'temporal') return serverSend(id, prompt, clientNonce)
+      let r: any
+      try {
+        r = await write('sendPrompt', { agentId: id, prompt, clientNonce })
+      } catch (error) {
+        if ((error as any).code === 'server_bot' && options.getAccount) return serverSend(id, prompt, clientNonce)
+        throw error
+      }
       if (typeof r?.messageId === 'string') return { delivery: 'accepted', messageId: r.messageId }
       if (r?.accepted === true) {
         try {

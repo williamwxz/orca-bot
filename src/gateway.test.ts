@@ -1,5 +1,6 @@
 import { assert, test } from 'orca/testing'
 import { assertAllowedCredentialUrl, createGatewayClient, ensureSandbox, gatewayCall, type Route } from './gateway'
+import { createConnection } from './connection'
 import { toBot, toEntry } from '../shared/model'
 
 const route: Route = { gatewayUrl: 'https://example.cursorvm.com', gatewayToken: 'fake-gateway-secret', headers: { 'x-anyrun-network-token': 'fake-network-secret' } }
@@ -134,7 +135,7 @@ test('sendPrompt 409 is a definite server-bot rejection regardless of its body',
     const f = fake([response])
     await assert.rejects(f.client.sendMessage('example-bot', 'Hello'), (e: any) => {
       assert.equal(e.code, 'server_bot')
-      assert.equal(e.message, "This bot runs on Grok Bot's server, which Bot Deck cannot reach yet. Use the Grok Bot app for this bot.")
+      assert.equal(e.message, "This bot runs on Grok Bot's server and requires a backend connection.")
       assert.equal(e.status, 409)
       assert.equal(e.method, 'sendPrompt')
       assert.equal(e.delivery, undefined)
@@ -296,4 +297,69 @@ test('a short credential header is stripped from error text, a short ordinary on
     assert.equal(error.message, 'Request failed (400): [redacted] is not valid in prod')
     return true
   })
+})
+
+
+test('getAccount shares the route load and reset and requires a signed-in account', async () => {
+  let reads = 0
+  let account: { key: string; accessToken: string } | undefined = { key: 'fixture-account', accessToken: 'fixture-token' }
+  const connection = createConnection({
+    readSession: async () => {
+      reads += 1
+      return { route, account, appVersion: '1.2.3' }
+    },
+    network: { fetch: fake([]).fetch }
+  })
+  const [, signedIn] = await Promise.all([connection.getRoute(), connection.getAccount()])
+  assert.deepEqual(signedIn, { account, appVersion: '1.2.3' })
+  assert.equal(reads, 1)
+  account = undefined
+  connection.reset()
+  await assert.rejects(connection.getAccount(), (e: any) => e.code === 'not_signed_in')
+  assert.equal(reads, 2)
+})
+
+test('routed backend timeout remains unknown and sends exactly once', async () => {
+  let expire: () => void = () => {}
+  const calls: string[] = []
+  const client = createGatewayClient({
+    getRoute: () => route,
+    refreshRoute: () => route,
+    getAccount: () => ({ account: { key: 'fixture-account', accessToken: 'fixture-token' } }),
+    fetch: (async (url: any) => {
+      calls.push(String(url))
+      if (String(url).endsWith('/listAgents')) return new Response(JSON.stringify({ agents: [{ id: 'example-bot', harness: 'temporal' }] }))
+      return new Promise(() => {})
+    }) as typeof globalThis.fetch,
+    setTimeout: ((fn: () => void) => { expire = fn; return 1 }) as any,
+    clearTimeout: (() => {}) as any
+  })
+  await client.listBots()
+  const pending = client.sendMessage('example-bot', 'Hello')
+  await new Promise(resolve => setTimeout(resolve, 0))
+  expire()
+  await assert.rejects(pending, (e: any) => e.code === 'outcome_unknown')
+  assert.equal(calls.filter(url => url.endsWith('/SendGrokBotUserMessage')).length, 1)
+  assert.ok(calls.every(url => !url.endsWith('/sendPrompt')))
+})
+
+test('reset supersedes a pending account load without retaining its credentials', async () => {
+  let release: (value: any) => void = () => {}
+  let reads = 0
+  const connection = createConnection({
+    readSession: () => {
+      reads += 1
+      if (reads === 1) return new Promise(resolve => { release = resolve })
+      return Promise.resolve({ route, account: { key: 'fixture-new', accessToken: 'fixture-new-token' } })
+    },
+    network: { fetch: fake([]).fetch }
+  })
+  const old = connection.getAccount()
+  const rejected = assert.rejects(old, (e: any) => e.code === 'superseded')
+  connection.reset()
+  const current = await connection.getAccount()
+  release({ route, account: { key: 'fixture-old', accessToken: 'fixture-old-token' } })
+  await rejected
+  assert.equal(current.account.key, 'fixture-new')
+  assert.equal((await connection.getAccount()).account.key, 'fixture-new')
 })

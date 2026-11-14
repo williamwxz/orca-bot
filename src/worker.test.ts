@@ -28,7 +28,7 @@ function fakeFetch(answer?: (call: Call) => Response | undefined) {
     if (call.url.endsWith('/api/listAgents')) {
       return json({
         agents: [
-          { id: BOT, name: 'Researcher', description: 'Find things', avatarColor: 'green' },
+          { id: BOT, harness: 'box', name: 'Researcher', description: 'Find things', avatarColor: 'green' },
           { id: 'group-1', name: 'Team', isGroup: true }
         ]
       })
@@ -47,6 +47,9 @@ function fakeFetch(answer?: (call: Call) => Response | undefined) {
         ]
       })
     }
+    if (call.url.endsWith('/ListGrokBotAgents')) return json({ agents: [] })
+    if (call.url.endsWith('/SendGrokBotUserMessage')) return json({ delivery: 2 })
+    if (call.url.endsWith('/DeleteGrokBotAgent')) return json({})
     if (call.url.endsWith('/api/sendPrompt')) return json({ accepted: true, messageId: 'm1' })
     return json({})
   }
@@ -82,6 +85,7 @@ test('lists bots and reads a thread in the shapes the panel draws', async () => 
       instructions: 'Find things',
       avatarShape: 'square',
       avatarColor: 'green',
+      serverRun: false,
       hidden: false
     }
   ])
@@ -121,19 +125,13 @@ test('create, update, delete and send make exactly the expected gateway calls', 
   await worker.deactivate()
 })
 
-test('refused and failed deletions reach the panel as errors without retry or refresh', async () => {
-  for (const [field, message] of [
-    ['refusedAgentIds', 'Grok Bot refused to delete this bot. Delete it in the Grok Bot app.'],
-    ['failedAgentIds', 'Grok Bot could not delete this bot. Try again, or delete it in the Grok Bot app.']
-  ]) {
-    const { worker, calls } = await mount({
-      answer: (call) => call.url.endsWith('/api/deleteAgent') ? json({ [field]: [BOT] }) : undefined
-    })
-    await assert.rejects(worker.request('bots.delete', { id: BOT }), (e: any) => e.message === message)
-    assert.equal(calls.length, 1)
-    assert.ok(calls[0].url.endsWith('/api/deleteAgent'))
-    await worker.deactivate()
-  }
+test('failed gateway deletion reaches the panel without retry or refresh', async () => {
+  const { worker, calls } = await mount({
+    answer: call => call.url.endsWith('/api/deleteAgent') ? json({ failedAgentIds: [BOT] }) : undefined
+  })
+  await assert.rejects(worker.request('bots.delete', { id: BOT }), /could not delete/)
+  assert.equal(calls.length, 1)
+  await worker.deactivate()
 })
 
 test('refuses bad input before any request is made', async () => {
@@ -146,16 +144,14 @@ test('refuses bad input before any request is made', async () => {
   await worker.deactivate()
 })
 
-test('server-bot send rejection reaches the panel without retry or refresh', async () => {
+test('gateway 409 falls over once with the same nonce', async () => {
   const { worker, calls } = await mount({
-    answer: (call) => call.url.endsWith('/api/sendPrompt')
-      ? json({ message: "This Bot runs on the server, and this version of the app can't message it. Update the app and try again." }, 409)
-      : undefined
+    answer: call => call.url.endsWith('/api/sendPrompt') ? json({}, 409) : undefined
   })
-  await assert.rejects(worker.request('message.send', { id: BOT, text: 'Hello' }), (e: any) =>
-    e.message === "This bot runs on Grok Bot's server, which Bot Deck cannot reach yet. Use the Grok Bot app for this bot.")
-  assert.equal(calls.length, 1)
-  assert.ok(calls[0].url.endsWith('/api/sendPrompt'))
+  assert.deepEqual(await worker.request('message.send', { id: BOT, text: 'Hello' }), { sent: true })
+  assert.equal(calls.length, 2)
+  assert.ok(calls[1].url.endsWith('/SendGrokBotUserMessage'))
+  assert.equal(calls[1].body.messageId, calls[0].body.clientNonce)
   await worker.deactivate()
 })
 
@@ -328,5 +324,110 @@ test('a slow load that Refresh has replaced cannot install its route', async () 
   await worker.request('bots.list')
   assert.ok(calls.length > 0)
   assert.ok(calls.every((call) => call.url.startsWith(GATEWAY)))
+  await worker.deactivate()
+})
+
+test('temporal bots send and delete through the backend without gateway writes', async () => {
+  const { worker, calls } = await mount({
+    answer: call => call.url.endsWith('/api/listAgents')
+      ? json({ agents: [{ id: BOT, harness: 'temporal' }] }) : undefined
+  })
+  const bots = await worker.request('bots.list') as any[]
+  assert.equal(bots[0].serverRun, true)
+  assert.deepEqual(await worker.request('message.send', { id: BOT, text: 'Hello' }), { sent: true })
+  await worker.request('bots.delete', { id: BOT })
+  assert.equal(calls.filter(call => call.url.endsWith('/SendGrokBotUserMessage')).length, 1)
+  assert.equal(calls.filter(call => call.url.endsWith('/DeleteGrokBotAgent')).length, 1)
+  assert.ok(calls.every(call => !/\/api\/(sendPrompt|deleteAgent)$/.test(call.url)))
+  await worker.deactivate()
+})
+
+test('box bots never use the backend', async () => {
+  const { worker, calls } = await mount()
+  await worker.request('bots.list')
+  await worker.request('message.send', { id: BOT, text: 'Hello' })
+  await worker.request('bots.delete', { id: BOT })
+  assert.ok(calls.every(call => call.url.startsWith(GATEWAY)))
+  await worker.deactivate()
+})
+
+test('refused gateway deletion falls over to the backend exactly once', async () => {
+  const { worker, calls } = await mount({
+    answer: call => call.url.endsWith('/api/deleteAgent') ? json({ refusedAgentIds: [BOT] }) : undefined
+  })
+  await worker.request('bots.delete', { id: BOT })
+  assert.deepEqual(calls.map(call => call.url.split('/').pop()), ['deleteAgent', 'DeleteGrokBotAgent', 'listAgents'])
+  assert.deepEqual(calls[1].body, { id: BOT })
+  await worker.deactivate()
+})
+
+test('missing harness is enriched once by runtime id without adding server-only bots', async () => {
+  const { worker, calls } = await mount({
+    answer: call => {
+      if (call.url.endsWith('/api/listAgents')) return json({ agents: [{ id: BOT }] })
+      if (call.url.endsWith('/ListGrokBotAgents')) return json({ agents: [
+        { agentId: BOT, id: 'fixture-record', harness: 'temporal' },
+        { agentId: 'fixture-server-only', id: 'fixture-other-record', harness: 'temporal' }
+      ] })
+      return undefined
+    }
+  })
+  const bots = await worker.request('bots.list') as any[]
+  assert.equal(bots.length, 1)
+  assert.equal(bots[0].serverRun, true)
+  await worker.request('message.send', { id: BOT, text: 'Hello' })
+  assert.deepEqual(calls.map(call => call.url.split('/').pop()), ['listAgents', 'ListGrokBotAgents', 'SendGrokBotUserMessage'])
+  await worker.deactivate()
+})
+
+test('failed backend roster leaves the gateway list usable', async () => {
+  const { worker } = await mount({
+    answer: call => {
+      if (call.url.endsWith('/api/listAgents')) return json({ agents: [{ id: BOT }] })
+      if (call.url.endsWith('/ListGrokBotAgents')) return json({ code: 'unimplemented' }, 501)
+      return undefined
+    }
+  })
+  const bots = await worker.request('bots.list') as any[]
+  assert.equal(bots.length, 1)
+  assert.equal(bots[0].serverRun, false)
+  await worker.deactivate()
+})
+
+test('backend account access with no account gives not_signed_in through mount', async () => {
+  const { worker, calls } = await mount({
+    session: async () => ({ route: ROUTE }),
+    answer: call => call.url.endsWith('/api/listAgents') ? json({ agents: [{ id: BOT, harness: 'temporal' }] }) : undefined
+  })
+  await worker.request('bots.list')
+  await assert.rejects(worker.request('message.send', { id: BOT, text: 'Hello' }), /Open the Grok Bot app and sign in/)
+  assert.equal(calls.length, 1)
+  await worker.deactivate()
+})
+
+test('every list replaces remembered harnesses', async () => {
+  let harness = 'temporal'
+  const { worker, calls } = await mount({
+    answer: call => call.url.endsWith('/api/listAgents') ? json({ agents: [{ id: BOT, harness }] }) : undefined
+  })
+  await worker.request('bots.list')
+  harness = 'box'
+  await worker.request('bots.list')
+  await worker.request('message.send', { id: BOT, text: 'Hello' })
+  assert.ok(calls.at(-1)?.url.endsWith('/api/sendPrompt'))
+  assert.ok(calls.every(call => call.url.startsWith(GATEWAY)))
+  await worker.deactivate()
+})
+
+test('a backend rejection after gateway fallback never triggers another attempt', async () => {
+  const { worker, calls } = await mount({
+    answer: call => {
+      if (call.url.endsWith('/api/sendPrompt')) return json({}, 409)
+      if (call.url.endsWith('/SendGrokBotUserMessage')) return json({ code: 'unavailable' }, 503)
+      return undefined
+    }
+  })
+  await assert.rejects(worker.request('message.send', { id: BOT, text: 'Hello' }), /outcome is unknown/)
+  assert.deepEqual(calls.map(call => call.url.split('/').pop()), ['sendPrompt', 'SendGrokBotUserMessage'])
   await worker.deactivate()
 })

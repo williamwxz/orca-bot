@@ -1,6 +1,6 @@
 // Owns the gateway route: where it comes from, when it is replaced, and whose account it
 // belongs to. The gateway client asks here for a route on every call and never keeps its own.
-import { ensureSandbox, type Dependencies, type Route } from './gateway'
+import { ensureSandbox, type Account, type Dependencies, type Route } from './gateway'
 import { readDesktopSession, type DesktopSession, type SessionDependencies } from './session'
 
 export type ConnectionDeps = {
@@ -9,7 +9,7 @@ export type ConnectionDeps = {
   network?: Dependencies
 }
 
-type Held = { route: Route; accountKey?: string }
+type Held = { route: Route; accountKey?: string; account?: Account; appVersion?: string }
 
 function failure(code: string, message: string): Error {
   return Object.assign(new Error(message), { code })
@@ -37,7 +37,7 @@ export function createConnection(deps: ConnectionDeps = {}) {
   async function acquire(useCachedRoute: boolean, expectedAccountKey?: string): Promise<Held> {
     const session = await readSession(expectedAccountKey ? { expectedAccountKey } : undefined)
     if (useCachedRoute && session.route) {
-      return { route: session.route, accountKey: session.account?.key }
+      return { route: session.route, accountKey: session.account?.key, account: session.account, appVersion: session.appVersion }
     }
     if (!session.account) {
       throw failure('not_signed_in', 'Open the Grok Bot app and sign in, then retry.')
@@ -45,7 +45,7 @@ export function createConnection(deps: ConnectionDeps = {}) {
     const route = await requestRoute(session.account, session.appVersion, deps.network)
     // The request took time. Keep the route only if the same account is still signed in.
     await readSession({ expectedAccountKey: session.account.key })
-    return { route, accountKey: session.account.key }
+    return { route, accountKey: session.account.key, account: session.account, appVersion: session.appVersion }
   }
 
   function start(useCachedRoute: boolean, expectedAccountKey?: string): Promise<Route> {
@@ -70,6 +70,12 @@ export function createConnection(deps: ConnectionDeps = {}) {
     getRoute(): Promise<Route> {
       if (held) return Promise.resolve(held.route)
       return pending ?? start(true)
+    },
+
+    async getAccount(): Promise<{ account: Account; appVersion?: string }> {
+      if (!held) await (pending ?? start(true))
+      if (!held?.account) throw failure('not_signed_in', 'Open the Grok Bot app and sign in, then retry.')
+      return { account: held.account, appVersion: held.appVersion }
     },
 
     /**

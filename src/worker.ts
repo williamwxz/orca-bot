@@ -30,6 +30,7 @@ export function register(orca: OrcaWorkerApi, deps: ConnectionDeps = {}): void {
   const client = createGatewayClient({
     ...deps.network,
     getRoute: connection.getRoute,
+    getAccount: connection.getAccount,
     refreshRoute: connection.refreshRoute
   })
 
