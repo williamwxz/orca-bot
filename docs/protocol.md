@@ -269,19 +269,19 @@ Resolve the target, then send:
 Default limit is 40. Clamp integer limit to 1–200. Response is passed through as
 `{target, transcript: response}`. Only `entries` is recognized as the transcript
 container (`getTranscriptTail`, `transcriptEntries`). **Observed** shapes below
-use invented values. Every entry has `seq` and `timestampMs`; the transcript has
+use invented values. Every entry has a string `id`, `seq`, and `timestampMs`; the transcript has
 `nextBeforeSeq` and `precedingTimestampMs` beside `entries`.
 
 ```json
 {
   "entries": [
-    {"seq":1,"timestampMs":1000,"kind":"message","role":"user","content":"Plan tomorrow","richText":"Plan tomorrow","isStreaming":false,"clientNonce":"example-nonce","requestId":"example-request"},
-    {"seq":2,"timestampMs":2000,"kind":"send-message","message":{"type":"text","content":"Here is a plan."}},
-    {"seq":3,"timestampMs":3000,"kind":"send-message","message":{"type":"widget","widget":{"prompt":"Choose a plan","options":[{"label":"Morning","value":"morning"}],"allowCustom":true}},"respondedValue":"morning"},
-    {"seq":4,"timestampMs":4000,"kind":"send-message","message":{"type":"user-form","formRequest":{}}},
-    {"seq":5,"timestampMs":5000,"kind":"send-message","message":{"type":"email-draft","draft":{}}},
-    {"seq":6,"timestampMs":6000,"kind":"send-message","message":{"type":"attachment","file_name":"plan.txt","url":"https://example.invalid/plan.txt","source_path":"example/plan.txt"}},
-    {"seq":7,"timestampMs":7000,"kind":"event","event":{"type":"automation-changed","action":"created","automationId":"example-routine","automationName":"Daily plan"}}
+    {"id":"t25s10","seq":1,"timestampMs":1000,"kind":"message","role":"user","content":"Plan tomorrow","richText":"Plan tomorrow","isStreaming":false,"clientNonce":"example-nonce","requestId":"example-request"},
+    {"id":"t25s11","seq":2,"timestampMs":2000,"kind":"send-message","message":{"type":"text","content":"Here is a plan."}},
+    {"id":"t25s12","seq":3,"timestampMs":3000,"kind":"send-message","message":{"type":"widget","widget":{"prompt":"Choose a plan","options":[{"label":"Morning","value":"morning"}],"allowCustom":true}},"respondedValue":"morning"},
+    {"id":"t25s13","seq":4,"timestampMs":4000,"kind":"send-message","message":{"type":"user-form","formRequest":{}}},
+    {"id":"t25s14","seq":5,"timestampMs":5000,"kind":"send-message","message":{"type":"email-draft","draft":{}}},
+    {"id":"t25s15","seq":6,"timestampMs":6000,"kind":"send-message","message":{"type":"attachment","file_name":"plan.txt","url":"https://example.invalid/plan.txt","source_path":"example/plan.txt"}},
+    {"id":"event-a1b2c3d4","seq":7,"timestampMs":7000,"kind":"event","event":{"type":"automation-changed","action":"created","automationId":"example-routine","automationName":"Daily plan"}}
   ],
   "nextBeforeSeq":1,
   "precedingTimestampMs":0
