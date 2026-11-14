@@ -3,8 +3,10 @@
 This describes the installed MIT-licensed `grok-bot-cli` 0.12.5 bundle at
 `/opt/homebrew/lib/node_modules/grok-bot-cli/dist/bin/gbot.mjs` (CLI entry point version string `version: "0.12.5"`). References below are identifiers in that file; line numbers refer
 to this installed build. The package README and CHANGELOG were also reviewed.
-Only source was read. No CLI, keychain operation, session file, or network request
-was executed. This is the client's observed contract, not a complete server schema.
+The original review read source only. No CLI, keychain operation, session file,
+or network request was executed for this document. Additions marked **observed**
+come from reviewer-reported real `gbot --json` output, not source inspection.
+This is not a complete server schema.
 All example account keys, ids, tokens and route hosts below are invented. Example
 responses marked **inferred** illustrate accepted shapes, not captured traffic.
 
@@ -169,7 +171,8 @@ Retain credential destination checks in a replacement client
 ## 4. Agent and message calls
 
 The JSON below is the **wire body**, not the CLI output wrapper. Response
-examples are **inferred** from fields consumed by the named functions. Unknown
+examples are **inferred** from fields consumed by the named functions unless
+marked **observed**. Unknown
 server fields should be preserved where the client passes raw responses through.
 The source does not establish a complete response schema.
 
@@ -206,11 +209,16 @@ Response accepts a direct agent or `{agent: agent}` and normalizes it:
 {"agent":{"id":"example-bot","name":"Planner","description":"Plan tasks","title":"Planning","avatarShape":"egg","avatarColor":"blue"}}
 ```
 
-Avatar strings are trimmed. Empty strings are allowed. Shapes: `blob`, `pebble`,
+On create, avatar strings are trimmed and empty strings are allowed. These are
+the CLI's accepted create values, not server response limits. Shapes: `blob`, `pebble`,
 `bean`, `egg`, `squircle`, `tablet`, `capsule`, `cylinder`, `hex`, `gem`, `crystal`,
 `wedge`, `shield`, `dome`, `arch`, `cloud`, `teardrop`, `leaf`. Colors: `black`,
 `brown`, `red`, `orange`, `yellow`, `green`, `cyan`, `blue`, `violet`, `magenta`,
 `gray` (`AVATAR_SHAPES`, `AVATAR_COLORS`, 49199–49231; `unwrapOne`).
+
+**Observed:** returned bots also use `heart`, `square`, and `sparkle`; many have
+no shape or color. Our client must accept any string or a missing value for
+either avatar field when reading.
 
 ### updateAgent
 
@@ -260,14 +268,28 @@ Resolve the target, then send:
 
 Default limit is 40. Clamp integer limit to 1–200. Response is passed through as
 `{target, transcript: response}`. Only `entries` is recognized as the transcript
-container (`getTranscriptTail`, `transcriptEntries`). Example:
+container (`getTranscriptTail`, `transcriptEntries`). **Observed** shapes below
+use invented values. Every entry has `seq` and `timestampMs`; the transcript has
+`nextBeforeSeq` and `precedingTimestampMs` beside `entries`.
 
 ```json
-{"entries":[{"id":"example-user-entry","kind":"user-message","prompt":"Plan tomorrow","clientNonce":"example-nonce"},{"id":"example-bot-entry","kind":"send-message","message":{"content":"Here is a plan."}}]}
+{
+  "entries": [
+    {"seq":1,"timestampMs":1000,"kind":"message","role":"user","content":"Plan tomorrow","richText":"Plan tomorrow","isStreaming":false,"clientNonce":"example-nonce","requestId":"example-request"},
+    {"seq":2,"timestampMs":2000,"kind":"send-message","message":{"type":"text","content":"Here is a plan."}},
+    {"seq":3,"timestampMs":3000,"kind":"send-message","message":{"type":"widget","widget":{"prompt":"Choose a plan","options":[{"label":"Morning","value":"morning"}],"allowCustom":true}},"respondedValue":"morning"},
+    {"seq":4,"timestampMs":4000,"kind":"send-message","message":{"type":"user-form","formRequest":{}}},
+    {"seq":5,"timestampMs":5000,"kind":"send-message","message":{"type":"email-draft","draft":{}}},
+    {"seq":6,"timestampMs":6000,"kind":"send-message","message":{"type":"attachment","file_name":"plan.txt","url":"https://example.invalid/plan.txt","source_path":"example/plan.txt"}},
+    {"seq":7,"timestampMs":7000,"kind":"event","event":{"type":"automation-changed","action":"created","automationId":"example-routine","automationName":"Daily plan"}}
+  ],
+  "nextBeforeSeq":1,
+  "precedingTimestampMs":0
+}
 ```
 
-The example user kind is **inferred**; the wrapper imposes no entry-kind schema.
-`send-message` and `message.content` are read explicitly (`grokApproval`,
+`formRequest` and `draft` contents are omitted here. The wrapper imposes no
+entry-kind schema. `send-message` and `message.content` are read explicitly (`grokApproval`,
 `entryTextRaw`). Text fallback order is a string `text || prompt || message`,
 then string/array/object `content`, then object `message.content`, then `preview`.
 Array content joins string parts or `part.text || part.content` with newlines.
@@ -333,6 +355,11 @@ in `gateway.js` (48333–48662) expose agent/group CRUD, messages, transcripts,
 skills and approvals only. Routine requests can be conveyed as ordinary prompts;
 that is not a distinct routine protocol.
 
+**Observed:** routine changes appear in transcript entries with `kind: "event"`
+and `event: {type: "automation-changed", action: "created" | "updated",
+automationId, automationName}`. This is the only routine data we can read today,
+and the panel already uses it. Other `action` values are unknown.
+
 `getAgentWorkflows` sends `{"id":"example-bot"}`. `anyBotId` picks the first
 non-group from listAgents; at least one bot is required. `asSkills` accepts an
 array or `{workflows: [...]}` and filters entries without truthy ids. It returns
@@ -366,6 +393,9 @@ in this bundle belongs to Codex's separate app-server integration and is not
 evidence of a Grok subscription (`gatewayCall`, `openBackend`, `transcriptDelta`;
 `./src/core/codex…` modules). Whether the server offers an undocumented stream
 cannot be determined here.
+
+**Observed:** `message` entries carry `isStreaming`. This is the one working-state
+signal a polling client can use.
 
 ## 7. Approvals
 
@@ -425,6 +455,9 @@ used on that path. Linux/Windows have no app-bundle version fallback
 
 ## Open questions
 
+- **Observed:** `nextBeforeSeq` suggests the server pages backwards, but gbot
+  never sends a matching request field. How should a client request older pages?
+
 - What is the macOS keychain account name? `readKeychainPassword` selects only
   service `Grok Bot Safe Storage`; no account selector appears.
 - What are the complete server response and transcript schemas, including
@@ -438,3 +471,17 @@ used on that path. Linux/Windows have no app-bundle version fallback
 - Does `clientNonce` guarantee server-side deduplication, and for how long?
   `sendPrompt` uses it for transcript receipt lookup only; no replay guarantee
   or retention period is defined.
+
+## Rules our client must keep
+
+- Require HTTPS and the host allow-list for every request carrying a credential
+  (backend: `cursor.sh`, `cursor.com` and their subdomains; gateway: also
+  subdomains of `cursorvm.com`).
+- Refuse redirects.
+- Never retry a write.
+- Keep the 30 s deadline and 2 MiB response-body cap.
+- Redact secrets from error text.
+- Re-check the active account before and after a refresh; discard the route if
+  it changed.
+
+WIL-42 and WIL-43 must keep these rules.
