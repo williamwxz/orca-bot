@@ -2,49 +2,60 @@
 
 An [Orca](https://github.com/stablyai/orca) plugin that puts your Grok Bot bots in Orca's right
 sidebar: pick a bot, read and send messages, create and delete bots, edit instructions, and
-schedule tasks.
+request scheduled tasks.
 
-Unofficial. Not made or endorsed by xAI or Cursor. It is only a front end: every action goes to
-the real Grok Bot through the [`gbot` CLI](https://github.com/ScriptedAlchemy/grok-bot-cli),
-which uses the Grok Bot desktop app you are signed in to. The plugin stores no credentials and
-makes no network requests of its own.
+Unofficial. Not made or endorsed by xAI or Cursor.
+
+Bot Deck uses its own client to connect directly to Grok Bot with the session of the
+signed-in Grok Bot desktop app.
 
 ## Requirements
 
 - Orca 1.4.246 or newer (desktop app)
+- macOS
 - The Grok Bot desktop app, signed in
-- `npm install --global grok-bot-cli` (needs Node.js 22.19+)
 
-If `gbot` is installed somewhere unusual, set **gbot path** under the plugin in Orca's Settings.
+## What it reads and sends
+
+Bot Deck reads the Grok Bot app's Safe Storage key from the macOS keychain
+(macOS may ask you to allow this) and the app's session files in its data folder.
+It keeps the key and session data in memory only. It sends session credentials
+and your requests only to Grok Bot's own servers: hosts under `cursor.sh`,
+`cursor.com`, and `cursorvm.com`.
 
 ## What it does
 
 | Feature | How |
 | --- | --- |
-| List and select bots | `gbot bots list` |
-| Read a conversation | `gbot thread`, refreshed while the panel is visible |
-| Send a message | `gbot send` |
-| Create, hide, delete a bot; edit instructions | `gbot bots create / update / delete` |
+| List and select bots | Reads your bots from Grok Bot |
+| Read a conversation | Refreshes recent messages while the panel is visible |
+| Send a message | Sends your message directly to the bot |
+| Create, hide, delete a bot; edit instructions | Sends changes to Grok Bot |
 | Schedule a task | Sends the bot a clearly worded request; Grok Bot creates routines from chat |
-| See a bot's routines | Read from routine events in the last 200 messages |
+| See recent routine changes | Reads routine events from the latest messages; this is not a full routine list |
 
-Limits, because `gbot` has no command for them: routines cannot be listed, paused or edited
-directly (ask the bot in chat), forms and file attachments must be opened in the Grok Bot app,
-and the bot's computer view is not shown.
+Some bots refuse deletion; delete those in the Grok Bot app. Routines cannot be
+listed, paused or edited directly (ask the bot in chat). Forms and attachments
+open in the Grok Bot app. The bot's computer view is not shown.
 
 ## Layout
 
 - `panel/`: the sidebar UI (HTML, CSS, TypeScript; Orca transpiles it, no build step)
-- `src/worker.ts`: the worker that turns each panel action into one `gbot` call
-- `shared/model.ts`: data shapes and message wording used by both
+- `src/worker.ts`: handlers for panel actions
+- `src/session.ts`: reads the signed-in desktop app's session
+- `src/connection.ts`: owns the connection route and refreshes it when needed
+- `src/gateway.ts`: makes the HTTP calls to Grok Bot
+- `shared/model.ts`: data shapes and message wording used by both panel and worker
 
 ## Develop
 
 ```sh
 orca plugin validate .
-orca plugin test .         # runs against a fake gbot; never touches a real account
+orca plugin test .         # uses fake sessions and fake HTTP responses; never touches a real account
 orca plugin dev watch .    # loads the folder into Orca and reloads on save
 ```
+
+Protocol credit: learned from the MIT-licensed [grok-bot-cli (gbot) source](https://github.com/ScriptedAlchemy/grok-bot-cli); see [protocol notes](docs/protocol.md).
 
 ## License
 

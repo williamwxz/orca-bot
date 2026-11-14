@@ -39,7 +39,7 @@ export function normalizeHeaders(value: unknown): Record<string, string> {
   return Object.fromEntries(entries)
 }
 function redact(text: string, secrets: string[]) {
-  for (const secret of secrets.filter(secret => secret.length >= 8).sort((a, b) => b.length - a.length)) {
+  for (const secret of secrets.filter(Boolean).sort((a, b) => b.length - a.length)) {
     text = text.split(secret).join('[redacted]').split(encodeURIComponent(secret)).join('[redacted]')
   }
   return text.replace(/Bearer\s+[^\s"',}]+/gi, 'Bearer [redacted]')
@@ -166,7 +166,16 @@ export async function gatewayCall(route: Route, method: string, body: unknown, d
     authorization: `Bearer ${route.gatewayToken}`,
     ...extra
   }
-  return request(url, headers, body, method, deps, [route.gatewayToken, ...Object.values(extra)])
+  return request(url, headers, body, method, deps, [route.gatewayToken, ...headerSecrets(extra)])
+}
+// Which of a route's own header values to strip from error text. A header that names a
+// credential is always stripped, however short; any other value only when it is long enough
+// that stripping it cannot garble an ordinary message ("1", "prod").
+const CREDENTIAL_HEADER = /token|auth|secret|key|cookie|session/i
+function headerSecrets(headers: Record<string, string>): string[] {
+  return Object.entries(headers)
+    .filter(([name, value]) => CREDENTIAL_HEADER.test(name) || value.length >= 8)
+    .map(([, value]) => value)
 }
 
 type ClientOptions = Dependencies & {
@@ -268,7 +277,13 @@ export function createGatewayClient(options: ClientOptions) {
       })
     },
     async deleteBot(id: string) {
-      await write('deleteAgent', { id })
+      const result = await write('deleteAgent', { id })
+      if (Array.isArray(result?.refusedAgentIds) && result.refusedAgentIds.includes(id)) {
+        throw failure('delete_refused', 'Grok Bot refused to delete this bot. Delete it in the Grok Bot app.')
+      }
+      if (Array.isArray(result?.failedAgentIds) && result.failedAgentIds.includes(id)) {
+        throw failure('delete_failed', 'Grok Bot could not delete this bot. Try again, or delete it in the Grok Bot app.')
+      }
     },
     async readThread(id: string, limit = 40) {
       const count = Math.min(200, Math.max(1, Number.isInteger(limit) ? limit : 40))

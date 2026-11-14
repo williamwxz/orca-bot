@@ -4,7 +4,7 @@
   "id": "bot-deck",
   "name": "Bot Deck for Grok Bot",
   "version": "0.1.0",
-  "description": "Unofficial sidebar client for your Grok Bot bots: pick a bot, chat, create and delete bots, and schedule tasks. Uses the gbot CLI and your signed-in Grok Bot desktop app.",
+  "description": "Unofficial sidebar client for your Grok Bot bots: pick a bot, chat, create and delete bots, and schedule tasks. Uses the signed-in Grok Bot desktop app on this Mac; it reads that app's saved login from your keychain.",
   "license": "MIT",
   "engines": {
     "orca": ">=1.4.246"
@@ -20,21 +20,6 @@
         "icon": "bot",
         "entry": "panel/index.html"
       }
-    ],
-    "settings": [
-      {
-        "key": "gbotPath",
-        "title": "gbot path",
-        "description": "Full path to the gbot (grok-bot-cli) executable. Leave empty to find it on PATH and in the usual npm and Homebrew folders.",
-        "type": "string",
-        "default": "",
-        "placeholder": "/opt/homebrew/bin/gbot"
-      }
     ]
-  },
-  "capabilities": [
-    {
-      "kind": "settings:own"
-    }
-  ]
+  }
 }

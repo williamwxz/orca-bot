@@ -5,7 +5,8 @@ This describes the installed MIT-licensed `grok-bot-cli` 0.12.5 bundle at
 to this installed build. The package README and CHANGELOG were also reviewed.
 The original review read source only. No CLI, keychain operation, session file,
 or network request was executed for this document. Additions marked **observed**
-come from reviewer-reported real `gbot --json` output, not source inspection.
+come from reviewer-reported real `gbot --json` output or app/gateway behavior,
+not source inspection.
 This is not a complete server schema.
 All example account keys, ids, tokens and route hosts below are invented. Example
 responses marked **inferred** illustrate accepted shapes, not captured traffic.
@@ -260,8 +261,22 @@ Resolve with listAgents, then send:
 {"id":"example-bot"}
 ```
 
-Response is ignored; `{}` is an **inferred** usable response. The wrapper returns
-the pre-delete normalized record, not the wire response (`deleteAgent`).
+The CLI ignores the response; `{}` is an **inferred** usable response. Its wrapper
+returns the pre-delete normalized record, not the wire response (`deleteAgent`).
+
+**Observed:** `POST /api/deleteAgent` can return HTTP 200 with the following
+body while leaving the bot undeleted:
+
+```json
+{"transcript":[],"refusedAgentIds":["example-bot"]}
+```
+
+The gateway may also report `failedAgentIds`. Our client checks whether the
+requested id appears in either array: `refusedAgentIds` raises `delete_refused`
+("Grok Bot refused to delete this bot. Delete it in the Grok Bot app."), and
+`failedAgentIds` raises `delete_failed` ("Grok Bot could not delete this bot.
+Try again, or delete it in the Grok Bot app."). Other 2xx responses remain
+successful; no deletion is retried automatically.
 
 ### getAgentTranscriptTail
 
@@ -459,6 +474,11 @@ used on that path. Linux/Windows have no app-bundle version fallback
 `decryptWindowsSafeStorageString`, `grokBotAppVersion`).
 
 ## Open questions
+
+- **Observed:** the Grok Bot app deletes server-managed ("temporal" harness)
+  bots through a separate server call before the gateway call, and reads routines
+  from the server. gbot knows neither server operation, and this client does not
+  implement them yet. What are their request and response contracts?
 
 - **Observed:** `nextBeforeSeq` suggests the server pages backwards, but gbot
   never sends a matching request field. How should a client request older pages?
