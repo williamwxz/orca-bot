@@ -33,6 +33,12 @@ function obj(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' ? (value as Record<string, unknown>) : {}
 }
 
+function contentText(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (Array.isArray(value)) return value.map(part => str(part) || str(obj(part).text) || str(obj(part).content)).filter(Boolean).join('\n')
+  return str(obj(value).text) || str(obj(value).content)
+}
+
 const FALLBACK_COLORS = ['teal', 'blue', 'violet', 'pink', 'red', 'orange', 'yellow']
 
 function hash(text: string): number {
@@ -44,13 +50,13 @@ function hash(text: string): number {
 export function toBot(raw: unknown): Bot {
   const r = obj(raw)
   return {
-    id: str(r.id),
+    id: str(r.id) || str(r.agentId),
     name: str(r.name) || 'Untitled bot',
     instructions: str(r.description),
     avatarShape: str(r.avatarShape) || 'square',
     // Grok Bot leaves the colour unset for many bots: pick a stable one from the id instead.
-    avatarColor: str(r.avatarColor) || FALLBACK_COLORS[hash(str(r.id)) % FALLBACK_COLORS.length],
-    hidden: r.hiddenFromSidebar === true
+    avatarColor: str(r.avatarColor) || FALLBACK_COLORS[hash(str(r.id) || str(r.agentId)) % FALLBACK_COLORS.length],
+    hidden: Boolean(r.isHiddenFromSidebar ?? r.hiddenFromSidebar)
   }
 }
 
@@ -65,7 +71,7 @@ export function toEntry(raw: unknown): Entry {
       ...base,
       role: r.role === 'user' ? 'user' : 'bot',
       type: 'text',
-      text: clip(str(r.content)),
+      text: clip(str(r.text) || str(r.prompt) || str(r.message) || contentText(r.content) || contentText(obj(r.message).content) || str(r.preview)),
       streaming: r.isStreaming === true
     }
   }
@@ -93,7 +99,7 @@ export function toEntry(raw: unknown): Entry {
     const message = obj(r.message)
     switch (message.type) {
       case 'text':
-        return { ...base, role: 'bot', type: 'text', text: clip(str(message.content)) }
+        return { ...base, role: 'bot', type: 'text', text: clip(contentText(message.content)) }
       case 'widget': {
         const widget = obj(message.widget)
         const options = Array.isArray(widget.options) ? widget.options : []
