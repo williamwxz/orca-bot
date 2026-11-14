@@ -1,7 +1,7 @@
 import { assert, test } from 'orca/testing'
-import { assertAllowedCredentialUrl, createGatewayClient, ensureSandbox, gatewayCall, type Route } from './gateway'
-import { createConnection } from './connection'
-import { toBot, toEntry } from '../shared/model'
+import { assertAllowedCredentialUrl, createGatewayClient, ensureSandbox, gatewayCall, type Route } from './gateway.ts'
+import { createConnection } from './connection.ts'
+import { toBot, toEntry } from '../shared/model.ts'
 
 const route: Route = { gatewayUrl: 'https://example.cursorvm.com', gatewayToken: 'fake-gateway-secret', headers: { 'x-anyrun-network-token': 'fake-network-secret' } }
 const bot = { agentId: 'example-bot', name: 'Planner', description: 'Plan', isHiddenFromSidebar: true }

@@ -1,4 +1,4 @@
-import { backendHeaders, redact, request, type Account, type Dependencies } from './transport'
+import { backendHeaders, redact, request, type Account, type Dependencies } from './transport.ts'
 
 export type ServerBot = { agentId: string; id: string; harness: string }
 export type ServerMessage = { agentId: string; text: string; messageId: string }

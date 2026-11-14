@@ -1,6 +1,6 @@
 // The panel <-> worker contract. A write answers with the fresh bot list, or null when the
 // write worked but the list could not be read; the panel then reloads the list itself.
-import type { Bot, Entry } from '../shared/model'
+import type { Bot, Entry } from '../shared/model.ts'
 
 export type Status = { ok: boolean; message: string }
 

@@ -2,9 +2,9 @@
 // own client (src/gateway.ts) with the session of the signed-in Grok Bot desktop app
 // (src/session.ts). Nothing is stored: the session lives in this process's memory only.
 import type { OrcaWorkerApi } from 'orca/worker'
-import type { Bot } from '../shared/model'
-import { createConnection, type ConnectionDeps } from './connection'
-import { createGatewayClient } from './gateway'
+import type { Bot } from '../shared/model.ts'
+import { createConnection, type ConnectionDeps } from './connection.ts'
+import { createGatewayClient } from './gateway.ts'
 
 // Grok Bot ids are UUIDs. Refusing anything else keeps unexpected text out of request bodies.
 const ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -24,8 +24,8 @@ function requireText(value: unknown, label: string, max: number): string {
   return value
 }
 
-/** Registers the panel's handlers. Tests pass fakes for the session and the network. */
-export function register(orca: OrcaWorkerApi, deps: ConnectionDeps = {}): void {
+/** The panel and terminal share the same guarded connection and client. */
+export function createClient(deps: ConnectionDeps = {}) {
   const connection = createConnection(deps)
   const client = createGatewayClient({
     ...deps.network,
@@ -34,6 +34,12 @@ export function register(orca: OrcaWorkerApi, deps: ConnectionDeps = {}): void {
     refreshRoute: connection.refreshRoute
   })
 
+  return { connection, client }
+}
+
+/** Registers the panel's handlers. Tests pass fakes for the session and the network. */
+export function register(orca: OrcaWorkerApi, deps: ConnectionDeps = {}): void {
+  const { connection, client } = createClient(deps)
   const handle = orca.panels.handle as (
     name: string,
     handler: (input: any) => Promise<unknown>
