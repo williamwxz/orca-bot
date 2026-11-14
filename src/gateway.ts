@@ -9,14 +9,20 @@ export type Dependencies = {
   clearTimeout?: typeof globalThis.clearTimeout
 }
 const unsupported = () => failure('unsupported_version', 'This version of Grok Bot is not supported yet')
-function failure(code: string, message: string) { return Object.assign(new Error(message), { code }) }
+function failure(code: string, message: string) {
+  return Object.assign(new Error(message), { code })
+}
 function record(value: unknown): Record<string, any> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw unsupported()
   return value as Record<string, any>
 }
 export function assertAllowedCredentialUrl(value: string, kind: 'backend' | 'gateway' = 'gateway'): URL {
   let url: URL
-  try { url = new URL(value) } catch { throw failure('invalid_url', 'The connection URL is invalid') }
+  try {
+    url = new URL(value)
+  } catch {
+    throw failure('invalid_url', 'The connection URL is invalid')
+  }
   const host = url.hostname.toLowerCase()
   const matches = (base: string) => host === base || host.endsWith(`.${base}`)
   if (url.protocol !== 'https:' || url.username || url.password ||
@@ -27,65 +33,107 @@ export function assertAllowedCredentialUrl(value: string, kind: 'backend' | 'gat
 }
 export function normalizeHeaders(value: unknown): Record<string, string> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
-  return Object.fromEntries(Object.entries(value).filter(([, v]) => v != null && String(v) !== '').map(([k, v]) => [k.toLowerCase(), String(v)]))
+  const entries = Object.entries(value)
+    .filter(([, v]) => v != null && String(v) !== '')
+    .map(([k, v]) => [k.toLowerCase(), String(v)])
+  return Object.fromEntries(entries)
 }
 function redact(text: string, secrets: string[]) {
-  for (const secret of secrets.filter(Boolean).sort((a, b) => b.length - a.length)) {
+  for (const secret of secrets.filter(secret => secret.length >= 8).sort((a, b) => b.length - a.length)) {
     text = text.split(secret).join('[redacted]').split(encodeURIComponent(secret)).join('[redacted]')
   }
   return text.replace(/Bearer\s+[^\s"',}]+/gi, 'Bearer [redacted]')
+}
+const TIMEOUT_MS = 30_000
+const MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+const READ_METHODS = new Set(['EnsureSandBox', 'listAgents', 'getAgentTranscriptTail'])
+
+async function readCapped(response: Response): Promise<string> {
+  const reader = response.body?.getReader()
+  if (!reader) return ''
+  const decoder = new TextDecoder()
+  let text = ''
+  let size = 0
+  try {
+    while (true) {
+      const part = await reader.read()
+      if (part.done) break
+      size += part.value.byteLength
+      if (size > MAX_RESPONSE_BYTES) {
+        void reader.cancel().catch(() => {})
+        throw failure('response_too_large', 'The response is too large')
+      }
+      text += decoder.decode(part.value, { stream: true })
+    }
+    return text + decoder.decode()
+  } finally {
+    reader.releaseLock()
+  }
+}
+function parseBody(text: string, ok: boolean): any {
+  try {
+    return text ? JSON.parse(text) : {}
+  } catch {
+    if (ok) throw unsupported()
+    return { raw: text }
+  }
+}
+function httpError(response: Response, data: any, method: string, secrets: string[]) {
+  if (method === 'EnsureSandBox' && [401, 403].includes(response.status)) {
+    return failure('not_signed_in', 'Open the Grok Bot app and sign in, then retry.')
+  }
+  const detail = redact(String(data?.message ?? data?.error ?? data?.raw ?? response.statusText), secrets).slice(0, 300)
+  return Object.assign(failure('gateway_error', `Request failed (${response.status})${detail ? `: ${detail}` : ''}`), {
+    status: response.status,
+    method,
+    hibernated: response.headers.get('x-anyrun-error-source') === 'anyrun-proxy' &&
+      response.headers.get('x-anyrun-failure-reason') === 'pod_hibernated'
+  })
 }
 async function request(url: string, headers: Record<string, string>, body: unknown, method: string, deps: Dependencies, secrets: string[]) {
   const controller = new AbortController()
   const start = deps.setTimeout ?? globalThis.setTimeout
   const stop = deps.clearTimeout ?? globalThis.clearTimeout
   let timer: ReturnType<typeof setTimeout> | undefined
+  let writeSucceeded = false
+  async function perform() {
+    const response = await (deps.fetch ?? globalThis.fetch)(url, {
+      method: 'POST', headers, body: JSON.stringify(body), redirect: 'error', signal: controller.signal
+    })
+    if (method === 'EnsureSandBox' && [401, 403].includes(response.status)) {
+      void response.body?.cancel().catch(() => {})
+      throw httpError(response, {}, method, secrets)
+    }
+    // A successful write must never invite a duplicate just because its body is unusable.
+    if (response.ok && !READ_METHODS.has(method)) {
+      writeSucceeded = true
+      try {
+        return parseBody(await readCapped(response), false)
+      } catch {
+        return {}
+      }
+    }
+    const data = parseBody(await readCapped(response), response.ok)
+    if (!response.ok) throw httpError(response, data, method, secrets)
+    return data
+  }
   try {
     const timeout = new Promise<never>((_, reject) => {
-      timer = start(() => { controller.abort(); reject(failure('timeout', 'The request timed out')) }, 30_000)
+      timer = start(() => {
+        controller.abort()
+        reject(failure('timeout', 'The request timed out'))
+      }, TIMEOUT_MS)
     })
-    return await Promise.race([timeout, (async () => {
-      const response = await (deps.fetch ?? globalThis.fetch)(url, {
-        method: 'POST', headers, body: JSON.stringify(body), redirect: 'error', signal: controller.signal
-      })
-      let text = ''
-      let size = 0
-      const reader = response.body?.getReader()
-      const decoder = new TextDecoder()
-      if (reader) {
-        try {
-          while (true) {
-            const part = await reader.read()
-            if (part.done) break
-            size += part.value.byteLength
-            if (size > 2 * 1024 * 1024) {
-              void reader.cancel().catch(() => {})
-              throw failure('response_too_large', 'The response is too large')
-            }
-            text += decoder.decode(part.value, { stream: true })
-          }
-          text += decoder.decode()
-        } finally { reader.releaseLock() }
-      }
-      let data: any = {}
-      try { data = text ? JSON.parse(text) : {} } catch {
-        if (response.ok) throw unsupported()
-        data = { raw: text }
-      }
-      if (!response.ok) {
-        const detail = redact(String(data?.message ?? data?.error ?? data?.raw ?? response.statusText), secrets).slice(0, 300)
-        throw Object.assign(failure('gateway_error', `Request failed (${response.status})${detail ? `: ${detail}` : ''}`), {
-          status: response.status, method,
-          hibernated: response.headers.get('x-anyrun-error-source') === 'anyrun-proxy' && response.headers.get('x-anyrun-failure-reason') === 'pod_hibernated'
-        })
-      }
-      return data
-    })()])
+    return await Promise.race([timeout, perform()])
   } catch (error) {
     // Never expose fetch errors: they may contain URLs or credential headers.
-    if (error instanceof Error && typeof (error as any).code === 'string' && ['timeout', 'response_too_large', 'unsupported_version', 'gateway_error'].includes((error as any).code)) throw error
+    if (writeSucceeded) return {}
+    const codes = ['timeout', 'response_too_large', 'unsupported_version', 'gateway_error', 'not_signed_in']
+    if (error instanceof Error && codes.includes((error as any).code)) throw error
     throw failure('connection_failed', 'Could not reach Grok Bot. Check the connection and try again')
-  } finally { if (timer !== undefined) stop(timer) }
+  } finally {
+    if (timer !== undefined) stop(timer)
+  }
 }
 export async function ensureSandbox(account: Account, appVersion?: string, deps: Dependencies = {}): Promise<Route> {
   const headers: Record<string, string> = {
@@ -96,7 +144,7 @@ export async function ensureSandbox(account: Account, appVersion?: string, deps:
   if (account.teamId) headers['x-cursor-team-id'] = account.teamId
   const url = 'https://api2.cursor.sh/aiserver.v1.GrokBotService/EnsureSandBox'
   assertAllowedCredentialUrl(url, 'backend')
-  const r = record(await request(url, headers, {}, 'EnsureSandBox', deps, [account.accessToken, ...Object.values(headers)]))
+  const r = record(await request(url, headers, {}, 'EnsureSandBox', deps, [account.accessToken]))
   const gatewayUrl = r.gatewayUrl || r.gateway_url
   const gatewayToken = r.gatewayToken || r.gateway_token
   if (typeof gatewayUrl !== 'string' || !gatewayUrl || typeof gatewayToken !== 'string' || !gatewayToken) throw unsupported()
@@ -112,7 +160,12 @@ export async function gatewayCall(route: Route, method: string, body: unknown, d
   const url = `${route.gatewayUrl.replace(/\/$/, '')}/api/${method}`
   assertAllowedCredentialUrl(url)
   const extra = normalizeHeaders(route.headers)
-  return request(url, { 'content-type': 'application/json', authorization: `Bearer ${route.gatewayToken}`, ...extra }, body, method, deps, [route.gatewayToken, ...Object.values(extra)])
+  const headers = {
+    'content-type': 'application/json',
+    authorization: `Bearer ${route.gatewayToken}`,
+    ...extra
+  }
+  return request(url, headers, body, method, deps, [route.gatewayToken, ...Object.values(extra)])
 }
 
 type ClientOptions = Dependencies & {
@@ -122,18 +175,21 @@ type ClientOptions = Dependencies & {
   randomUUID?: () => string
 }
 export function createGatewayClient(options: ClientOptions) {
-  let current: Route | undefined
   let refreshing: Promise<Route> | undefined
   async function call(method: string, body: unknown) {
-    const route = current ?? await options.getRoute()
-    try { return await gatewayCall(route, method, body, options) } catch (error) {
+    const route = await options.getRoute()
+    try {
+      return await gatewayCall(route, method, body, options)
+    } catch (error) {
       const e = error as any
       if (['listAgents', 'getAgentTranscriptTail'].includes(method) && e.status === 417 && e.hibernated) {
-        if (current === route || !current) {
-          refreshing ??= Promise.resolve().then(() => options.refreshRoute()).then(r => (current = r)).catch(error => { current = undefined; throw error }).finally(() => { refreshing = undefined })
-          await refreshing
-        }
-        return gatewayCall(current!, method, body, options)
+        refreshing ??= Promise.resolve()
+          .then(() => options.refreshRoute())
+          .finally(() => {
+            refreshing = undefined
+          })
+        const refreshed = await refreshing
+        return gatewayCall(refreshed, method, body, options)
       }
       throw error
     }
@@ -157,7 +213,9 @@ export function createGatewayClient(options: ClientOptions) {
     return value.trim()
   }
   async function write(method: string, body: unknown) {
-    try { return await call(method, body) } catch (error) {
+    try {
+      return await call(method, body)
+    } catch (error) {
       const e = error as any
       if (e.status >= 500 || ['timeout', 'connection_failed', 'response_too_large', 'unsupported_version'].includes(e.code)) {
         throw Object.assign(failure('outcome_unknown', 'The outcome is unknown. Check Grok Bot before trying again'), { delivery: 'unknown', status: e.status, method })
@@ -171,37 +229,48 @@ export function createGatewayClient(options: ClientOptions) {
     return r.entries.map(record)
   }
   return {
-    async listBots() { return (await agents()).map(toBot) },
+    async listBots() {
+      return (await agents()).map(toBot)
+    },
     async createBot(input: { name: string; instructions?: string }) {
-      const r = record(await write('createAgent', { name: text(input.name, 'Name'), description: input.instructions ?? '', title: '', avatarShape: '', avatarColor: '', origin: 'user' }))
-      const bot = toBot(record(r.agent ?? r))
-      if (!bot.id) throw unsupported()
-      return bot
+      const r = await write('createAgent', {
+        name: text(input.name, 'Name'),
+        description: input.instructions ?? '',
+        title: '',
+        avatarShape: '',
+        avatarColor: '',
+        origin: 'user'
+      })
+      const bot = toBot(r?.agent ?? r)
+      return bot.id ? bot : undefined
     },
     async updateBot(id: string, patch: { name?: string; instructions?: string; hidden?: boolean }) {
       const old = await resolve(id)
       id = old.id || old.agentId
-      await write('updateAgent', { id, profile: { name: patch.name === undefined ? old.name || '' : text(patch.name, 'Name'), description: patch.instructions ?? old.description ?? '' } })
+      const name = patch.name === undefined ? old.name || '' : text(patch.name, 'Name')
+      const description = patch.instructions ?? old.description ?? ''
+      await write('updateAgent', { id, profile: { name, description } })
       if (patch.hidden !== undefined) await write('setAgentHiddenFromSidebar', { id, isHidden: patch.hidden })
-      return toBot((await agents()).find(r => (r.id || r.agentId) === id) ?? old)
+      return toBot({
+        ...old,
+        name,
+        description,
+        isHiddenFromSidebar: patch.hidden ?? old.isHiddenFromSidebar
+      })
     },
     async deleteBot(id: string) {
-      const old = await resolve(id)
-      await write('deleteAgent', { id: old.id || old.agentId })
-      return toBot(old)
+      await write('deleteAgent', { id })
     },
     async readThread(id: string, limit = 40) {
-      const bot = await resolve(id)
-      return (await tail(bot.id || bot.agentId, Math.min(200, Math.max(1, Number.isInteger(limit) ? limit : 40)))).map(toEntry).filter(e => e.id)
+      const count = Math.min(200, Math.max(1, Number.isInteger(limit) ? limit : 40))
+      return (await tail(id, count)).map(toEntry).filter(e => e.id)
     },
     async sendMessage(id: string, value: string): Promise<{ delivery: 'accepted' | 'unknown'; messageId?: string }> {
       const prompt = text(value, 'Message')
-      const bot = await resolve(id)
-      id = bot.id || bot.agentId
       const clientNonce = (options.randomUUID ?? randomUUID)()
-      const r = record(await write('sendPrompt', { agentId: id, prompt, clientNonce }))
-      if (typeof r.messageId === 'string') return { delivery: 'accepted', messageId: r.messageId }
-      if (r.accepted === true) {
+      const r = await write('sendPrompt', { agentId: id, prompt, clientNonce })
+      if (typeof r?.messageId === 'string') return { delivery: 'accepted', messageId: r.messageId }
+      if (r?.accepted === true) {
         try {
           const entry = (await tail(id, 20)).find(e => e.clientNonce === clientNonce && typeof e.id === 'string' && e.id)
           if (entry) return { delivery: 'accepted', messageId: entry.id }
