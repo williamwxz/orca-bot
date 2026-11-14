@@ -46,6 +46,7 @@ function redact(text: string, secrets: string[]) {
 }
 const TIMEOUT_MS = 30_000
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+const APP_VERSION_PATTERN = /^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?$/
 const READ_METHODS = new Set(['EnsureSandBox', 'listAgents', 'getAgentTranscriptTail'])
 
 async function readCapped(response: Response): Promise<string> {
@@ -79,9 +80,6 @@ function parseBody(text: string, ok: boolean): any {
   }
 }
 function httpError(response: Response, data: any, method: string, secrets: string[]) {
-  if (method === 'EnsureSandBox' && [401, 403].includes(response.status)) {
-    return failure('not_signed_in', 'Open the Grok Bot app and sign in, then retry.')
-  }
   const detail = redact(String(data?.message ?? data?.error ?? data?.raw ?? response.statusText), secrets).slice(0, 300)
   return Object.assign(failure('gateway_error', `Request failed (${response.status})${detail ? `: ${detail}` : ''}`), {
     status: response.status,
@@ -102,7 +100,7 @@ async function request(url: string, headers: Record<string, string>, body: unkno
     })
     if (method === 'EnsureSandBox' && [401, 403].includes(response.status)) {
       void response.body?.cancel().catch(() => {})
-      throw httpError(response, {}, method, secrets)
+      throw failure('not_signed_in', 'Open the Grok Bot app and sign in, then retry.')
     }
     // A successful write must never invite a duplicate just because its body is unusable.
     if (response.ok && !READ_METHODS.has(method)) {
@@ -137,8 +135,11 @@ async function request(url: string, headers: Record<string, string>, body: unkno
 }
 export async function ensureSandbox(account: Account, appVersion?: string, deps: Dependencies = {}): Promise<Route> {
   const headers: Record<string, string> = {
-    'content-type': 'application/json', 'connect-protocol-version': '1', authorization: `Bearer ${account.accessToken}`,
-    'x-cursor-client-type': 'sand', 'x-cursor-client-version': appVersion && /^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?$/.test(appVersion) ? appVersion : '0.20.0',
+    'content-type': 'application/json',
+    'connect-protocol-version': '1',
+    authorization: `Bearer ${account.accessToken}`,
+    'x-cursor-client-type': 'sand',
+    'x-cursor-client-version': appVersion && APP_VERSION_PATTERN.test(appVersion) ? appVersion : '0.20.0',
     'x-sand-box-namespace': 'prod'
   }
   if (account.teamId) headers['x-cursor-team-id'] = account.teamId
@@ -182,7 +183,7 @@ export function createGatewayClient(options: ClientOptions) {
       return await gatewayCall(route, method, body, options)
     } catch (error) {
       const e = error as any
-      if (['listAgents', 'getAgentTranscriptTail'].includes(method) && e.status === 417 && e.hibernated) {
+      if (READ_METHODS.has(method) && e.status === 417 && e.hibernated) {
         refreshing ??= Promise.resolve()
           .then(() => options.refreshRoute())
           .finally(() => {
@@ -198,13 +199,19 @@ export function createGatewayClient(options: ClientOptions) {
     const raw = await call('listAgents', {})
     const rows = Array.isArray(raw) ? raw : Array.isArray(raw?.agents) ? raw.agents : raw?.agent ? [raw.agent] : null
     if (!rows) throw unsupported()
-    return rows.map(record).filter(r => typeof (r.id || r.agentId) === 'string' && (r.id || r.agentId)).filter(r => {
-      const members = r.memberIds || r.memberAgentIds || []
-      return r.isGroup !== true && !(r.isGroup == null && Array.isArray(members) && members.length)
-    })
+    return rows.map(record).filter(isBot)
+  }
+  function rowId(row: Record<string, any>) {
+    return row.id || row.agentId
+  }
+  function isBot(row: Record<string, any>) {
+    const id = rowId(row)
+    if (typeof id !== 'string' || !id) return false
+    const members = row.memberIds || row.memberAgentIds || []
+    return row.isGroup !== true && !(row.isGroup == null && Array.isArray(members) && members.length)
   }
   async function resolve(id: string) {
-    const bot = (await agents()).find(r => (r.id || r.agentId).toLowerCase() === id.toLowerCase())
+    const bot = (await agents()).find(r => rowId(r).toLowerCase() === id.toLowerCase())
     if (!bot) throw failure('invalid_params', 'Unknown bot id. Refresh the bot list')
     return bot
   }
@@ -217,8 +224,10 @@ export function createGatewayClient(options: ClientOptions) {
       return await call(method, body)
     } catch (error) {
       const e = error as any
-      if (e.status >= 500 || ['timeout', 'connection_failed', 'response_too_large', 'unsupported_version'].includes(e.code)) {
-        throw Object.assign(failure('outcome_unknown', 'The outcome is unknown. Check Grok Bot before trying again'), { delivery: 'unknown', status: e.status, method })
+      const ambiguousCodes = ['timeout', 'connection_failed', 'response_too_large', 'unsupported_version']
+      if (e.status >= 500 || ambiguousCodes.includes(e.code)) {
+        const error = failure('outcome_unknown', 'The outcome is unknown. Check Grok Bot before trying again')
+        throw Object.assign(error, { delivery: 'unknown', status: e.status, method })
       }
       throw error
     }
@@ -246,7 +255,7 @@ export function createGatewayClient(options: ClientOptions) {
     },
     async updateBot(id: string, patch: { name?: string; instructions?: string; hidden?: boolean }) {
       const old = await resolve(id)
-      id = old.id || old.agentId
+      id = rowId(old)
       const name = patch.name === undefined ? old.name || '' : text(patch.name, 'Name')
       const description = patch.instructions ?? old.description ?? ''
       await write('updateAgent', { id, profile: { name, description } })
@@ -275,6 +284,8 @@ export function createGatewayClient(options: ClientOptions) {
           const entry = (await tail(id, 20)).find(e => e.clientNonce === clientNonce && typeof e.id === 'string' && e.id)
           if (entry) return { delivery: 'accepted', messageId: entry.id }
         } catch { /* A failed lookup cannot prove rejection. */ }
+        // Unlike gbot, explicit acceptance is enough even when the transcript lags or lookup fails.
+        return { delivery: 'accepted' }
       }
       return { delivery: 'unknown' }
     }

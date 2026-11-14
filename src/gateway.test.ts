@@ -91,11 +91,14 @@ test('sendMessage confirms ids, looks up nonces and reports unknown delivery', a
   assert.deepEqual(await f.client.sendMessage('example-bot', 'Hello'), { delivery: 'accepted', messageId: 'example-message' })
   assert.deepEqual(f.calls, [expected('sendPrompt', { agentId: 'example-bot', prompt: 'Hello', clientNonce: 'example-nonce' })])
   const g = fake([{ accepted: true }, { entries: [{ id: 'example-message', clientNonce: 'example-nonce' }] }])
-  assert.equal((await g.client.sendMessage('example-bot', 'Hello')).delivery, 'accepted')
+  assert.deepEqual(await g.client.sendMessage('example-bot', 'Hello'), { delivery: 'accepted', messageId: 'example-message' })
   assert.deepEqual(g.calls[1], expected('getAgentTranscriptTail', { id: 'example-bot', limit: 20 }))
-  for (const result of [{}, { accepted: true }]) {
-    assert.deepEqual(await fake([result, bad()]).client.sendMessage('example-bot', 'Hello'), { delivery: 'unknown' })
+  for (const lookup of [{ entries: [] }, { entries: [{ id: 'example-other', clientNonce: 'example-other-nonce' }] }, bad()]) {
+    assert.deepEqual(await fake([{ accepted: true }, lookup]).client.sendMessage('example-bot', 'Hello'), { delivery: 'accepted' })
   }
+  const unknown = fake([{}])
+  assert.deepEqual(await unknown.client.sendMessage('example-bot', 'Hello'), { delivery: 'unknown' })
+  assert.equal(unknown.calls.length, 1)
   await assert.rejects(fake([bad()]).client.sendMessage('example-bot', 'Hello'), /403/)
 })
 
