@@ -9,6 +9,12 @@ export type ConnectionDeps = {
   network?: Dependencies
 }
 
+type Held = { route: Route; accountKey?: string }
+
+function failure(code: string, message: string): Error {
+  return Object.assign(new Error(message), { code })
+}
+
 export function createConnection(deps: ConnectionDeps = {}) {
   // Node's test runner sets this for test files. A test that forgets to pass fakes must fail
   // here, not read the real keychain and act on a real account.
@@ -18,50 +24,71 @@ export function createConnection(deps: ConnectionDeps = {}) {
   const readSession = deps.readSession ?? readDesktopSession
   const requestRoute = deps.requestRoute ?? ensureSandbox
 
-  // Kept in memory only, and only for as long as this worker lives.
-  let route: Route | undefined
-  let accountKey: string | undefined
+  // Kept in memory only, and only for as long as this worker lives. The route and the
+  // account it belongs to are always set together.
+  let held: Held | undefined
+  // The one load or refresh in flight, shared by every caller that arrives meanwhile.
+  let pending: Promise<Route> | undefined
+  // Raised by reset() and refreshRoute(). Work started under an older number may finish
+  // later, but it must not install its result.
+  let generation = 0
 
-  async function load(): Promise<Route> {
-    const session = await readSession()
-    accountKey = session.account?.key
-    if (session.route) return session.route
-    // No cached route: the app dropped it (the cloud computer slept). Ask for a fresh one.
-    // readSession throws not_signed_in when there is neither a route nor an account.
-    return requestRoute(session.account!, session.appVersion, deps.network)
+  /** Reads the desktop app and returns a route, asking for a fresh one when needed. */
+  async function acquire(useCachedRoute: boolean, expectedAccountKey?: string): Promise<Held> {
+    const session = await readSession(expectedAccountKey ? { expectedAccountKey } : undefined)
+    if (useCachedRoute && session.route) {
+      return { route: session.route, accountKey: session.account?.key }
+    }
+    if (!session.account) {
+      throw failure('not_signed_in', 'Open the Grok Bot app and sign in, then retry.')
+    }
+    const route = await requestRoute(session.account, session.appVersion, deps.network)
+    // The request took time. Keep the route only if the same account is still signed in.
+    await readSession({ expectedAccountKey: session.account.key })
+    return { route, accountKey: session.account.key }
+  }
+
+  function start(useCachedRoute: boolean, expectedAccountKey?: string): Promise<Route> {
+    const mine = generation
+    const work = acquire(useCachedRoute, expectedAccountKey)
+      .then((result) => {
+        if (mine !== generation) {
+          throw failure('superseded', 'The Grok Bot connection changed. Try again.')
+        }
+        held = result
+        return result.route
+      })
+      .finally(() => {
+        if (pending === work) pending = undefined
+      })
+    pending = work
+    return work
   }
 
   return {
     /** The current route, read from the desktop app the first time. */
-    async getRoute(): Promise<Route> {
-      route ??= await load()
-      return route
+    getRoute(): Promise<Route> {
+      if (held) return Promise.resolve(held.route)
+      return pending ?? start(true)
     },
 
     /**
-     * A fresh route after the gateway reported the cloud computer asleep. The signed-in
-     * account is checked before and after the request, so a route is never kept for an
-     * account the person has since switched away from.
+     * A fresh route after the gateway reported the cloud computer asleep. It must be for the
+     * account the old route belonged to: if the person has switched accounts this fails with
+     * `account_changed`, and nothing is kept.
      */
-    async refreshRoute(): Promise<Route> {
-      route = undefined
-      const before = await readSession({ expectedAccountKey: accountKey })
-      if (!before.account) {
-        throw Object.assign(new Error('Open the Grok Bot app and sign in, then retry.'), {
-          code: 'not_signed_in'
-        })
-      }
-      const fresh = await requestRoute(before.account, before.appVersion, deps.network)
-      await readSession({ expectedAccountKey: before.account.key })
-      accountKey = before.account.key
-      route = fresh
-      return fresh
+    refreshRoute(): Promise<Route> {
+      const expectedAccountKey = held?.accountKey
+      generation += 1
+      held = undefined
+      return start(false, expectedAccountKey)
     },
 
     /** Forget everything, so the next call reads the desktop app again. */
     reset(): void {
-      route = undefined
-      accountKey = undefined
+      generation += 1
+      held = undefined
+      pending = undefined
     }
   }
 }

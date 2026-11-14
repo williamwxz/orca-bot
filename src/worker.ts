@@ -51,7 +51,12 @@ export function register(orca: OrcaWorkerApi, deps: ConnectionDeps = {}): void {
 
   handle('bots.list', () => client.listBots())
 
-  handle('bots.create', async ({ name, instructions }): Promise<Bot[]> => {
+  // After a write that worked, the fresh list is a convenience. If reading it fails, the
+  // write must still be reported as done (null tells the panel to reload by itself);
+  // reporting a failure here would invite a second Create or Delete.
+  const listAfterWrite = (): Promise<Bot[] | null> => client.listBots().catch(() => null)
+
+  handle('bots.create', async ({ name, instructions }): Promise<Bot[] | null> => {
     await client.createBot({
       name: requireText(name, 'Name', 80),
       instructions:
@@ -59,10 +64,10 @@ export function register(orca: OrcaWorkerApi, deps: ConnectionDeps = {}): void {
           ? requireText(instructions, 'Instructions', 8000)
           : ''
     })
-    return client.listBots()
+    return listAfterWrite()
   })
 
-  handle('bots.update', async ({ id, name, instructions, hidden }): Promise<Bot[]> => {
+  handle('bots.update', async ({ id, name, instructions, hidden }): Promise<Bot[] | null> => {
     if (typeof instructions === 'string' && instructions.length > 8000) {
       throw invalid('Instructions are too long')
     }
@@ -71,12 +76,12 @@ export function register(orca: OrcaWorkerApi, deps: ConnectionDeps = {}): void {
       instructions: typeof instructions === 'string' ? instructions : undefined,
       hidden: typeof hidden === 'boolean' ? hidden : undefined
     })
-    return client.listBots()
+    return listAfterWrite()
   })
 
-  handle('bots.delete', async ({ id }): Promise<Bot[]> => {
+  handle('bots.delete', async ({ id }): Promise<Bot[] | null> => {
     await client.deleteBot(requireId(id))
-    return client.listBots()
+    return listAfterWrite()
   })
 
   handle('thread.read', ({ id, limit }) =>
@@ -85,7 +90,13 @@ export function register(orca: OrcaWorkerApi, deps: ConnectionDeps = {}): void {
 
   handle('message.send', async ({ id, text }) => {
     // Never resent here: a send whose outcome is unclear fails with "check before trying again".
-    await client.sendMessage(requireId(id), requireText(text, 'Message', 16000))
+    const result = await client.sendMessage(requireId(id), requireText(text, 'Message', 16000))
+    if (result.delivery !== 'accepted') {
+      throw Object.assign(
+        new Error('Grok Bot did not confirm the message. Check the conversation before sending it again.'),
+        { code: 'outcome_unknown' }
+      )
+    }
     return { sent: true }
   })
 

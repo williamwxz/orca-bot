@@ -259,3 +259,17 @@ test('successful write headers establish success even if the body fails or stall
   expire()
   assert.equal(await pending, undefined)
 })
+
+test('a short credential header is stripped from error text, a short ordinary one is not', async () => {
+  const route = {
+    gatewayUrl: 'https://box.example.cursorvm.com',
+    gatewayToken: 'fake-gateway-secret',
+    headers: { 'x-anyrun-network-token': 'abc123', 'x-region': 'prod' }
+  }
+  const fetch = (async () =>
+    new Response(JSON.stringify({ message: 'abc123 is not valid in prod' }), { status: 400 })) as typeof globalThis.fetch
+  await assert.rejects(gatewayCall(route, 'listAgents', {}, { fetch }), (error: any) => {
+    assert.equal(error.message, 'Request failed (400): [redacted] is not valid in prod')
+    return true
+  })
+})

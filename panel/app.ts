@@ -135,6 +135,12 @@ async function loadPreviews(): Promise<void> {
   }
 }
 
+/** After a write: use the list the worker sent, or reload when it could not read one. */
+function applyWrite(bots: Bot[] | null): void {
+  if (bots) applyBots(bots)
+  else void start()
+}
+
 function applyBots(bots: Bot[]): void {
   state.bots = bots
   if (state.selected && !current()) {
@@ -402,7 +408,7 @@ function renderInfo(): void {
     save.disabled = true
     saveError.textContent = ''
     try {
-      applyBots(await request('bots.update', { id: bot.id, instructions: instructions.value }))
+      applyWrite(await request('bots.update', { id: bot.id, instructions: instructions.value }))
     } catch (error) {
       saveError.textContent = errorText(error)
       save.disabled = false
@@ -413,7 +419,7 @@ function renderInfo(): void {
   hide.onclick = async () => {
     hide.disabled = true
     try {
-      applyBots(await request('bots.update', { id: bot.id, hidden: !bot.hidden }))
+      applyWrite(await request('bots.update', { id: bot.id, hidden: !bot.hidden }))
     } catch (error) {
       saveError.textContent = errorText(error)
       hide.disabled = false
@@ -426,7 +432,7 @@ function renderInfo(): void {
       body: 'This deletes the bot and its conversation from Grok Bot for good. It cannot be undone.',
       action: 'Delete bot',
       danger: true,
-      run: async () => applyBots(await request('bots.delete', { id: bot.id }))
+      run: async () => applyWrite(await request('bots.delete', { id: bot.id }))
     })
 
   body.replaceChildren(
@@ -530,8 +536,9 @@ function newBotDialog(): void {
     const wanted = name.value.trim()
     const before = new Set(state.bots.map((bot) => bot.id))
     const bots = await request('bots.create', { name: wanted, instructions: instructions.value })
-    applyBots(bots)
-    const created = bots.find((bot) => !before.has(bot.id)) ?? bots.find((bot) => bot.name === wanted)
+    applyWrite(bots)
+    const created =
+      bots?.find((bot) => !before.has(bot.id)) ?? bots?.find((bot) => bot.name === wanted)
     if (created) select(created.id)
   })
 }

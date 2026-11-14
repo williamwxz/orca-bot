@@ -243,3 +243,77 @@ test('scheduling and routine removal are plain messages to the bot', () => {
   ]
   assert.deepEqual(routinesFrom(deleted), [])
 })
+
+test('a send that Grok Bot does not confirm is reported as unclear, not as sent', async () => {
+  const { worker, writes } = await mount({
+    answer: (call) => (call.url.endsWith('/api/sendPrompt') ? json({}) : undefined)
+  })
+  await assert.rejects(
+    worker.request('message.send', { id: BOT, text: 'Hello' }),
+    /did not confirm the message. Check the conversation before sending it again/
+  )
+  assert.equal(writes().length, 1)
+  await worker.deactivate()
+})
+
+test('a write that worked is not reported as failed when the list after it cannot be read', async () => {
+  let created = false
+  const { worker, writes } = await mount({
+    answer: (call) => {
+      if (call.url.endsWith('/api/createAgent')) created = true
+      if (call.url.endsWith('/api/listAgents') && created) return json({ message: 'down' }, 500)
+      return undefined
+    }
+  })
+  assert.equal(await worker.request('bots.create', { name: 'Writer' }), null)
+  assert.equal(writes().length, 1)
+  await worker.deactivate()
+})
+
+test('a route requested for one account is not kept after the app switches to another', async () => {
+  let current = 'account-a'
+  const { worker, calls } = await mount({
+    session: async (deps) => {
+      if (deps?.expectedAccountKey && deps.expectedAccountKey !== current) {
+        throw Object.assign(new Error('The Grok Bot account changed. Reconnect and retry.'), {
+          code: 'account_changed'
+        })
+      }
+      return { account: { key: current, accessToken: 'made-up-access-token' } }
+    },
+    answer: (call) => {
+      if (!call.url.endsWith('/EnsureSandBox')) return undefined
+      // The person switches accounts while the first route request is in flight.
+      current = 'account-b'
+      return json({ gatewayUrl: GATEWAY, gatewayToken: 'made-up-fresh-token' })
+    }
+  })
+  await assert.rejects(worker.request('bots.list'), /account changed/)
+  // Nothing was sent to the gateway with the stale route.
+  assert.deepEqual(calls.map((call) => call.url.split('/').pop()), ['EnsureSandBox'])
+  await worker.deactivate()
+})
+
+test('a slow load that Refresh has replaced cannot install its route', async () => {
+  const OLD = { ...ROUTE, gatewayUrl: 'https://old.example.cursorvm.com' }
+  let releaseOld: (session: DesktopSession) => void = () => {}
+  let reads = 0
+  const { worker, calls } = await mount({
+    session: () => {
+      reads += 1
+      // The first read hangs until released; later reads answer at once with the new route.
+      if (reads === 1) return new Promise<DesktopSession>((resolve) => (releaseOld = resolve))
+      return Promise.resolve({ route: ROUTE, account: ACCOUNT })
+    }
+  })
+  const stale = worker.request('bots.list')
+  const staleOutcome = assert.rejects(stale, /connection changed/)
+  await new Promise((resolve) => setTimeout(resolve, 5))
+  assert.deepEqual(await worker.request('status'), { ok: true, message: '' })
+  releaseOld({ route: OLD, account: { key: 'account-old', accessToken: 'made-up-old-token' } })
+  await staleOutcome
+  await worker.request('bots.list')
+  assert.ok(calls.length > 0)
+  assert.ok(calls.every((call) => call.url.startsWith(GATEWAY)))
+  await worker.deactivate()
+})
