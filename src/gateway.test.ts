@@ -124,6 +124,30 @@ test('sendMessage confirms ids, looks up nonces and reports unknown delivery', a
   await assert.rejects(fake([bad()]).client.sendMessage('example-bot', 'Hello'), /403/)
 })
 
+test('sendPrompt 409 is a definite server-bot rejection regardless of its body', async () => {
+  for (const response of [
+    new Response(JSON.stringify({ message: "This Bot runs on the server, and this version of the app can't message it. Update the app and try again." }), { status: 409 }),
+    new Response(JSON.stringify({ message: 'Different server wording' }), { status: 409 }),
+    new Response('not JSON', { status: 409 }),
+    new Response(new ReadableStream({ start(controller) { controller.error(new Error('unreadable body')) } }), { status: 409 })
+  ]) {
+    const f = fake([response])
+    await assert.rejects(f.client.sendMessage('example-bot', 'Hello'), (e: any) => {
+      assert.equal(e.code, 'server_bot')
+      assert.equal(e.message, "This bot runs on Grok Bot's server, which Bot Deck cannot reach yet. Use the Grok Bot app for this bot.")
+      assert.equal(e.status, 409)
+      assert.equal(e.method, 'sendPrompt')
+      assert.equal(e.delivery, undefined)
+      return true
+    })
+    assert.deepEqual(f.calls, [expected('sendPrompt', { agentId: 'example-bot', prompt: 'Hello', clientNonce: 'example-nonce' })])
+    assert.equal(f.refreshes(), 0)
+  }
+  const f = fake([new Response('{"message":"Conflict"}', { status: 409 })])
+  await assert.rejects(f.client.deleteBot('example-bot'), (e: any) => e.code === 'gateway_error' && e.status === 409)
+  assert.equal(f.calls.length, 1)
+})
+
 test('refresh retries eligible reads exactly once, never writes', async () => {
   const f = fake([sleeping(), list]); await f.client.listBots()
   assert.equal(f.refreshes(), 1); assert.equal(f.calls.length, 2)

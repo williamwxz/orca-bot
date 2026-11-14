@@ -146,6 +146,19 @@ test('refuses bad input before any request is made', async () => {
   await worker.deactivate()
 })
 
+test('server-bot send rejection reaches the panel without retry or refresh', async () => {
+  const { worker, calls } = await mount({
+    answer: (call) => call.url.endsWith('/api/sendPrompt')
+      ? json({ message: "This Bot runs on the server, and this version of the app can't message it. Update the app and try again." }, 409)
+      : undefined
+  })
+  await assert.rejects(worker.request('message.send', { id: BOT, text: 'Hello' }), (e: any) =>
+    e.message === "This bot runs on Grok Bot's server, which Bot Deck cannot reach yet. Use the Grok Bot app for this bot.")
+  assert.equal(calls.length, 1)
+  assert.ok(calls[0].url.endsWith('/api/sendPrompt'))
+  await worker.deactivate()
+})
+
 test('a send is never repeated when its outcome is unclear', async () => {
   const { worker, writes } = await mount({
     answer: (call) => (call.url.endsWith('/api/sendPrompt') ? json({ message: 'boom' }, 503) : undefined)
