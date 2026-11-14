@@ -1,7 +1,7 @@
 import { createCipheriv, pbkdf2Sync } from 'node:crypto'
 import { basename } from 'node:path'
 import { assert, test } from 'orca/testing'
-import { decryptSafeStorage, readDesktopSession } from './session'
+import { decryptSafeStorage, readDesktopSession, type SessionErrorCode } from './session'
 
 const PASSWORD = 'fixture-password-only'
 const TOKEN = 'fixture-access-secret'
@@ -12,10 +12,10 @@ function encrypt(text: string): string {
 }
 const payload = () => encrypt(JSON.stringify({ baseUrl: 'https://gateway.example.invalid/', token: GATEWAY_TOKEN,
   headers: { 'X-Example': 42, Empty: '', Null: null, False: false } }))
-function secrets(active: unknown = 'chosen', team?: string) {
+function secrets(active: unknown = 'chosen', team?: string | null) {
   return { version: 1, 'cursor-accounts': JSON.stringify({ active, accounts: {
     other: { 'cursor-access-token': encrypt('other-fixture-token') },
-    chosen: { 'cursor-access-token': encrypt(`  ${TOKEN} \n`), ...(team === undefined ? {} : { 'cursor-selected-team-id': encrypt(team) }) }
+    chosen: { 'cursor-access-token': encrypt(`  ${TOKEN} \n`), ...(team === undefined ? {} : { 'cursor-selected-team-id': team === null ? null : encrypt(team) }) }
   } }) }
 }
 function fixture(files: Record<string, unknown> = {}) {
@@ -26,7 +26,7 @@ function fixture(files: Record<string, unknown> = {}) {
       return typeof files[name] === 'string' ? files[name] as string : JSON.stringify(files[name])
     }, readKeychainPassword: async () => PASSWORD }
 }
-async function rejects(operation: () => unknown, code: string) {
+async function rejects(operation: () => unknown, code: SessionErrorCode) {
   await assert.rejects(async () => operation(), (error: any) => {
     assert.ok(error instanceof Error)
     assert.equal(error.code, code)
@@ -37,8 +37,8 @@ async function rejects(operation: () => unknown, code: string) {
 
 test('Safe Storage round trip and unsupported prefix', async () => {
   assert.equal(decryptSafeStorage(encrypt(TOKEN), PASSWORD), TOKEN)
-  await rejects(() => decryptSafeStorage(Buffer.from(`v11${PASSWORD}${TOKEN}${GATEWAY_TOKEN}`).toString('base64'), PASSWORD), 'UNSUPPORTED_PREFIX')
-  await rejects(() => decryptSafeStorage(encrypt(TOKEN), 'wrong-fixture-password'), 'DECRYPT_FAILED')
+  await rejects(() => decryptSafeStorage(Buffer.from(`v11${PASSWORD}${TOKEN}${GATEWAY_TOKEN}`).toString('base64'), PASSWORD), 'unsupported_prefix')
+  await rejects(() => decryptSafeStorage(encrypt(TOKEN), 'wrong-fixture-password'), 'decrypt_failed')
 })
 
 test('descriptor versions and normalized headers', async () => {
@@ -52,14 +52,13 @@ test('descriptor versions and normalized headers', async () => {
 })
 
 test('descriptor errors are explicit and contain no secrets', async () => {
-  const cases: [unknown, string][] = [
-    [{ version: 3, entries: {} }, 'EMPTY_ENTRIES'],
-    [{ version: 3, entries: { a: {}, b: {} } }, 'AMBIGUOUS_ENTRIES'],
-    [{ version: 9 }, 'UNSUPPORTED_VERSION'],
-    [{ version: 1 }, 'MISSING_ENCRYPTED_PAYLOAD'],
-    [{ encrypted: encrypt(JSON.stringify({ baseUrl: PASSWORD, headers: { secret: TOKEN }, extra: GATEWAY_TOKEN })) }, 'INCOMPLETE_DESCRIPTOR'],
-    [{ encrypted: encrypt(`invalid ${PASSWORD} ${TOKEN} ${GATEWAY_TOKEN}`) }, 'INVALID_SESSION'],
-    [`invalid ${PASSWORD} ${TOKEN} ${GATEWAY_TOKEN}`, 'INVALID_SESSION']
+  const cases: [unknown, SessionErrorCode][] = [
+    [{ version: 3, entries: { a: {}, b: {} } }, 'ambiguous_entries'],
+    [{ version: 9 }, 'unsupported_version'],
+    [{ version: 1 }, 'missing_encrypted_payload'],
+    [{ encrypted: encrypt(JSON.stringify({ baseUrl: PASSWORD, headers: { secret: TOKEN }, extra: GATEWAY_TOKEN })) }, 'incomplete_descriptor'],
+    [{ encrypted: encrypt(`invalid ${PASSWORD} ${TOKEN} ${GATEWAY_TOKEN}`) }, 'invalid_session'],
+    [`invalid ${PASSWORD} ${TOKEN} ${GATEWAY_TOKEN}`, 'invalid_session']
   ]
   for (const [descriptor, code] of cases) {
     await rejects(() => readDesktopSession(fixture({ 'gateway-descriptor.json': descriptor, 'sand-secrets.json': secrets() })), code)
@@ -69,7 +68,7 @@ test('descriptor errors are explicit and contain no secrets', async () => {
 test('uses only the active account and validates expected identity', async () => {
   const deps = fixture({ 'sand-secrets.json': secrets('chosen', '42') })
   assert.deepEqual((await readDesktopSession(deps)).account, { key: 'chosen', accessToken: TOKEN, teamId: '42' })
-  await rejects(() => readDesktopSession({ ...deps, expectedAccountKey: 'other' }), 'ACCOUNT_CHANGED')
+  await rejects(() => readDesktopSession({ ...deps, expectedAccountKey: 'other' }), 'account_changed')
   for (const active of ['missing', '__proto__', null]) {
     await rejects(() => readDesktopSession(fixture({ 'sand-secrets.json': secrets(active) })), 'not_signed_in')
   }
@@ -77,15 +76,15 @@ test('uses only the active account and validates expected identity', async () =>
 
 test('rejects invalid team ids without trimming', async () => {
   for (const team of ['0', '01', ' 42', '42 ', '-1', '9007199254740992', PASSWORD + TOKEN + GATEWAY_TOKEN]) {
-    await rejects(() => readDesktopSession(fixture({ 'sand-secrets.json': secrets('chosen', team) })), 'INVALID_TEAM_ID')
+    await rejects(() => readDesktopSession(fixture({ 'sand-secrets.json': secrets('chosen', team) })), 'invalid_team_id')
   }
 })
 
 test('validates account format, version and empty tokens', async () => {
-  await rejects(() => readDesktopSession(fixture({ 'sand-secrets.json': { ...secrets(), version: 2 } })), 'UNSUPPORTED_VERSION')
+  await rejects(() => readDesktopSession(fixture({ 'sand-secrets.json': { ...secrets(), version: 2 } })), 'unsupported_version')
   for (const token of ['', '   ']) {
     const accounts = { active: 'chosen', accounts: { chosen: { 'cursor-access-token': token ? encrypt(token) : '' } } }
-    await rejects(() => readDesktopSession(fixture({ 'sand-secrets.json': { 'cursor-accounts': JSON.stringify(accounts) } })), token ? 'not_signed_in' : 'MISSING_ENCRYPTED_PAYLOAD')
+    await rejects(() => readDesktopSession(fixture({ 'sand-secrets.json': { 'cursor-accounts': JSON.stringify(accounts) } })), token ? 'not_signed_in' : 'missing_encrypted_payload')
   }
 })
 
@@ -107,8 +106,8 @@ test('missing folder prompts sign-in and unsupported platforms touch nothing', a
 
 test('file and keychain failures never expose underlying errors', async () => {
   const unsafe = () => { throw new Error(PASSWORD + TOKEN + GATEWAY_TOKEN) }
-  await rejects(() => readDesktopSession({ ...fixture(), readFile: async () => unsafe() }), 'SESSION_READ_FAILED')
-  await rejects(() => readDesktopSession({ ...fixture({ 'gateway-descriptor.json': { encrypted: payload() } }), readKeychainPassword: async () => unsafe() }), 'KEYCHAIN_UNAVAILABLE')
+  await rejects(() => readDesktopSession({ ...fixture(), readFile: async () => unsafe() }), 'session_read_failed')
+  await rejects(() => readDesktopSession({ ...fixture({ 'gateway-descriptor.json': { encrypted: payload() } }), readKeychainPassword: async () => unsafe() }), 'keychain_unavailable')
 })
 
 test('loads route and account with one password read per session', async () => {
@@ -118,5 +117,23 @@ test('loads route and account with one password read per session', async () => {
   assert.ok(session.route)
   assert.ok(session.account)
   assert.equal(calls, 1)
-  await rejects(() => readDesktopSession({ ...deps, readKeychainPassword: () => { throw new Error(PASSWORD + TOKEN + GATEWAY_TOKEN) } }), 'KEYCHAIN_UNAVAILABLE')
+  await rejects(() => readDesktopSession({ ...deps, readKeychainPassword: () => { throw new Error(PASSWORD + TOKEN + GATEWAY_TOKEN) } }), 'keychain_unavailable')
+})
+
+test('null selected team is absent', async () => {
+  const session = await readDesktopSession(fixture({ 'sand-secrets.json': secrets('chosen', null) }))
+  assert.deepEqual(session.account, { key: 'chosen', accessToken: TOKEN })
+})
+
+test('empty route cache permits a signed-in account but requires sign-in otherwise', async () => {
+  for (const version of [2, 3]) {
+    const descriptor = { version, entries: {} }
+    const session = await readDesktopSession(fixture({
+      'gateway-descriptor.json': descriptor,
+      'sand-secrets.json': secrets()
+    }))
+    assert.equal(session.route, undefined)
+    assert.deepEqual(session.account, { key: 'chosen', accessToken: TOKEN })
+    await rejects(() => readDesktopSession(fixture({ 'gateway-descriptor.json': descriptor })), 'not_signed_in')
+  }
 })

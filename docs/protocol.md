@@ -84,6 +84,11 @@ active-account fallback. The cached descriptor has no expiry field consumed by
 this client. Refresh changes the in-memory session; this code does not write
 fresh routes to the descriptor (`loadGrokBotGatewaySession`, `refreshGateway`).
 
+Our desktop reader deliberately differs from gbot for v2/v3 descriptors with
+zero entries: it returns the signed-in account without a `route`, so the caller
+can request a fresh route after the cloud computer sleeps. Without an account
+it throws `not_signed_in`; multiple entries still throw `ambiguous_entries`.
+
 Fresh route request (`ensureSandbox`, `ensureSandboxHeaders`):
 
 ```http
