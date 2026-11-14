@@ -34,8 +34,8 @@ and your requests only to Grok Bot's own servers: hosts under `cursor.sh`,
 | Schedule a task | Sends the bot a clearly worded request; Grok Bot creates routines from chat |
 | See recent routine changes | Reads routine events from the latest messages; this is not a full routine list |
 
-Bots that run on Grok Bot's server (new bots do) cannot be messaged or deleted
-from Bot Deck yet; use the Grok Bot app for those bots. Routines cannot be
+Bots that run on Grok Bot's server can be messaged and deleted through the
+backend API. Conversation reads still use the gateway. Routines cannot be
 listed, paused or edited directly (ask the bot in chat). Forms and attachments
 open in the Grok Bot app. The bot's computer view is not shown.
 
@@ -45,7 +45,9 @@ open in the Grok Bot app. The bot's computer view is not shown.
 - `src/worker.ts`: handlers for panel actions
 - `src/session.ts`: reads the signed-in desktop app's session
 - `src/connection.ts`: owns the connection route and refreshes it when needed
-- `src/gateway.ts`: makes the HTTP calls to Grok Bot
+- `src/transport.ts`: shared HTTP transport, credential checks and backend headers
+- `src/gateway.ts`: gateway calls and gateway/backend routing
+- `src/server.ts`: backend roster, send and delete calls
 - `shared/model.ts`: data shapes and message wording used by both panel and worker
 
 ## Develop

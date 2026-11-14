@@ -6,6 +6,7 @@ export type Bot = {
   instructions: string
   avatarShape: string
   avatarColor: string
+  serverRun: boolean
   hidden: boolean
 }
 
@@ -56,6 +57,7 @@ export function toBot(raw: unknown): Bot {
     avatarShape: str(r.avatarShape) || 'square',
     // Grok Bot leaves the colour unset for many bots: pick a stable one from the id instead.
     avatarColor: str(r.avatarColor) || FALLBACK_COLORS[hash(str(r.id) || str(r.agentId)) % FALLBACK_COLORS.length],
+    serverRun: r.harness === 'temporal',
     hidden: Boolean(r.isHiddenFromSidebar ?? r.hiddenFromSidebar)
   }
 }

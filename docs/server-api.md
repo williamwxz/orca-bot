@@ -93,7 +93,7 @@ five auth/context headers listed in
 `x-cursor-team-id` when selected. The server answers. Unary JSON therefore works
 for at least this method without the additional optional headers below; it
 remains untested for every other method documented here. Header construction
-is also visible in `ensureSandbox` in `src/gateway.ts`.
+is shared by `ensureSandbox` and the backend calls in `src/transport.ts`.
 
 The examples here use protobuf-JSON field names for readability: camelCase;
 64-bit integers as decimal strings; bytes as base64; enum numbers shown where
@@ -657,3 +657,32 @@ recommendation, not behavior recovered from the app.
 8. High confidence: server automation list, batch list, pause/resume, delete, webhook run, and team-policy RPCs are mapped.
 9. High confidence in gateway routing, unknown success: routine create/edit/ordinary-run-now have no server mapping in this build.
 10. No new live validation; existing EnsureSandBox JSON success is reviewer-reported, while other methods and optional-header requirements remain untested.
+
+
+## Implemented in Bot Deck
+
+- Unary Connect JSON for ListGrokBotAgents, SendGrokBotUserMessage and
+  DeleteGrokBotAgent, with the existing EnsureSandBox headers and 30 s deadline.
+- Gateway roster harness takes precedence; missing harness is filled from one
+  backend roster read by runtime agentId. Failed enrichment leaves serverRun
+  false; backend-only bots are not added. The harness map is replaced per list.
+- Known temporal sends/deletes use the backend. Other bots use the gateway;
+  definite send HTTP 409 or delete refusedAgentIds allows one backend attempt.
+  Send fallback preserves the nonce. No timeout, dropped connection or 5xx
+  triggers another write, and no gateway delete mirror is performed.
+- Delivery numbers 1/2/3 and names ACCEPTED_BOX, ACCEPTED_TEMPORAL, DUPLICATE
+  (also with GROK_BOT_USER_MESSAGE_DELIVERY_ prefix) mean accepted. Number 4,
+  REFUSED (also prefixed), or a refusal object means rejected; other delivery
+  values mean unknown. Names are compatibility choices because this reference
+  only reproduces the numeric values and the UNSPECIFIED enum search anchor.
+  Acceptance does not turn the nonce into a transcript entry id.
+- Connect authentication/permission failures map to sign-in for reads and
+  refusal for writes; Unimplemented means unsupported version; delete NotFound
+  counts as already deleted. Errors are redacted with the account token.
+- Scope follows WIL-56 part 3: only temporal is serverRun; other supplied
+  harnesses retain gateway routing, unlike the desktop unsupported-harness
+  guard. No backend create/profile, transcript, routines, status polling,
+  streaming, optional headers, or desktop mutation replay is implemented.
+
+These calls have fake-fetch coverage only; live JSON compatibility remains
+unverified. Runtime agentId is used for delete, not the server record id.
