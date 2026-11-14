@@ -1,0 +1,40 @@
+{
+  "$schema": "https://raw.githubusercontent.com/stablyai/orca/main/docs/schemas/plugins/orca-plugin.v2.schema.json",
+  "manifestVersion": 2,
+  "id": "bot-deck",
+  "name": "Bot Deck for Grok Bot",
+  "version": "0.1.0",
+  "description": "Unofficial sidebar client for your Grok Bot bots: pick a bot, chat, create and delete bots, and schedule tasks. Uses the gbot CLI and your signed-in Grok Bot desktop app.",
+  "license": "MIT",
+  "engines": {
+    "orca": ">=1.4.246"
+  },
+  "execution": "trusted-worker",
+  "pluginApi": 1,
+  "main": "src/worker.ts",
+  "contributes": {
+    "panels": [
+      {
+        "id": "bots",
+        "title": "Bot Deck",
+        "icon": "bot",
+        "entry": "panel/index.html"
+      }
+    ],
+    "settings": [
+      {
+        "key": "gbotPath",
+        "title": "gbot path",
+        "description": "Full path to the gbot (grok-bot-cli) executable. Leave empty to find it on PATH and in the usual npm and Homebrew folders.",
+        "type": "string",
+        "default": "",
+        "placeholder": "/opt/homebrew/bin/gbot"
+      }
+    ]
+  },
+  "capabilities": [
+    {
+      "kind": "settings:own"
+    }
+  ]
+}

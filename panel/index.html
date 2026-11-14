@@ -1,0 +1,49 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Bot Deck</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div id="app" data-view="list">
+      <aside id="list" aria-label="Bots">
+        <header class="bar">
+          <strong>Bots</strong>
+          <span class="spacer"></span>
+          <button id="refresh" class="icon" title="Refresh" aria-label="Refresh">↻</button>
+          <button id="new-bot" class="icon" title="New bot" aria-label="New bot">+</button>
+        </header>
+        <div id="bots" role="listbox" aria-label="Bots"></div>
+      </aside>
+
+      <main id="chat">
+        <header class="bar">
+          <button id="back" class="icon narrow-only" title="All bots" aria-label="All bots">‹</button>
+          <span id="chat-avatar"></span>
+          <strong id="chat-title"></strong>
+          <span class="spacer"></span>
+          <button id="open-info" class="icon" title="Bot details" aria-label="Bot details">⋯</button>
+        </header>
+        <div id="messages" aria-live="polite"></div>
+        <form id="composer">
+          <textarea id="input" rows="1" placeholder="Message" aria-label="Message"></textarea>
+          <button id="send" type="submit" class="primary" title="Send" aria-label="Send">↑</button>
+        </form>
+      </main>
+
+      <aside id="info" aria-label="Bot details">
+        <header class="bar">
+          <button id="close-info" class="icon" title="Close details" aria-label="Close details">✕</button>
+          <strong>Details</strong>
+        </header>
+        <div id="info-body"></div>
+      </aside>
+
+      <section id="empty"></section>
+    </div>
+    <div id="modal" hidden></div>
+    <script type="module" src="app.ts"></script>
+  </body>
+</html>
