@@ -12,6 +12,25 @@ anchors in that archive. Schema names are also searchable. Examples are invented
 responses illustrate shapes, not captured traffic. **Inferred** marks conclusions
 that the client code alone does not establish.
 
+## What Bot Deck needs first
+
+Implement this smallest set in order:
+
+1. Know each bot's harness, runtime id, and server record id
+   ([section 1](#1-routing-identity)). The inspected code consumes roster
+   `harness`, but does not establish that raw gateway `listAgents` rows always
+   carry it or the server record id. `ListGrokBotAgents` is the confirmed source
+   for all three fields; use it to fill gaps rather than assuming gateway rows
+   are sufficient. Whether it is required for every gateway build is unsettled.
+   Evidence: `raw:l.harness,previous:r.get(d)`, `function cA(e,t,n)`, `serverId:e.id`.
+2. Send with `SendGrokBotUserMessage` ([section 3](#3-sending-a-message)).
+3. Delete with `DeleteGrokBotAgent` ([section 4](#delete)).
+4. Read with `ListGrokBotTranscriptEntries` if the gateway tail does not serve
+   server-run bots ([section 5](#5-transcript-reads-and-live-updates)).
+5. Add `ListGrokBotAgentAutomations`, `SetGrokBotAgentAutomationEnabled` for
+   pause/resume, and `DeleteGrokBotAgentAutomation`
+   ([section 6](#6-routines-and-automations)).
+
 ## 1. Routing identity
 
 The coordinator records each roster row's `id` and `harness`. `"temporal"` means
@@ -63,7 +82,19 @@ The desktop uses Connect over HTTP/1.1, POST, binary protobuf by default.
 Unary request and response bodies are individual protobuf messages. Streaming
 uses Connect framing, not a sequence of gateway JSON responses. The bundled
 transport also supports JSON serialization; using JSON for a new plugin client
-is **inferred** to work from that transport, not verified against the server.
+is **inferred** to work from that transport for the methods below.
+
+**Observed** (reviewer-reported existing Bot Deck behavior, not a new test):
+Bot Deck already calls `EnsureSandBox` on this same GrokBotService with
+`content-type: application/json`, `connect-protocol-version: 1`, and only the
+five auth/context headers listed in
+[protocol.md section 2](protocol.md#2-gateway-route-and-refresh): `authorization`,
+`x-cursor-client-type`, `x-cursor-client-version`, `x-sand-box-namespace`, and
+`x-cursor-team-id` when selected. The server answers. Unary JSON therefore works
+for at least this method without the additional optional headers below; it
+remains untested for every other method documented here. Header construction
+is also visible in `ensureSandbox` in `src/gateway.ts`.
+
 The examples here use protobuf-JSON field names for readability: camelCase;
 64-bit integers as decimal strings; bytes as base64; enum numbers shown where
 useful. Evidence: `useBinaryFormat:e.useBinaryFormat??!0`,
@@ -101,7 +132,8 @@ Do not substitute the EnsureSandBox response's gateway token.
 Additional experiment, lineage, trace, and workload headers are conditionally
 added. They are not proof of server requirements. Evidence:
 `x-dev-experiment-overrides`, `IPe(e.lineage)`, `function p3t(e,t)`.
-Which optional headers a standalone client may omit remains untested.
+Which optional headers a standalone client may omit for methods other than
+EnsureSandBox remains untested.
 
 For unary binary calls, content-type is `application/proto`; for a JSON
 implementation use `application/json`. Both use `connect-protocol-version: 1`
@@ -586,7 +618,8 @@ recommendation, not behavior recovered from the app.
 
 ## 8. Open questions
 
-- JSON requests against these endpoints were not tested. The bundled Connect
+- JSON requests against these endpoints other than the reviewer-reported
+  EnsureSandBox call were not tested. The bundled Connect
   transport supports JSON, but this desktop path defaults to protobuf. Required
   optional headers and current server compatibility remain unknown.
 - No direct backend routine create/edit/ordinary-run-now mapping was found.
@@ -623,4 +656,4 @@ recommendation, not behavior recovered from the app.
 7. High confidence: server transcript pages and WatchGrokBotTranscripts exist; complete thread mapping/reconnect behavior remains open.
 8. High confidence: server automation list, batch list, pause/resume, delete, webhook run, and team-policy RPCs are mapped.
 9. High confidence in gateway routing, unknown success: routine create/edit/ordinary-run-now have no server mapping in this build.
-10. No live validation: feature gates, required optional headers, nonce retention, full schemas, and current server support remain open.
+10. No new live validation; existing EnsureSandBox JSON success is reviewer-reported, while other methods and optional-header requirements remain untested.
