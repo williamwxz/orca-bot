@@ -121,6 +121,21 @@ test('create, update, delete and send make exactly the expected gateway calls', 
   await worker.deactivate()
 })
 
+test('refused and failed deletions reach the panel as errors without retry or refresh', async () => {
+  for (const [field, message] of [
+    ['refusedAgentIds', 'Grok Bot refused to delete this bot. Delete it in the Grok Bot app.'],
+    ['failedAgentIds', 'Grok Bot could not delete this bot. Try again, or delete it in the Grok Bot app.']
+  ]) {
+    const { worker, calls } = await mount({
+      answer: (call) => call.url.endsWith('/api/deleteAgent') ? json({ [field]: [BOT] }) : undefined
+    })
+    await assert.rejects(worker.request('bots.delete', { id: BOT }), (e: any) => e.message === message)
+    assert.equal(calls.length, 1)
+    assert.ok(calls[0].url.endsWith('/api/deleteAgent'))
+    await worker.deactivate()
+  }
+})
+
 test('refuses bad input before any request is made', async () => {
   const { worker, calls } = await mount()
   await assert.rejects(worker.request('bots.delete', { id: 'Researcher' }), /Unknown bot id/)

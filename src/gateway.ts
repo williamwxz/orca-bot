@@ -268,7 +268,13 @@ export function createGatewayClient(options: ClientOptions) {
       })
     },
     async deleteBot(id: string) {
-      await write('deleteAgent', { id })
+      const result = await write('deleteAgent', { id })
+      if (Array.isArray(result?.refusedAgentIds) && result.refusedAgentIds.includes(id)) {
+        throw failure('delete_refused', 'Grok Bot refused to delete this bot. Delete it in the Grok Bot app.')
+      }
+      if (Array.isArray(result?.failedAgentIds) && result.failedAgentIds.includes(id)) {
+        throw failure('delete_failed', 'Grok Bot could not delete this bot. Try again, or delete it in the Grok Bot app.')
+      }
     },
     async readThread(id: string, limit = 40) {
       const count = Math.min(200, Math.max(1, Number.isInteger(limit) ? limit : 40))

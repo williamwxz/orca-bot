@@ -60,7 +60,7 @@ export function toBot(raw: unknown): Bot {
   }
 }
 
-/** One gbot transcript entry, reduced to what the panel draws. Unknown kinds are kept as a label. */
+/** One transcript entry, reduced to what the panel draws. */
 export function toEntry(raw: unknown): Entry {
   const r = obj(raw)
   const base = { id: str(r.id), ts: typeof r.timestampMs === 'number' ? r.timestampMs : 0 }

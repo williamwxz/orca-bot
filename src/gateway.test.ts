@@ -76,6 +76,28 @@ test('deleteBot sends the supplied id directly', async () => {
   await assert.rejects(fake([bad()]).client.deleteBot('example-bot'), /403/)
 })
 
+test('deleteBot reports a refused deletion even with HTTP 200', async () => {
+  const f = fake([{ transcript: [], refusedAgentIds: ['example-bot'] }])
+  await assert.rejects(f.client.deleteBot('example-bot'), (e: any) =>
+    e.code === 'delete_refused' && e.message === 'Grok Bot refused to delete this bot. Delete it in the Grok Bot app.')
+  assert.deepEqual(f.calls, [expected('deleteAgent', { id: 'example-bot' })])
+})
+
+test('deleteBot reports a failed deletion even with HTTP 200', async () => {
+  const f = fake([{ failedAgentIds: ['example-bot'] }])
+  await assert.rejects(f.client.deleteBot('example-bot'), (e: any) =>
+    e.code === 'delete_failed' && e.message === 'Grok Bot could not delete this bot. Try again, or delete it in the Grok Bot app.')
+  assert.deepEqual(f.calls, [expected('deleteAgent', { id: 'example-bot' })])
+})
+
+test('deleteBot succeeds unless the supplied id is listed as refused or failed', async () => {
+  for (const body of [{}, { refusedAgentIds: [], failedAgentIds: [] }, { refusedAgentIds: ['other-bot'], failedAgentIds: ['other-bot'] }]) {
+    const f = fake([body])
+    assert.equal(await f.client.deleteBot('example-bot'), undefined)
+    assert.deepEqual(f.calls, [expected('deleteAgent', { id: 'example-bot' })])
+  }
+})
+
 test('readThread clamps limits and normalizes entries', async () => {
   const entry = { id: 'example-entry', kind: 'message', content: [{ text: 'Hi' }], role: 'user', timestampMs: 1 }
   const f = fake([{ entries: [entry] }])
