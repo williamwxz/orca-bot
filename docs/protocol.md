@@ -366,6 +366,14 @@ On errors, explicit delivery is preserved. Otherwise HTTP errors below 500 mean
 include `targetId`; unknown delivery warns to check the thread before resending.
 Do not automatically replay a send (`sendPrompt`, `gatewayCall`).
 
+**Observed:** `POST /api/sendPrompt` for a bot running on Grok Bot's server
+returns HTTP 409 with the JSON `message`: "This Bot runs on the server, and this
+version of the app can't message it. Update the app and try again."
+Bot Deck maps every HTTP 409 from `sendPrompt`, regardless of response wording,
+to code `server_bot`, preserves status 409, and shows: "This bot runs on Grok Bot's
+server, which Bot Deck cannot reach yet. Use the Grok Bot app for this bot."
+This is a definite rejection: it is never retried or reported as an unknown outcome.
+
 ## 5. Routines and workflow skills
 
 **gbot has no direct scheduled-routine create, pause, resume, update or delete
@@ -478,7 +486,8 @@ used on that path. Linux/Windows have no app-bundle version fallback
 - **Observed:** the Grok Bot app deletes server-managed ("temporal" harness)
   bots through a separate server call before the gateway call, and reads routines
   from the server. gbot knows neither server operation, and this client does not
-  implement them yet. What are their request and response contracts?
+  implement them yet. Sending to these bots through `sendPrompt` is refused too
+  (HTTP 409, documented above). What are their request and response contracts?
 
 - **Observed:** `nextBeforeSeq` suggests the server pages backwards, but gbot
   never sends a matching request field. How should a client request older pages?

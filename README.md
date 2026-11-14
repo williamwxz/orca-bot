@@ -34,7 +34,8 @@ and your requests only to Grok Bot's own servers: hosts under `cursor.sh`,
 | Schedule a task | Sends the bot a clearly worded request; Grok Bot creates routines from chat |
 | See recent routine changes | Reads routine events from the latest messages; this is not a full routine list |
 
-Some bots refuse deletion; delete those in the Grok Bot app. Routines cannot be
+Bots that run on Grok Bot's server (new bots do) cannot be messaged or deleted
+from Bot Deck yet; use the Grok Bot app for those bots. Routines cannot be
 listed, paused or edited directly (ask the bot in chat). Forms and attachments
 open in the Grok Bot app. The bot's computer view is not shown.
 

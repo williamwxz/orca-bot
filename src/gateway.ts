@@ -102,6 +102,14 @@ async function request(url: string, headers: Record<string, string>, body: unkno
       void response.body?.cancel().catch(() => {})
       throw failure('not_signed_in', 'Open the Grok Bot app and sign in, then retry.')
     }
+    // The status establishes rejection even if the response body cannot be read.
+    if (method === 'sendPrompt' && response.status === 409) {
+      void response.body?.cancel().catch(() => {})
+      throw Object.assign(failure('server_bot', "This bot runs on Grok Bot's server, which Bot Deck cannot reach yet. Use the Grok Bot app for this bot."), {
+        status: response.status,
+        method
+      })
+    }
     // A successful write must never invite a duplicate just because its body is unusable.
     if (response.ok && !READ_METHODS.has(method)) {
       writeSucceeded = true
@@ -126,7 +134,7 @@ async function request(url: string, headers: Record<string, string>, body: unkno
   } catch (error) {
     // Never expose fetch errors: they may contain URLs or credential headers.
     if (writeSucceeded) return {}
-    const codes = ['timeout', 'response_too_large', 'unsupported_version', 'gateway_error', 'not_signed_in']
+    const codes = ['timeout', 'response_too_large', 'unsupported_version', 'gateway_error', 'not_signed_in', 'server_bot']
     if (error instanceof Error && codes.includes((error as any).code)) throw error
     throw failure('connection_failed', 'Could not reach Grok Bot. Check the connection and try again')
   } finally {
