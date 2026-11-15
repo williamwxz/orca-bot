@@ -55,9 +55,9 @@ function defaults(): WorkerDeps {
 export function versionMessage(version: string): string {
   const tested = TESTED_OPENMAUSBOT_VERSION
   const comparison = compareVersions(version, tested)
-  if (comparison === undefined) return `OpenMausBot is running, but its version (${version}) is unknown. Bot Deck cannot compare it with the tested version (${tested}).`
-  if (comparison > 0) return `OpenMausBot ${version} is newer than the version Bot Deck was tested with (${tested}). It should work; tell us if something looks wrong.`
-  if (comparison < 0) return `OpenMausBot ${version} is older than Bot Deck expects (${tested}). Update OpenMausBot.`
+  if (comparison === undefined) return `OpenMausBot is running, but its version (${version}) is unknown. Orca Bot cannot compare it with the tested version (${tested}).`
+  if (comparison > 0) return `OpenMausBot ${version} is newer than the version Orca Bot was tested with (${tested}). It should work; tell us if something looks wrong.`
+  if (comparison < 0) return `OpenMausBot ${version} is older than Orca Bot expects (${tested}). Update OpenMausBot.`
   return ''
 }
 
@@ -80,7 +80,7 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaults()): vo
       linkMessage = ''
       linkRetryAt = -Infinity
     } catch (error) {
-      linkMessage = error instanceof Error && /^Could not add Bot Deck to (Claude|Codex)\.$/.test(error.message) ? error.message : 'Could not update Bot Deck setup.'
+      linkMessage = error instanceof Error && /^Could not add Orca Bot to (Claude|Codex)\.$/.test(error.message) ? error.message : 'Could not update Orca Bot setup.'
       linkRetryAt = deps.now() + 60000
       throw new Error(linkMessage)
     }
@@ -206,7 +206,7 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaults()): vo
     await deps.addMausBot({ port, botId: input.botId })
     return { message: 'MausBot added.' }
   })
-  orca.commands.register('botdeck.open', () => chat())
+  orca.commands.register('orcabot.open', () => chat())
   const stop = async (): Promise<StopResult> => {
     // Wait for our own startup so a stop command cannot leave it running afterwards.
     await pending
@@ -219,7 +219,7 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaults()): vo
     return result
   }
   orca.panels.handle('server.stop', stop)
-  orca.commands.register('botdeck.stopServer', stop)
+  orca.commands.register('orcabot.stopServer', stop)
 }
 
 export default function activate(orca: OrcaWorkerApi): void {

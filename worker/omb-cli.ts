@@ -56,7 +56,7 @@ export function defaultCliDeps(): CliDeps {
 }
 
 export function ombBinary(deps: CliDeps): string {
-  return join(deps.home, '.bot-deck/openmausbot', TESTED_OPENMAUSBOT_VERSION, 'node_modules/.bin/openmausbot')
+  return join(deps.home, '.orca-bot/openmausbot', TESTED_OPENMAUSBOT_VERSION, 'node_modules/.bin/openmausbot')
 }
 
 export function cliOptions(deps: CliDeps, timeout = 10000) {

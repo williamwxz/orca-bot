@@ -34,7 +34,7 @@ test('pairing screen triggers a fresh pair, exact snapshot/click arrays, then re
     ['storage', 'local', 'set', '--key', 'omb-analytics-opt-out', '--value', '1', '--page', 'page-1', '--json'],
     ['goto', '--url', wanted, '--page', 'page-1', '--json'],
     ['snapshot', '--page', 'page-1'],
-    ['pair', '--label', 'Orca', '--port', '18799', '--data-dir', '/fake/.bot-deck/data'],
+    ['pair', '--label', 'Orca', '--port', '18799', '--data-dir', '/fake/.orca-bot/data'],
     ['goto', '--url', secret, '--page', 'page-1', '--json'],
     ['snapshot', '--page', 'page-1'],
     ['click', '--element', 'e11', '--page', 'page-1', '--json'],

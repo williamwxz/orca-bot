@@ -23,13 +23,13 @@ export function defaultLinkDeps(): LinkDeps {
   if (process.env.NODE_TEST_CONTEXT) throw new Error('Tests must inject agent link dependencies')
   const cli = defaultCliDeps()
   const server = defaultServerDeps()
-  const file = join(cli.home, '.bot-deck/agent-link.json')
+  const file = join(cli.home, '.orca-bot/agent-link.json')
   return {
     ...cli, bin: ombBinary(cli),
     claudeEnv: () => claudeEnvironment(server, false).env,
     read: () => { try { return fs.readFileSync(file, 'utf8') } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw new Error('Could not read setup.') } },
     write: (value) => {
-      fs.mkdirSync(join(cli.home, '.bot-deck'), { recursive: true, mode: 0o700 })
+      fs.mkdirSync(join(cli.home, '.orca-bot'), { recursive: true, mode: 0o700 })
       fs.writeFileSync(file, value, { mode: 0o600 })
       fs.chmodSync(file, 0o600)
     },
@@ -43,7 +43,7 @@ export function defaultLinkDeps(): LinkDeps {
         try {
           const entries: unknown = JSON.parse(stdout)
           if (!Array.isArray(entries)) throw new Error()
-          resolve(entries.some((entry) => entry?.name === 'bot-deck'))
+          resolve(entries.some((entry) => entry?.name === 'orca-bot'))
         } catch { reject(new Error('Could not check setup.')) }
       })
     })
@@ -78,7 +78,7 @@ export async function syncAgentLinks(input: { enabled: boolean; owned: boolean; 
       const entry = record[agent as Agent]
       if (!['claude', 'codex'].includes(agent) || !entry || !Number.isInteger(entry.port) || typeof entry.bin !== 'string') throw new Error()
     }
-  } catch { throw new Error('Could not read Bot Deck setup.') }
+  } catch { throw new Error('Could not read Orca Bot setup.') }
   for (const agent of ['claude', 'codex'] as const) {
     const file = found[agent]
     if (!file) continue
@@ -89,16 +89,16 @@ export async function syncAgentLinks(input: { enabled: boolean; owned: boolean; 
       const env = agent === 'claude' ? deps.claudeEnv() : childEnvironment(deps)
       const scope = agent === 'claude' ? ['--scope', 'user'] : []
       if (previous) {
-        await deps.execFile(file, ['mcp', 'remove', ...scope, 'bot-deck'], env)
+        await deps.execFile(file, ['mcp', 'remove', ...scope, 'orca-bot'], env)
         delete record[agent]
         deps.write(JSON.stringify(record))
       }
       if (input.enabled) {
         if (agent === 'codex' && !previous && await deps.codexEntryExists(file, env)) throw new Error()
-        await deps.execFile(file, ['mcp', 'add', ...scope, 'bot-deck', agent === 'claude' ? '-e' : '--env', `OMB_PORT=${input.port}`, '--', deps.bin, 'mcp'], env)
+        await deps.execFile(file, ['mcp', 'add', ...scope, 'orca-bot', agent === 'claude' ? '-e' : '--env', `OMB_PORT=${input.port}`, '--', deps.bin, 'mcp'], env)
         record[agent] = { port: input.port, bin: deps.bin }
         deps.write(JSON.stringify(record))
       }
-    } catch { throw new Error(`Could not add Bot Deck to ${agent === 'claude' ? 'Claude' : 'Codex'}.`) }
+    } catch { throw new Error(`Could not add Orca Bot to ${agent === 'claude' ? 'Claude' : 'Codex'}.`) }
   }
 }

@@ -67,8 +67,8 @@ test('worker preserves failure until explicit Retry', async () => {
 })
 
 test('version messages explain compatibility in either direction', () => {
-  assert.equal(versionMessage('999.0'), `OpenMausBot 999.0 is newer than the version Bot Deck was tested with (${testedVersion}). It should work; tell us if something looks wrong.`)
-  assert.equal(versionMessage('0.0'), `OpenMausBot 0.0 is older than Bot Deck expects (${testedVersion}). Update OpenMausBot.`)
+  assert.equal(versionMessage('999.0'), `OpenMausBot 999.0 is newer than the version Orca Bot was tested with (${testedVersion}). It should work; tell us if something looks wrong.`)
+  assert.equal(versionMessage('0.0'), `OpenMausBot 0.0 is older than Orca Bot expects (${testedVersion}). Update OpenMausBot.`)
   assert.equal(versionMessage(testedVersion), '')
 })
 
@@ -102,7 +102,7 @@ test('chat and roster handlers refuse before running and validate bot IDs', asyn
       await assert.rejects(worker.request(name, {}), /OpenMausBot is not running yet/)
     }
     assert.equal(calls.length, 0)
-    await assert.rejects(worker.command('botdeck.open'), /OpenMausBot is not running yet/)
+    await assert.rejects(worker.command('orcabot.open'), /OpenMausBot is not running yet/)
     await worker.request('status', {})
     await new Promise<void>((resolve) => setImmediate(resolve))
     for (const botId of ['bad', 123, null, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/evil']) {
@@ -113,7 +113,7 @@ test('chat and roster handlers refuse before running and validate bot IDs', asyn
     assert.deepEqual(calls[0], { port: 18799, startedByPlugin: true, botId })
     assert.deepEqual(await worker.request('bots.list', {}), [])
     assert.deepEqual(calls[1], { port: 18799 })
-    assert.deepEqual(await worker.command('botdeck.open'), { message: 'Opened' })
+    assert.deepEqual(await worker.command('orcabot.open'), { message: 'Opened' })
     assert.deepEqual(calls[2], { port: 18799, startedByPlugin: true, botId: undefined })
     await worker.request('server.stop', {})
     await assert.rejects(worker.request('chat.open', {}), /OpenMausBot is not running yet/)
@@ -376,7 +376,7 @@ test('health link failure preserves running server with a generic notice', async
     await worker.request('status', {}); await new Promise<void>((resolve) => setImmediate(resolve))
     const status = await worker.request('status', {}) as any
     assert.equal(status.state, 'running')
-    assert.equal(status.message, 'Could not update Bot Deck setup.')
+    assert.equal(status.message, 'Could not update Orca Bot setup.')
   } finally { await worker.deactivate() }
 })
 
@@ -384,7 +384,7 @@ test('failed links back off for 60 seconds, keep the notice, and retry immediate
   const deps = setupDeps()
   let now = 0, calls = 0, api: any, fail = true
   deps.now = () => now
-  deps.syncAgentLinks = async () => { calls++; if (fail) throw new Error('Could not add Bot Deck to Codex.') }
+  deps.syncAgentLinks = async () => { calls++; if (fail) throw new Error('Could not add Orca Bot to Codex.') }
   const worker = await mountWorker({ default: (orca) => { api = orca; register(orca, deps) } }, { host: mockHost({ storage: { setupAnswered: true }, settings: { linkAgents: true } }) })
   try {
     await worker.request('status', {}); await new Promise<void>((resolve) => setImmediate(resolve))
@@ -392,7 +392,7 @@ test('failed links back off for 60 seconds, keep the notice, and retry immediate
     assert.equal(calls, 1)
     for (now = 2000; now < 60000; now += 2000) {
       const status = await worker.request('status', {}) as any
-      assert.equal(status.message, 'Could not add Bot Deck to Codex.')
+      assert.equal(status.message, 'Could not add Orca Bot to Codex.')
       assert.equal(calls, 1)
     }
     await worker.request('status', {})
@@ -416,7 +416,7 @@ test('setup answers bypass a previous link backoff but failed answers do not cau
   const deps = setupDeps()
   let now = 0, calls = 0, fail = true
   deps.now = () => now
-  deps.syncAgentLinks = async () => { calls++; if (fail) throw new Error('Could not add Bot Deck to Claude.') }
+  deps.syncAgentLinks = async () => { calls++; if (fail) throw new Error('Could not add Orca Bot to Claude.') }
   const worker = await mountWorker({ default: (orca) => register(orca, deps) }, { host: mockHost() })
   try {
     await worker.request('status', {}); await new Promise<void>((resolve) => setImmediate(resolve))
@@ -426,7 +426,7 @@ test('setup answers bypass a previous link backoff but failed answers do not cau
     await assert.rejects(worker.request('setup.answer', { shareTools: true, linkAgents: true }), /Could not finish setup/)
     assert.equal(calls, 2)
     now = 2001
-    assert.equal((await worker.request('status', {}) as any).message, 'Could not add Bot Deck to Claude.')
+    assert.equal((await worker.request('status', {}) as any).message, 'Could not add Orca Bot to Claude.')
     assert.equal(calls, 2)
     fail = false
     await worker.request('setup.answer', { shareTools: true, linkAgents: true })

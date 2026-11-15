@@ -164,7 +164,7 @@ export async function claudeSetupStatus(port: number, share: boolean, deps: Serv
   if (!await isPluginServer(port, deps)) return { restart: false, message: '' }
   const { flags, found } = claudeEnvironment(deps, share)
   try {
-    const record = JSON.parse(deps.read(join(deps.home, '.bot-deck/server.pid')))
+    const record = JSON.parse(deps.read(join(deps.home, '.orca-bot/server.pid')))
     const restart = !Number.isInteger(record.env) || record.env < ENV_VERSION || record.claudeHome !== flags.claudeHome || record.inherit !== flags.inherit
     return { restart, message: !found ? '' : restart ? 'Claude setup changes will apply when bots are idle.'
       : '' }
@@ -196,7 +196,7 @@ function redact(error: unknown): string {
 
 export async function ensureInstalled(version: string, deps: ServerDeps = defaultServerDeps()): Promise<string> {
   if (!/^\d+(\.\d+)*$/.test(version)) throw new ServerError('install_failed', 'Invalid OpenMausBot version.')
-  const folder = join(deps.home, '.bot-deck/openmausbot', version)
+  const folder = join(deps.home, '.orca-bot/openmausbot', version)
   const bin = join(folder, 'node_modules/.bin/openmausbot')
   if (deps.exists(bin)) return bin
   try {
@@ -211,12 +211,12 @@ export async function ensureInstalled(version: string, deps: ServerDeps = defaul
 export async function startServer(bin: string, port: number, deps: ServerDeps = defaultServerDeps(), share = false): Promise<Server> {
   try {
     const setup = claudeEnvironment(deps, share)
-    const folder = join(deps.home, '.bot-deck')
+    const folder = join(deps.home, '.orca-bot')
     deps.mkdir(folder)
     const fd = deps.open(join(folder, 'server.log'))
     let child: { pid: number; unref(): void }
     try {
-      // Bot Deck keeps its own OpenMausBot workspace, apart from any the person already has in
+      // Orca Bot keeps its own OpenMausBot workspace, apart from any the person already has in
       // ~/.openmausbot, so starting it never resumes routines or connections they set up elsewhere.
       const dataDir = join(folder, 'data')
       deps.mkdir(dataDir)
@@ -239,13 +239,13 @@ export async function startServer(bin: string, port: number, deps: ServerDeps = 
     throw new Error('The server did not become healthy within 30 seconds.')
   } catch (error) {
     // The log may contain a pairing code; never include its contents in an error.
-    throw new ServerError('start_failed', `Could not start OpenMausBot. Check ~/.bot-deck/server.log locally, then press Retry. ${error instanceof Error && ['The server did not become healthy within 30 seconds.', 'The OpenMausBot launcher exited before the server became ready.'].includes(error.message) ? error.message : 'Server launch failed.'}`)
+    throw new ServerError('start_failed', `Could not start OpenMausBot. Check ~/.orca-bot/server.log locally, then press Retry. ${error instanceof Error && ['The server did not become healthy within 30 seconds.', 'The OpenMausBot launcher exited before the server became ready.'].includes(error.message) ? error.message : 'Server launch failed.'}`)
   }
 }
 
 export async function isPluginServer(port: number, deps: ServerDeps = defaultServerDeps()): Promise<boolean> {
   try {
-    const record = JSON.parse(deps.read(join(deps.home, '.bot-deck/server.pid')))
+    const record = JSON.parse(deps.read(join(deps.home, '.orca-bot/server.pid')))
     if (record.port !== port || !Number.isSafeInteger(record.serverPid) || record.serverPid <= 0) return false
     const running = await health(port, deps)
     return running?.pid === record.serverPid
@@ -275,7 +275,7 @@ export function ensureServer(deps: ServerDeps = defaultServerDeps(), share = fal
 }
 
 export async function stopServer(deps: ServerDeps = defaultServerDeps()): Promise<StopResult> {
-  const path = join(deps.home, '.bot-deck/server.pid')
+  const path = join(deps.home, '.orca-bot/server.pid')
   try {
     const record = JSON.parse(deps.read(path)) as { launcherPid: number; serverPid: number; port: number }
     if (!Number.isSafeInteger(record.launcherPid) || record.launcherPid <= 0 || !Number.isSafeInteger(record.serverPid) || record.serverPid <= 0 || !ports.includes(record.port)) throw new Error('Invalid pid file')
@@ -287,12 +287,12 @@ export async function stopServer(deps: ServerDeps = defaultServerDeps()): Promis
       const remaining = await health(record.port, deps, Math.min(1500, deadline - deps.now()))
       if (!remaining) {
         deps.remove(path)
-        return { stopped: true, message: 'Stopped the OpenMausBot server started by Bot Deck.' }
+        return { stopped: true, message: 'Stopped the OpenMausBot server started by Orca Bot.' }
       }
       await deps.sleep(Math.min(250, Math.max(0, deadline - deps.now())))
     }
     return { stopped: false, message: 'Sent the stop signal, but OpenMausBot health is still responding. The pid file was kept; try stopping again.' }
   } catch {
-    return { stopped: false, message: 'Could not verify or stop a server started by Bot Deck; no other server was touched.' }
+    return { stopped: false, message: 'Could not verify or stop a server started by Orca Bot; no other server was touched.' }
   }
 }
