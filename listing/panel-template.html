@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Orca Bot</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main>
+    <header><div id="list-header"><h1 id="list-title">Orca Bot</h1><button id="open-page" type="button" disabled>Jump to Bot Dashboard</button></div><p id="message" role="status">Starting…</p></header>
+    <section id="setup" aria-labelledby="setup-title" hidden>
+      <h2 id="setup-title">Set up Orca Bot</h2>
+      <p class="setup-lead">Choose what to allow. You can change this later in Orca's Settings.</p>
+      <label class="setup-option">
+        <span class="setup-copy"><strong>Bots can use my tools</strong><small>Claude bots get your Claude connectors, MCP servers, skills and instructions. Codex bots always use your Codex setup.</small></span>
+        <input id="share-tools" class="switch" type="checkbox" role="switch" checked />
+      </label>
+      <label class="setup-option" id="link-agents-label">
+        <span class="setup-copy"><strong>My Orca agents can talk to the bots</strong><small>Adds Orca Bot's tools to <span id="agent-names">Claude and Codex</span>, so an agent can message a bot or read its replies.</small></span>
+        <input id="link-agents" class="switch" type="checkbox" role="switch" checked />
+      </label>
+      <label class="setup-option" id="import-tools-label" hidden>
+        <span class="setup-copy"><strong>Bring in tools from my AI apps</strong><small id="import-tools-copy"></small></span>
+        <input id="import-tools" class="switch" type="checkbox" role="switch" checked />
+      </label>
+      <div class="setup-actions">
+        <button id="setup-skip" type="button">Not now</button>
+        <button id="setup-allow" type="button">Allow</button>
+      </div>
+      <p id="setup-message" role="status"></p>
+    </section>
+    <section id="running" aria-label="Chat and bots" hidden>
+      <div id="roster-view">
+      <div id="roster" aria-label="Bots"></div>
+      <p id="refresh-note" role="status"></p>
+      </div>
+      <section id="bot-view" aria-label="Bot conversation" hidden></section>
+      <p id="result" role="status" aria-live="polite"></p>
+    </section>
+    <button id="retry" type="button" hidden>Retry</button>
+  </main>
+  <script type="module" src="app.ts"></script>
+</body>
+</html>

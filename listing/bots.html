@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en" class="light">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Orca Bot</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main>
+    <header><div id="list-header"><h1 id="list-title">Orca Bot</h1><button id="open-page" type="button">Jump to Bot Dashboard</button></div><p id="message" role="status">Your team, one conversation away.</p></header>
+    <section id="setup" aria-labelledby="setup-title" hidden>
+      <h2 id="setup-title">Set up Orca Bot</h2>
+      <p class="setup-lead">Choose what to allow. You can change this later in Orca's Settings.</p>
+      <label class="setup-option">
+        <span class="setup-copy"><strong>Bots can use my tools</strong><small>Claude bots get your Claude connectors, MCP servers, skills and instructions. Codex bots always use your Codex setup.</small></span>
+        <input id="share-tools" class="switch" type="checkbox" role="switch" checked />
+      </label>
+      <label class="setup-option" id="link-agents-label">
+        <span class="setup-copy"><strong>My Orca agents can talk to the bots</strong><small>Adds Orca Bot's tools to <span id="agent-names">Claude and Codex</span>, so an agent can message a bot or read its replies.</small></span>
+        <input id="link-agents" class="switch" type="checkbox" role="switch" checked />
+      </label>
+      <label class="setup-option" id="import-tools-label" hidden>
+        <span class="setup-copy"><strong>Bring in tools from my AI apps</strong><small id="import-tools-copy"></small></span>
+        <input id="import-tools" class="switch" type="checkbox" role="switch" checked />
+      </label>
+      <div class="setup-actions">
+        <button id="setup-skip" type="button">Not now</button>
+        <button id="setup-allow" type="button">Allow</button>
+      </div>
+      <p id="setup-message" role="status"></p>
+    </section>
+    <section id="running" aria-label="Chat and bots">
+      <div id="roster-view">
+      <div id="roster" aria-label="Bots"><div class="bot-row selected"><button class="bot-chat" type="button"><span class="avatar drawn"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" aria-hidden="true"><g fill="hsl(209 58% 60%)"><rect x="6" y="7" width="28" height="26" rx="10"/></g><g class="avatar-eyes" fill="hsl(209 40% 16%)"><circle cx="15" cy="19" r="2"/><circle cx="25" cy="19" r="2"/></g><path d="M16 26h8" stroke="hsl(209 40% 16%)" stroke-width="2" stroke-linecap="round"/></svg></span><span class="bot-copy"><span class="bot-heading"><span class="bot-name">Milo</span><span class="main-badge"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12 1.5 5l4 2L8 3l2.5 4 4-2-1.5 7Z"/><path d="M3 14h10"/></svg>Chief of Staff</span></span><span class="model">Your plan for the week is ready.</span></span></button><span class="state"></span></div><div class="bot-row"><button class="bot-chat" type="button"><span class="avatar drawn"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" aria-hidden="true"><g fill="hsl(168 58% 60%)"><path d="M20 4 35 13 33 29 20 36 7 29 5 13Z"/></g><g class="avatar-eyes" fill="hsl(168 40% 16%)"><circle cx="15" cy="19" r="2"/><circle cx="25" cy="19" r="2"/></g><path d="M16 26h8" stroke="hsl(168 40% 16%)" stroke-width="2" stroke-linecap="round"/></svg></span><span class="bot-copy"><span class="bot-heading"><span class="bot-name">Scout</span></span><span class="model">Researcher · Three useful sources found.</span></span></button><span class="state"><span class="unread-dot" aria-label="Unread"></span></span></div><div class="bot-row"><button class="bot-chat" type="button"><span class="avatar drawn"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" aria-hidden="true"><g fill="hsl(91 58% 60%)"><rect x="6" y="7" width="28" height="26" rx="10"/></g><g class="avatar-eyes" fill="hsl(91 40% 16%)"><circle cx="15" cy="19" r="2"/><circle cx="25" cy="19" r="2"/></g><path d="M16 26h8" stroke="hsl(91 40% 16%)" stroke-width="2" stroke-linecap="round"/></svg></span><span class="bot-copy"><span class="bot-heading"><span class="bot-name">Quill</span></span><span class="model">Writer · The first draft is ready.</span></span></button><span class="state"></span></div><div class="bot-row"><button class="bot-chat" type="button"><span class="avatar drawn"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" aria-hidden="true"><g fill="hsl(84 58% 60%)"><path d="M20 4 35 13 33 29 20 36 7 29 5 13Z"/></g><g class="avatar-eyes" fill="hsl(84 40% 16%)"><circle cx="15" cy="19" r="2"/><circle cx="25" cy="19" r="2"/></g><path d="M16 26h8" stroke="hsl(84 40% 16%)" stroke-width="2" stroke-linecap="round"/></svg></span><span class="bot-copy"><span class="bot-heading"><span class="bot-name">Patch</span></span><span class="model">Developer · All checks passed.</span></span></button><span class="state"></span></div></div>
+      <p id="refresh-note" role="status"></p>
+      </div>
+      <section id="bot-view" aria-label="Bot conversation" hidden></section>
+      <p id="result" role="status" aria-live="polite"></p>
+    </section>
+    <button id="retry" type="button" hidden>Retry</button>
+  </main>
+</body>
+</html>
