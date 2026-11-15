@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process'
 import * as fs from 'node:fs'
-import { homedir } from 'node:os'
+import { homedir, userInfo } from 'node:os'
+import { childEnvironment } from './child-environment.ts'
 import { join } from 'node:path'
 import { TESTED_OPENMAUSBOT_VERSION } from '../shared/omb-version.ts'
 
@@ -18,6 +19,7 @@ export type CliDeps = {
   execFile: (file: string, args: string[], options: { env: NodeJS.ProcessEnv; timeout: number }) => Promise<string>
   exists: (path: string) => boolean
   sleep: (ms: number) => Promise<void>
+  userInfo: () => { username: string; shell: string | null }
   home: string
   platform: string
   env: NodeJS.ProcessEnv
@@ -42,6 +44,7 @@ export function defaultCliDeps(): CliDeps {
       }
     },
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    userInfo,
     home: homedir(),
     platform: process.platform,
     env: { ...process.env }
@@ -53,7 +56,5 @@ export function ombBinary(deps: CliDeps): string {
 }
 
 export function cliOptions(deps: CliDeps, timeout = 10000) {
-  const separator = deps.platform === 'win32' ? ';' : ':'
-  const extra = ['/opt/homebrew/bin', '/usr/local/bin', join(deps.home, '.local/bin'), join(deps.home, '.volta/bin')]
-  return { timeout, env: { ...deps.env, PATH: [deps.env.PATH ?? '', ...extra].join(separator) } }
+  return { timeout, env: childEnvironment(deps) }
 }

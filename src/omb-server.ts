@@ -1,7 +1,8 @@
 import { execFile, spawn } from 'node:child_process'
 import * as fs from 'node:fs'
-import { homedir } from 'node:os'
-import { delimiter, join, posix, win32 } from 'node:path'
+import { homedir, userInfo } from 'node:os'
+import { childEnvironment } from './child-environment.ts'
+import { join, posix, win32 } from 'node:path'
 import { createServer } from 'node:net'
 import { TESTED_OPENMAUSBOT_VERSION, compareVersions } from '../shared/omb-version.ts'
 
@@ -28,6 +29,7 @@ export type ServerDeps = {
   sleep: (ms: number) => Promise<void>
   setTimer: (fn: () => void, ms: number) => unknown
   clearTimer: (timer: unknown) => void
+  userInfo: () => { username: string; shell: string | null }
   home: string
   platform: string
   env: NodeJS.ProcessEnv
@@ -84,6 +86,7 @@ export function defaultServerDeps(): ServerDeps {
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     setTimer: (fn, ms) => setTimeout(fn, ms),
     clearTimer: (timer) => clearTimeout(timer as ReturnType<typeof setTimeout>),
+    userInfo,
     home: homedir(),
     platform: process.platform,
     env: { ...process.env }
@@ -91,6 +94,7 @@ export function defaultServerDeps(): ServerDeps {
   return defaults
 }
 
+const ENV_VERSION = 2
 const ports = [8799, 18799, 28799]
 type Health = { app: 'openmausbot'; version: string; pid?: number }
 async function health(port: number, deps: ServerDeps, timeoutMs = 1500): Promise<Health | undefined> {
@@ -131,12 +135,6 @@ export async function findServer(deps: ServerDeps = defaultServerDeps()): Promis
   return undefined
 }
 
-function environment(deps: ServerDeps): NodeJS.ProcessEnv {
-  const separator = deps.platform === 'win32' ? ';' : delimiter
-  const extra = ['/opt/homebrew/bin', '/usr/local/bin', join(deps.home, '.local/bin'), join(deps.home, '.volta/bin')]
-  return { ...deps.env, PATH: [deps.env.PATH ?? '', ...extra].join(separator) }
-}
-
 // Only this private helper handles the selected path; public results contain flags only.
 function claudeEnvironment(deps: ServerDeps, share: boolean) {
   const path = deps.platform === 'win32' ? win32 : posix
@@ -154,7 +152,7 @@ function claudeEnvironment(deps: ServerDeps, share: boolean) {
     if (path.isAbsolute(selected) && path.basename(selected) === 'home' && inside(profiles, selected)
       && inside(deps.realpath(profiles), deps.realpath(selected)) && deps.isDirectory(selected)) home = selected
   } catch { /* Missing or invalid selection is normal; never expose filesystem errors. */ }
-  const env = environment(deps)
+  const env = childEnvironment(deps)
   if (home && env.CLAUDE_CONFIG_DIR === undefined) env.CLAUDE_CONFIG_DIR = home
   // The setting controls this override even if the parent process supplied it.
   delete env.OMB_CLAUDE_INHERIT_USER_CONFIG
@@ -167,7 +165,7 @@ export async function claudeSetupStatus(port: number, share: boolean, deps: Serv
   const { flags, found } = claudeEnvironment(deps, share)
   try {
     const record = JSON.parse(deps.read(join(deps.home, '.bot-deck/server.pid')))
-    const restart = record.claudeHome !== flags.claudeHome || record.inherit !== flags.inherit
+    const restart = !Number.isInteger(record.env) || record.env < ENV_VERSION || record.claudeHome !== flags.claudeHome || record.inherit !== flags.inherit
     return { restart, message: !found ? '' : restart ? 'Claude setup changes will apply when bots are idle.'
       : share ? 'Claude bots use your Claude login and tools.' : 'Claude bots use your Claude login; shared tools are off.' }
   } catch { return { restart: false, message: '' } }
@@ -176,7 +174,7 @@ export async function claudeSetupStatus(port: number, share: boolean, deps: Serv
 export async function checkNode(deps: ServerDeps = defaultServerDeps()): Promise<string> {
   let version: string
   try {
-    version = (await deps.execFile('node', ['--version'], { env: environment(deps), timeout: 10000 })).trim().replace(/^v/, '')
+    version = (await deps.execFile('node', ['--version'], { env: childEnvironment(deps), timeout: 10000 })).trim().replace(/^v/, '')
   } catch {
     throw new ServerError('needs_node', 'Node.js was not found on PATH. Install Node.js 24 or newer, then press Retry.')
   }
@@ -202,7 +200,7 @@ export async function ensureInstalled(version: string, deps: ServerDeps = defaul
   const bin = join(folder, 'node_modules/.bin/openmausbot')
   if (deps.exists(bin)) return bin
   try {
-    await deps.execFile('npm', ['install', '--prefix', folder, '--no-audit', '--no-fund', `openmausbot@${version}`], { env: environment(deps), timeout: 300000 })
+    await deps.execFile('npm', ['install', '--prefix', folder, '--no-audit', '--no-fund', `openmausbot@${version}`], { env: childEnvironment(deps), timeout: 300000 })
     if (!deps.exists(bin)) throw new Error('npm finished without installing the OpenMausBot binary.')
     return bin
   } catch (error) {
@@ -233,7 +231,7 @@ export async function startServer(bin: string, port: number, deps: ServerDeps = 
       if (!deps.processAlive(child.pid)) throw new Error('The OpenMausBot launcher exited before the server became ready.')
       if (result && Number.isSafeInteger(result.pid) && result.pid! > 0) {
         // The launcher owns the listening child and must receive the stop signal.
-        deps.write(join(folder, 'server.pid'), JSON.stringify({ launcherPid: child.pid, serverPid: result.pid, port, ...setup.flags }))
+        deps.write(join(folder, 'server.pid'), JSON.stringify({ launcherPid: child.pid, serverPid: result.pid, port, ...setup.flags, env: ENV_VERSION }))
         return { port, version: result.version }
       }
       await deps.sleep(Math.min(250, Math.max(0, deadline - deps.now())))

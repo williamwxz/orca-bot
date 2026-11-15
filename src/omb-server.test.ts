@@ -50,7 +50,7 @@ function fake() {
       return fn
     },
     clearTimer: (timer) => { timers.delete(timer as () => void) },
-    home: '/fake',
+    userInfo: () => ({ username: 'fake-user', shell: '/fake/shell' }), home: '/fake',
     platform: 'darwin',
     env: { PATH: '/fake/bin' }
   }
@@ -108,7 +108,7 @@ test('checkNode uses PATH and appends known folders', async () => {
   assert.equal(await checkNode(deps), '24.1.0')
   assert.deepEqual(calls[0], {
     file: 'node', args: ['--version'], options: {
-      env: { PATH: '/fake/bin:/opt/homebrew/bin:/usr/local/bin:/fake/.local/bin:/fake/.volta/bin' }, timeout: 10000
+      env: { USER: 'fake-user', LOGNAME: 'fake-user', SHELL: '/fake/shell', LANG: 'en_US.UTF-8', PATH: '/fake/bin:/opt/homebrew/bin:/usr/local/bin:/fake/.local/bin:/fake/.volta/bin' }, timeout: 10000
     }
   })
 })
@@ -158,7 +158,7 @@ test('startServer detaches, truncates log, saves launcher and child pids and wai
   assert.equal((calls[0].options as { detached: boolean }).detached, true)
   assert.deepEqual((calls[0].options as { stdio: unknown }).stdio, ['ignore', 7, 7])
   assert.equal(files.get('/fake/.bot-deck/server.log'), '')
-  assert.deepEqual(JSON.parse(files.get('/fake/.bot-deck/server.pid')!), { launcherPid: 42, serverPid: 43, port: 8799, claudeHome: false, inherit: true })
+  assert.deepEqual(JSON.parse(files.get('/fake/.bot-deck/server.pid')!), { launcherPid: 42, serverPid: 43, port: 8799, claudeHome: false, inherit: true, env: 2 })
   assert.equal(files.get('unref'), 'yes')
   assert.equal(files.get('closed'), '7')
 })
@@ -284,7 +284,7 @@ test('fresh workers recover pairing ownership only from a matching persisted ser
     if (record) files.set('/fake/.bot-deck/server.pid', JSON.stringify(record))
     const cliCalls: string[][] = []
     const cli: CliDeps = {
-      home: '/fake', platform: 'darwin', env: {},
+      userInfo: () => ({ username: 'fake-user', shell: '/fake/shell' }), home: '/fake', platform: 'darwin', env: {},
       exists: () => true,
       sleep: async () => {},
       execFile: async (_file, args) => {
@@ -368,11 +368,12 @@ test('server environment and pid flags cover home, sharing and explicit config c
     deps.fetch = async () => healthy()
     await startServer('/fake/bin/omb', 8799, deps, share)
     assert.deepEqual((calls[0].options as any).env, {
+      USER: 'fake-user', LOGNAME: 'fake-user', SHELL: '/fake/shell', LANG: 'en_US.UTF-8',
       PATH: '/fake/bin:/opt/homebrew/bin:/usr/local/bin:/fake/.local/bin:/fake/.volta/bin',
       ...(preset || found ? { CLAUDE_CONFIG_DIR: preset ? '/explicit/config' : selectedHome } : {}),
       ...(share ? { OMB_CLAUDE_INHERIT_USER_CONFIG: '1' } : {})
     })
-    assert.deepEqual(JSON.parse(files.get('/fake/.bot-deck/server.pid')!), { launcherPid: 42, serverPid: 43, port: 8799, claudeHome: found || preset, inherit: share })
+    assert.deepEqual(JSON.parse(files.get('/fake/.bot-deck/server.pid')!), { launcherPid: 42, serverPid: 43, port: 8799, claudeHome: found || preset, inherit: share, env: 2 })
     assert.equal((await claudeSetupStatus(8799, share, deps)).restart, false)
     assert.equal((await claudeSetupStatus(8799, !share, deps)).restart, true)
     assert.equal((await claudeSetupStatus(8799, share, deps)).message !== '', found)
@@ -427,4 +428,18 @@ test('legacy flags require restart only for an owned healthy server', async () =
   assert.equal((await claudeSetupStatus(8799, true, deps)).restart, true)
   deps.fetch = async () => healthy(99)
   assert.deepEqual(await claudeSetupStatus(8799, true, deps), { restart: false, message: '' })
+})
+
+test('environment version migrates owned records once even when Claude flags match', async () => {
+  const { deps, files } = fake()
+  deps.fetch = async () => healthy()
+  for (const env of [undefined, 1, 2, 3]) {
+    files.set('/fake/.bot-deck/server.pid', JSON.stringify({ launcherPid: 42, serverPid: 43, port: 8799, claudeHome: false, inherit: true, env }))
+    assert.equal((await claudeSetupStatus(8799, true, deps)).restart, env === undefined || env < 2)
+  }
+  await startServer('/fake/bin/omb', 8799, deps)
+  const record = JSON.parse(files.get('/fake/.bot-deck/server.pid')!)
+  assert.equal(record.env, 2)
+  assert.doesNotMatch(JSON.stringify(record), /fake-user|fake\/shell|USER|LOGNAME|SHELL|LANG/)
+  assert.equal((await claudeSetupStatus(8799, true, deps)).restart, false)
 })
