@@ -75,7 +75,9 @@ line tool to open the browser tab.
 
 ### What Orca Bot does to protect you
 
-- **Asks first.**
+- **Asks first.** Nothing is shared with bots, linked to your agents or
+  imported until you approve it in the setup card. You can change each choice
+  later in Orca's Settings.
 - **Imported tools stay on this computer.** Imported tool definitions, including
   any tokens in them, are copied into OpenMausBot's settings in `~/.orca-bot/data`;
   tools arrive switched off. Orca Bot uses an internal OpenMausBot route for this,
@@ -96,8 +98,9 @@ line tool to open the browser tab.
   never shown, logged or returned by the plugin. Your message text is passed to
   OpenMausBot privately, not on a command line that other programs can read.
   Error messages never include raw output.
-- **No credentials stored.** Orca Bot does not read, copy or keep your Claude,
+- **No logins stored.** Orca Bot does not read, copy or keep your Claude,
   Codex or Grok login. It only tells Claude which Orca login folder to use.
+  The one exception is a tool import you start yourself, described above.
 
 ### Risks you should know about
 
@@ -120,11 +123,18 @@ line tool to open the browser tab.
    checks it against its own records. Orca Bot does not add a second check.
 6. **`~/.orca-bot/server.log` can contain a sign-in code.** It is readable only
    by you and is emptied on each start. Do not share it.
-7. **OpenMausBot checks for updates.** It asks GitHub for its own latest release
+7. **Linked agents can drive your bots.** With agent linking on, Claude and
+   Codex on this computer get tools to message bots, read their replies and
+   create bots. Bots that share those setups get the same tools, so one bot can
+   message another. The link is an entry named `orca-bot` in each agent's MCP
+   settings; turn the setting off before uninstalling, or remove that entry
+   yourself, because uninstalling the plugin does not remove it.
+8. **OpenMausBot checks for updates.** It asks GitHub for its own latest release
    and npm for the latest Codex version. These requests reveal your IP address
    to those services; we found nothing else in them.
 
-To remove everything: stop the server from the command palette, uninstall the
+To remove everything: turn off **Let my Orca agents talk to the bots**, stop
+the server from the command palette, uninstall the
 plugin, and delete `~/.orca-bot`.
 
 Found a problem? See [SECURITY.md](SECURITY.md).
