@@ -1,4 +1,4 @@
-import { connectRef } from '../shared/appearance.ts'
+import { connectRef, pairingScreen } from '../shared/appearance.ts'
 import { join } from 'node:path'
 import { cliOptions, defaultCliDeps, ombBinary } from './omb-cli.ts'
 import type { CliDeps } from './omb-cli.ts'
@@ -74,7 +74,7 @@ export async function openChat(input: OpenInput, deps: CliDeps = defaultCliDeps(
     let needsPair = false
     for (let attempt = 0; attempt < 8; attempt++) {
       const tree = await snapshot(page)
-      if (connectRef(tree)) {
+      if (pairingScreen(tree)) {
         needsPair = true
         break
       }
@@ -102,9 +102,9 @@ export async function openChat(input: OpenInput, deps: CliDeps = defaultCliDeps(
     // Allow the session cookie to settle before leaving the pairing page.
     for (let attempt = 0; attempt < 8; attempt++) {
       await deps.sleep(250)
-      if (!connectRef(await snapshot(page))) {
+      if (!pairingScreen(await snapshot(page))) {
         await run(['goto', '--url', wanted, '--page', page, '--json'])
-        if (connectRef(await snapshot(page))) throw new Error('Session did not persist')
+        if (pairingScreen(await snapshot(page))) throw new Error('Session did not persist')
         return { message: '' }
       }
     }
