@@ -1,8 +1,14 @@
 # Changelog
 
+## 0.1.1 (15 November 2026)
+
+- Renamed from Orca Bot to **Bot for Orca**. Orca's community catalog reserves
+  names that start with "Orca" for official plugins, so 0.1.0 was not listed.
+  Nothing else changed.
+
 ## 0.1.0 (15 November 2026)
 
-First release. macOS only for now.
+First release, under the name Orca Bot. macOS only for now.
 
 - Bot list and chat window in Orca's sidebar, in OpenMausBot's light and dark
   look.
@@ -14,5 +20,5 @@ First release. macOS only for now.
   tools, your Orca agents (Claude, Codex, opencode, Antigravity) talking to the
   bots, and bringing in tools from your other AI apps.
 - Claude bots use the Claude login you have in Orca.
-- OpenMausBot's usage analytics are switched off for a server Orca Bot starts.
+- OpenMausBot's usage analytics are switched off for a server the plugin starts.
 - Licensed under Apache-2.0.

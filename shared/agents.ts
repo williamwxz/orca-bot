@@ -18,5 +18,5 @@ export type Agent = keyof typeof agents
 export type FoundAgents = Partial<Record<Agent, boolean>>
 export const agentKeys = Object.keys(agents) as Agent[]
 export function linkError(message: string): boolean {
-  return agentKeys.some(key => message === `Could not add Orca Bot to ${agents[key].label}.`) || message === `Remove ${MCP_ENTRY_NAME} from opencode by hand.`
+  return agentKeys.some(key => message === `Could not add Bot for Orca to ${agents[key].label}.`) || message === `Remove ${MCP_ENTRY_NAME} from opencode by hand.`
 }

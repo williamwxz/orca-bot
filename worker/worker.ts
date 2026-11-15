@@ -66,9 +66,9 @@ function defaults(): WorkerDeps {
 export function versionMessage(version: string): string {
   const tested = TESTED_OPENMAUSBOT_VERSION
   const comparison = compareVersions(version, tested)
-  if (comparison === undefined) return `OpenMausBot is running, but its version (${version}) is unknown. Orca Bot cannot compare it with the tested version (${tested}).`
-  if (comparison > 0) return `OpenMausBot ${version} is newer than the version Orca Bot was tested with (${tested}). It should work; tell us if something looks wrong.`
-  if (comparison < 0) return `OpenMausBot ${version} is older than Orca Bot expects (${tested}). Update OpenMausBot.`
+  if (comparison === undefined) return `OpenMausBot is running, but its version (${version}) is unknown. Bot for Orca cannot compare it with the tested version (${tested}).`
+  if (comparison > 0) return `OpenMausBot ${version} is newer than the version Bot for Orca was tested with (${tested}). It should work; tell us if something looks wrong.`
+  if (comparison < 0) return `OpenMausBot ${version} is older than Bot for Orca expects (${tested}). Update OpenMausBot.`
   return ''
 }
 
@@ -104,7 +104,7 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaults()): vo
       linkMessage = ''
       linkRetryAt = -Infinity
     } catch (error) {
-      linkMessage = error instanceof Error && linkError(error.message) ? error.message : 'Could not update Orca Bot setup.'
+      linkMessage = error instanceof Error && linkError(error.message) ? error.message : 'Could not update Bot for Orca setup.'
       linkRetryAt = deps.now() + 60000
       throw new Error(linkMessage)
     }
@@ -219,7 +219,7 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaults()): vo
         await pending
       }
       const port = runningPort()
-      if (!startedByPlugin || !deps.importTools) throw new Error('Tools can only be imported into a server Orca Bot started.')
+      if (!startedByPlugin || !deps.importTools) throw new Error('Tools can only be imported into a server Bot for Orca started.')
       try { return await deps.importTools(port) }
       catch { throw new Error('Could not import or switch off tools. Check the Bot Dashboard.') }
     }).finally(() => { importing = undefined })
