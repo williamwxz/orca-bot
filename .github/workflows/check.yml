@@ -1,0 +1,64 @@
+# Use Orca's pinned Linux AppImage: its bundled CLI runs in Electron's Node mode,
+# without the app, a display server, FUSE, or an Orca source build. Plugin tests
+# use Node 24 on PATH. Cache only the download and verify its release SHA-256
+# on every run, including cache hits; extract afresh outside the plugin checkout.
+name: Check
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      ORCA_VERSION: 1.4.259
+      ORCA_SHA256: 3e3c6eac69e32e219fa08e2c4a926882862ab107345fddd1c4f196ba7b0a9885
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24'
+
+      - name: Check committed relative imports
+        run: node .github/scripts/check-imports.mjs
+
+      - name: Cache Orca release download
+        id: orca-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/orca-download/orca.AppImage
+          key: orca-linux-x64-${{ env.ORCA_VERSION }}-${{ env.ORCA_SHA256 }}
+
+      - name: Download Orca
+        if: steps.orca-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/orca-download"
+          curl --fail --location --retry 3 \
+            "https://github.com/stablyai/orca/releases/download/v${ORCA_VERSION}/orca-linux.AppImage" \
+            --output "$RUNNER_TEMP/orca-download/orca.AppImage"
+
+      - name: Verify and extract Orca
+        run: |
+          cd "$RUNNER_TEMP/orca-download"
+          printf '%s  orca.AppImage\n' "$ORCA_SHA256" | sha256sum --check --strict
+          chmod +x orca.AppImage
+          ./orca.AppImage --appimage-extract > /dev/null
+          test -x squashfs-root/resources/bin/orca-ide
+          echo "ORCA_CLI=$RUNNER_TEMP/orca-download/squashfs-root/resources/bin/orca-ide" >> "$GITHUB_ENV"
+
+      - name: Validate plugin manifest
+        run: '"$ORCA_CLI" plugin validate .'
+
+      - name: Test plugin
+        run: '"$ORCA_CLI" plugin test .'
