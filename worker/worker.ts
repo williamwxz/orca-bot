@@ -1,3 +1,5 @@
+import { linkError } from '../shared/agents.ts'
+import type { FoundAgents } from '../shared/agents.ts'
 import { defaultImportDeps, findTools, importTools, importMessage } from './import-tools.ts'
 import type { Tool, ImportResult } from './import-tools.ts'
 import { defaultLinkDeps, findAgents, syncAgentLinks } from './agent-link.ts'
@@ -18,7 +20,7 @@ import { TESTED_OPENMAUSBOT_VERSION, compareVersions } from '../shared/omb-versi
 export type WorkerDeps = {
   findTools?: () => Promise<Tool[]>
   importTools?: (port: number) => Promise<ImportResult>
-  findAgents?: () => { claude: boolean; codex: boolean }
+  findAgents?: () => FoundAgents
   syncAgentLinks?: (input: { enabled: boolean; owned: boolean; port: number }) => Promise<void>
   checkHealth: (port: number) => Promise<boolean>
   now: () => number
@@ -88,7 +90,7 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaults()): vo
       linkMessage = ''
       linkRetryAt = -Infinity
     } catch (error) {
-      linkMessage = error instanceof Error && /^Could not add Orca Bot to (Claude|Codex)\.$/.test(error.message) ? error.message : 'Could not update Orca Bot setup.'
+      linkMessage = error instanceof Error && linkError(error.message) ? error.message : 'Could not update Orca Bot setup.'
       linkRetryAt = deps.now() + 60000
       throw new Error(linkMessage)
     }

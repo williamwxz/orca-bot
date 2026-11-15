@@ -68,3 +68,8 @@ test('import row starts on, imports only visible checked tools after setup, and 
     if (['failure', 'partial'].includes(mode)) assert.match(setup.state.message, /could not be imported or switched off/)
   }
 })
+
+test('setup names include every linked agent', () => {
+  assert.equal(agentNames({ claude: true, codex: true, opencode: true }), 'Claude, Codex and opencode')
+  assert.equal(agentNames({ opencode: true, antigravity: true }), 'opencode and Antigravity')
+})

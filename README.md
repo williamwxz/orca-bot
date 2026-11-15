@@ -40,14 +40,15 @@ Grok signed in on this computer.
 Good to know:
 
 - **Orca Bot: Bring in tools from my AI apps** in the command palette, or the
-  matching setup-card row, copies tools from your AI apps into OpenMausBot,
+  matching setup-card row, copies tools from Claude Code, Claude Desktop, Cursor,
+  Gemini CLI, Codex, opencode and Antigravity into OpenMausBot,
   switched off. Turn them on per bot in the Bot Dashboard.
 
 - The panel shows the last 20 messages as plain text and sends messages of up to
   16,000 characters. Anything richer says "This needs the full chat."
 - **Add MausBot** brings back the main bot if you hid it.
 - The **Set up Orca Bot** card asks before sharing Claude tools or linking your
-  Orca agents to the bots. Change either choice later in Orca's Settings.
+  Claude, Codex, opencode and Antigravity agents to the bots. Change either choice later in Orca's Settings.
   Read [Security review](#security-review) before allowing access.
 - **Orca Bot: Stop the OpenMausBot server** in the command palette stops the
   server. It keeps running after you close the panel, so that routines and long
@@ -80,7 +81,8 @@ line tool to open the browser tab.
   later in Orca's Settings.
 - **Imported tools stay on this computer.** Imported tool definitions, including
   any tokens in them, are copied into OpenMausBot's settings in `~/.orca-bot/data`;
-  tools arrive switched off. Orca Bot uses an internal OpenMausBot route for this,
+  sources include Claude Code, Claude Desktop, Cursor, Gemini CLI, Codex,
+  opencode and Antigravity, and tools arrive switched off. Orca Bot uses an internal OpenMausBot route for this,
   which a new OpenMausBot version may change.
 - **Usage analytics are off.** OpenMausBot's page sends anonymous usage events
   to PostHog by default. For a server Orca Bot starts, it switches this off
@@ -123,12 +125,14 @@ line tool to open the browser tab.
    checks it against its own records. Orca Bot does not add a second check.
 6. **`~/.orca-bot/server.log` can contain a sign-in code.** It is readable only
    by you and is emptied on each start. Do not share it.
-7. **Linked agents can drive your bots.** With agent linking on, Claude and
-   Codex on this computer get tools to message bots, read their replies and
+7. **Linked agents can drive your bots.** With agent linking on, Claude,
+   Codex, opencode and Antigravity on this computer get tools to message bots, read their replies and
    create bots. Bots that share those setups get the same tools, so one bot can
    message another. The link is an entry named `orca-bot` in each agent's MCP
    settings; turn the setting off before uninstalling, or remove that entry
-   yourself, because uninstalling the plugin does not remove it.
+   yourself, because uninstalling the plugin does not remove it from any of
+   these agents, including opencode and Antigravity. If opencode’s config cannot
+   be safely updated, the plugin asks you to remove its entry by hand.
 8. **OpenMausBot checks for updates.** It asks GitHub for its own latest release
    and npm for the latest Codex version. These requests reveal your IP address
    to those services; we found nothing else in them.
