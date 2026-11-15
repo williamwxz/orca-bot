@@ -5,7 +5,7 @@
   "name": "Bot Deck",
   "version": "0.1.0",
   "description": "A team of bots inside Orca. Runs the open-source OpenMausBot on your machine: a roster of bots, each its own Claude, Codex or Grok agent. Unofficial; not affiliated with OpenMausBot or its engines.",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "engines": {
     "orca": ">=1.4.246"
   },
