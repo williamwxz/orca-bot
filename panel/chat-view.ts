@@ -1,5 +1,5 @@
 import { dayLabel, threadPreview } from './presentation.ts'
-import type { Requests } from '../src/protocol.ts'
+import type { Requests } from '../worker/protocol.ts'
 import type { Bot } from '../shared/roster.ts'
 import { collapseActivities, refreshInterval, sendDraft, reconcileAttempts, elapsedTime, displayText } from '../shared/chat.ts'
 import type { Thread, Composer } from '../shared/chat.ts'
