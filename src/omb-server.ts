@@ -1,7 +1,7 @@
 import { execFile, spawn } from 'node:child_process'
 import * as fs from 'node:fs'
 import { homedir } from 'node:os'
-import { delimiter, join } from 'node:path'
+import { delimiter, join, posix, win32 } from 'node:path'
 import { createServer } from 'node:net'
 import { TESTED_OPENMAUSBOT_VERSION, compareVersions } from '../shared/omb-version.ts'
 
@@ -12,6 +12,8 @@ export type ServerDeps = {
   fetch: (url: string, options: { signal: AbortSignal }) => Promise<{ ok: boolean; json(): Promise<unknown> }>
   execFile: (file: string, args: string[], options: { env: NodeJS.ProcessEnv; timeout: number }) => Promise<string>
   spawn: (file: string, args: string[], options: { env: NodeJS.ProcessEnv; detached: true; stdio: ['ignore', number, number] }) => Promise<{ pid: number; unref(): void }>
+  isDirectory: (path: string) => boolean
+  realpath: (path: string) => string
   exists: (path: string) => boolean
   mkdir: (path: string) => void
   open: (path: string) => number
@@ -55,6 +57,8 @@ export function defaultServerDeps(): ServerDeps {
       child.once('error', reject)
       child.once('spawn', () => resolve({ pid: child.pid!, unref: () => child.unref() }))
     }),
+    isDirectory: (path) => fs.statSync(path).isDirectory(),
+    realpath: fs.realpathSync,
     exists: fs.existsSync,
     mkdir: (path) => { fs.mkdirSync(path, { recursive: true, mode: 0o700 }) },
     open: (path) => fs.openSync(path, 'w', 0o600),
@@ -133,6 +137,42 @@ function environment(deps: ServerDeps): NodeJS.ProcessEnv {
   return { ...deps.env, PATH: [deps.env.PATH ?? '', ...extra].join(separator) }
 }
 
+// Only this private helper handles the selected path; public results contain flags only.
+function claudeEnvironment(deps: ServerDeps, share: boolean) {
+  const path = deps.platform === 'win32' ? win32 : posix
+  let home: string | undefined
+  try {
+    const data = deps.platform === 'darwin' ? path.join(deps.home, 'Library/Application Support/orca')
+      : deps.platform === 'win32' ? path.join(deps.env.APPDATA ?? path.join(deps.home, 'AppData/Roaming'), 'orca')
+      : path.join(deps.env.XDG_CONFIG_HOME || path.join(deps.home, '.config'), 'orca')
+    const profiles = path.join(data, 'claude-profiles')
+    const selected = deps.read(path.join(profiles, 'selected-host')).trim()
+    const inside = (root: string, target: string) => {
+      const relative = path.relative(root, target)
+      return !!relative && relative !== '..' && !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative)
+    }
+    if (path.isAbsolute(selected) && path.basename(selected) === 'home' && inside(profiles, selected)
+      && inside(deps.realpath(profiles), deps.realpath(selected)) && deps.isDirectory(selected)) home = selected
+  } catch { /* Missing or invalid selection is normal; never expose filesystem errors. */ }
+  const env = environment(deps)
+  if (home && env.CLAUDE_CONFIG_DIR === undefined) env.CLAUDE_CONFIG_DIR = home
+  // The setting controls this override even if the parent process supplied it.
+  delete env.OMB_CLAUDE_INHERIT_USER_CONFIG
+  if (share) env.OMB_CLAUDE_INHERIT_USER_CONFIG = '1'
+  return { env, flags: { claudeHome: !!env.CLAUDE_CONFIG_DIR, inherit: share }, found: !!home }
+}
+
+export async function claudeSetupStatus(port: number, share: boolean, deps: ServerDeps = defaultServerDeps()): Promise<{ restart: boolean; message: string }> {
+  if (!await isPluginServer(port, deps)) return { restart: false, message: '' }
+  const { flags, found } = claudeEnvironment(deps, share)
+  try {
+    const record = JSON.parse(deps.read(join(deps.home, '.bot-deck/server.pid')))
+    const restart = record.claudeHome !== flags.claudeHome || record.inherit !== flags.inherit
+    return { restart, message: !found ? '' : restart ? 'Claude setup changes will apply when bots are idle.'
+      : share ? 'Claude bots use your Claude login and tools.' : 'Claude bots use your Claude login; shared tools are off.' }
+  } catch { return { restart: false, message: '' } }
+}
+
 export async function checkNode(deps: ServerDeps = defaultServerDeps()): Promise<string> {
   let version: string
   try {
@@ -170,8 +210,9 @@ export async function ensureInstalled(version: string, deps: ServerDeps = defaul
   }
 }
 
-export async function startServer(bin: string, port: number, deps: ServerDeps = defaultServerDeps()): Promise<Server> {
+export async function startServer(bin: string, port: number, deps: ServerDeps = defaultServerDeps(), share = true): Promise<Server> {
   try {
+    const setup = claudeEnvironment(deps, share)
     const folder = join(deps.home, '.bot-deck')
     deps.mkdir(folder)
     const fd = deps.open(join(folder, 'server.log'))
@@ -181,7 +222,7 @@ export async function startServer(bin: string, port: number, deps: ServerDeps = 
       // ~/.openmausbot, so starting it never resumes routines or connections they set up elsewhere.
       const dataDir = join(folder, 'data')
       deps.mkdir(dataDir)
-      child = await deps.spawn(bin, ['serve', '--port', String(port), '--data-dir', dataDir], { env: environment(deps), detached: true, stdio: ['ignore', fd, fd] })
+      child = await deps.spawn(bin, ['serve', '--port', String(port), '--data-dir', dataDir], { env: setup.env, detached: true, stdio: ['ignore', fd, fd] })
       child.unref()
     } finally {
       deps.close(fd)
@@ -192,7 +233,7 @@ export async function startServer(bin: string, port: number, deps: ServerDeps = 
       if (!deps.processAlive(child.pid)) throw new Error('The OpenMausBot launcher exited before the server became ready.')
       if (result && Number.isSafeInteger(result.pid) && result.pid! > 0) {
         // The launcher owns the listening child and must receive the stop signal.
-        deps.write(join(folder, 'server.pid'), JSON.stringify({ launcherPid: child.pid, serverPid: result.pid, port }))
+        deps.write(join(folder, 'server.pid'), JSON.stringify({ launcherPid: child.pid, serverPid: result.pid, port, ...setup.flags }))
         return { port, version: result.version }
       }
       await deps.sleep(Math.min(250, Math.max(0, deadline - deps.now())))
@@ -200,7 +241,7 @@ export async function startServer(bin: string, port: number, deps: ServerDeps = 
     throw new Error('The server did not become healthy within 30 seconds.')
   } catch (error) {
     // The log may contain a pairing code; never include its contents in an error.
-    throw new ServerError('start_failed', `Could not start OpenMausBot. Check ~/.bot-deck/server.log locally, then press Retry. ${redact(error)}`)
+    throw new ServerError('start_failed', `Could not start OpenMausBot. Check ~/.bot-deck/server.log locally, then press Retry. ${error instanceof Error && ['The server did not become healthy within 30 seconds.', 'The OpenMausBot launcher exited before the server became ready.'].includes(error.message) ? error.message : 'Server launch failed.'}`)
   }
 }
 
@@ -216,7 +257,7 @@ export async function isPluginServer(port: number, deps: ServerDeps = defaultSer
 }
 
 const attempts = new WeakMap<ServerDeps, Promise<ServerResult>>()
-export function ensureServer(deps: ServerDeps = defaultServerDeps()): Promise<ServerResult> {
+export function ensureServer(deps: ServerDeps = defaultServerDeps(), share = true): Promise<ServerResult> {
   const existing = attempts.get(deps)
   if (existing) return existing
   const attempt = async (): Promise<ServerResult> => {
@@ -226,7 +267,7 @@ export function ensureServer(deps: ServerDeps = defaultServerDeps()): Promise<Se
     const bin = await ensureInstalled(TESTED_OPENMAUSBOT_VERSION, deps)
     for (const port of ports) {
       if (!await deps.portFree(port)) continue
-      return { ...await startServer(bin, port, deps), started: true, startedByPlugin: true }
+      return { ...await startServer(bin, port, deps, share), started: true, startedByPlugin: true }
     }
     throw new ServerError('start_failed', 'Ports 8799, 18799 and 28799 are in use. Free one of these ports, then press Retry.')
   }

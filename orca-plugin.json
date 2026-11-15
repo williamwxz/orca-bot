@@ -30,6 +30,18 @@
         "id": "botdeck.stopServer",
         "title": "Bot Deck: Stop the OpenMausBot server"
       }
+    ],
+    "settings": [
+      {
+        "key": "shareClaudeSetup",
+        "type": "boolean",
+        "default": true,
+        "title": "Give Claude bots my Claude tools",
+        "description": "Claude bots use the connectors, MCP servers, skills and instructions from your Claude setup. More tools means more tokens per message. Turn off to give Claude bots only what you add in OpenMausBot."
+      }
     ]
-  }
+  },
+  "capabilities": [
+    { "kind": "settings:own" }
+  ]
 }

@@ -23,6 +23,16 @@ bots are omitted because the plugin does not know the browser's signed-in identi
 
 The panel is for a glance and a quick reply: view the last 20 entries as plain text and send a message of up to 16,000 characters. Tool steps are summarized; internal digests are hidden. Earlier history, long messages, approvals, attachments, routines, instruction editing and other rich content belong in **Open bot**. Sent messages appear immediately. While awaiting a reply or observing a working bot, a small avatar and **Working · 3s** line count elapsed time, changing to minutes after 60 seconds. Reduced motion keeps the avatar still and the elapsed text visible.
 
+## Your existing tools
+
+Codex bots use your Codex setup. Servers started by Bot Deck give Claude bots
+your Orca Claude login and, by default, your whole Claude setup: connectors,
+MCP servers, skills and instructions. More tools means more tokens per message.
+Turn off **Give Claude bots my Claude tools** in Orca’s Settings to use only tools
+you add in OpenMausBot. Bot Deck applies changes by restarting its server when
+no bot is working or waiting; servers started elsewhere are left alone.
+An existing `CLAUDE_CONFIG_DIR` environment variable takes precedence over Orca’s login.
+
 ## How it starts OpenMausBot
 
 Install Node.js 24 or newer and make `node` and `npm` available on PATH. Bot Deck

@@ -2,7 +2,7 @@ import { register } from './worker.ts'
 import { openChat } from './omb-open.ts'
 import type { CliDeps } from './omb-cli.ts'
 import { assert, test, mockHost, mountWorker } from 'orca/testing'
-import { checkNode, ensureInstalled, ensureServer, findServer, startServer, stopServer, serverHealthy } from './omb-server.ts'
+import { checkNode, ensureInstalled, ensureServer, findServer, startServer, stopServer, serverHealthy, claudeSetupStatus } from './omb-server.ts'
 import type { ServerDeps } from './omb-server.ts'
 import { TESTED_OPENMAUSBOT_VERSION as version, compareVersions } from '../shared/omb-version.ts'
 
@@ -24,6 +24,8 @@ function fake() {
       calls.push({ file, args, options })
       return { pid: 42, unref: () => { files.set('unref', 'yes') } }
     },
+    isDirectory: (path) => files.has(path),
+    realpath: (path) => path,
     exists: (path) => files.has(path),
     mkdir: (path) => { files.set(path, '') },
     open: (path) => {
@@ -156,7 +158,7 @@ test('startServer detaches, truncates log, saves launcher and child pids and wai
   assert.equal((calls[0].options as { detached: boolean }).detached, true)
   assert.deepEqual((calls[0].options as { stdio: unknown }).stdio, ['ignore', 7, 7])
   assert.equal(files.get('/fake/.bot-deck/server.log'), '')
-  assert.deepEqual(JSON.parse(files.get('/fake/.bot-deck/server.pid')!), { launcherPid: 42, serverPid: 43, port: 8799 })
+  assert.deepEqual(JSON.parse(files.get('/fake/.bot-deck/server.pid')!), { launcherPid: 42, serverPid: 43, port: 8799, claudeHome: false, inherit: true })
   assert.equal(files.get('unref'), 'yes')
   assert.equal(files.get('closed'), '7')
 })
@@ -332,4 +334,97 @@ test('status health probe uses only the known port with a one second deadline', 
   }
   assert.equal(await serverHealthy(18799, deps), false)
   assert.equal(timers.size, 0)
+})
+
+const profiles = '/fake/Library/Application Support/orca/claude-profiles'
+const selectedHome = `${profiles}/fake-profile/home`
+test('selected-host accepts only an absolute contained directory ending in home, with optional newline', async () => {
+  for (const [selection, directory, accepted] of [
+    [selectedHome, true, true], [selectedHome + '\n', true, true],
+    [undefined, true, false], ['fake-profile/home', true, false], ['/elsewhere/home', true, false],
+    [profiles + '-other/home', true, false], [profiles + '/fake-profile/config', true, false],
+    [selectedHome, false, false], [profiles + '/../outside/home', true, false]
+  ] as const) {
+    const { deps, files, calls } = fake()
+    if (selection !== undefined) files.set(`${profiles}/selected-host`, selection)
+    deps.isDirectory = () => directory
+    deps.fetch = async () => healthy()
+    const reads: string[] = [], read = deps.read
+    deps.read = (path) => { reads.push(path); return read(path) }
+    const result = await startServer('/fake/bin/omb', 8799, deps)
+    assert.equal((calls[0].options as any).env.CLAUDE_CONFIG_DIR, accepted ? selectedHome : undefined)
+    assert.deepEqual(reads, [`${profiles}/selected-host`])
+    assert.equal(JSON.stringify(result).includes(selectedHome), false)
+    assert.equal(files.get('/fake/.bot-deck/server.pid')!.includes(selectedHome), false)
+  }
+})
+
+test('server environment and pid flags cover home, sharing and explicit config combinations', async () => {
+  for (const found of [false, true]) for (const share of [false, true]) for (const preset of [false, true]) {
+    const { deps, files, calls } = fake()
+    if (found) { files.set(`${profiles}/selected-host`, selectedHome); files.set(selectedHome, '') }
+    if (preset) deps.env.CLAUDE_CONFIG_DIR = '/explicit/config'
+    deps.env.OMB_CLAUDE_INHERIT_USER_CONFIG = 'parent-value'
+    deps.fetch = async () => healthy()
+    await startServer('/fake/bin/omb', 8799, deps, share)
+    assert.deepEqual((calls[0].options as any).env, {
+      PATH: '/fake/bin:/opt/homebrew/bin:/usr/local/bin:/fake/.local/bin:/fake/.volta/bin',
+      ...(preset || found ? { CLAUDE_CONFIG_DIR: preset ? '/explicit/config' : selectedHome } : {}),
+      ...(share ? { OMB_CLAUDE_INHERIT_USER_CONFIG: '1' } : {})
+    })
+    assert.deepEqual(JSON.parse(files.get('/fake/.bot-deck/server.pid')!), { launcherPid: 42, serverPid: 43, port: 8799, claudeHome: found || preset, inherit: share })
+    assert.equal((await claudeSetupStatus(8799, share, deps)).restart, false)
+    assert.equal((await claudeSetupStatus(8799, !share, deps)).restart, true)
+    assert.equal((await claudeSetupStatus(8799, share, deps)).message !== '', found)
+  }
+})
+
+test('cross-platform selected-host roots and symlink escape checks use injected filesystem only', async () => {
+  for (const [platform, home, env, root] of [
+    ['linux', '/fake', {}, '/fake/.config/orca/claude-profiles'],
+    ['linux', '/fake', { XDG_CONFIG_HOME: '/custom' }, '/custom/orca/claude-profiles'],
+    ['win32', 'C:\\fake', { APPDATA: 'C:\\roaming' }, 'C:\\roaming\\orca\\claude-profiles']
+  ] as const) {
+    const { deps, files, calls } = fake()
+    Object.assign(deps, { platform, home, env })
+    const sep = platform === 'win32' ? '\\' : '/'
+    const selected = root + sep + 'profile' + sep + 'home'
+    files.set(root + sep + 'selected-host', selected); files.set(selected, '')
+    deps.fetch = async () => healthy()
+    await startServer('/fake/bin/omb', 8799, deps)
+    assert.equal((calls[0].options as any).env.CLAUDE_CONFIG_DIR, selected)
+  }
+  const { deps, files, calls } = fake()
+  files.set(`${profiles}/selected-host`, selectedHome); files.set(selectedHome, '')
+  deps.realpath = (path) => path === selectedHome ? '/elsewhere/home' : path
+  deps.fetch = async () => healthy()
+  await startServer('/fake/bin/omb', 8799, deps)
+  assert.equal((calls[0].options as any).env.CLAUDE_CONFIG_DIR, undefined)
+})
+
+test('profile paths never reach errors, public results, pid records or plugin logs', async () => {
+  const { deps, files } = fake()
+  files.set(`${profiles}/selected-host`, selectedHome); files.set(selectedHome, '')
+  deps.spawn = async () => { throw new Error(selectedHome) }
+  const logs: unknown[] = []
+  const methods = ['log', 'warn', 'error', 'info', 'debug'] as const
+  const originals = methods.map((method) => console[method])
+  for (const method of methods) console[method] = (...args) => { logs.push(args) }
+  try {
+    await assert.rejects(startServer('/fake/bin/omb', 8799, deps), (error: Error) => {
+      assert.equal(String(error).includes(selectedHome), false); return true
+    })
+    deps.read = () => { throw new Error(selectedHome) }
+    assert.deepEqual(await claudeSetupStatus(8799, true, deps), { restart: false, message: '' })
+    assert.deepEqual(logs, [])
+  } finally { methods.forEach((method, i) => { console[method] = originals[i] }) }
+})
+
+test('legacy flags require restart only for an owned healthy server', async () => {
+  const { deps, files } = fake()
+  files.set('/fake/.bot-deck/server.pid', JSON.stringify({ launcherPid: 42, serverPid: 43, port: 8799 }))
+  deps.fetch = async () => healthy()
+  assert.equal((await claudeSetupStatus(8799, true, deps)).restart, true)
+  deps.fetch = async () => healthy(99)
+  assert.deepEqual(await claudeSetupStatus(8799, true, deps), { restart: false, message: '' })
 })
