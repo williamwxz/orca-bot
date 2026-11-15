@@ -1,16 +1,19 @@
 # Bot Deck
 
-A team of bots inside Orca. Bot Deck is being rebuilt on
-[OpenMausBot](https://github.com/milind-soni/OpenMausBot) and starts its local server when you open the panel. The panel shows startup
-progress and server status; chat and the roster are still planned.
+Open the **Bot Deck** panel and press **Open chat**. OpenMausBot's chat UI opens
+in an Orca browser tab; an existing tab for that server is reused. You can also
+use **Bot Deck: Open chat** in the command palette after the server is ready.
 
-Planned design:
+On the first open of a server Bot Deck starts, press **Connect** once in the
+browser to sign in. If the browser loses its session, press **Sign in again**.
+For a server started elsewhere, its owner handles pairing; both buttons open
+its ordinary sign-in page without creating credentials.
 
-- OpenMausBot does the work, running bots locally on your agent CLIs.
-- Its web UI in an Orca browser tab is the chat.
-- Claude and Codex use its MCP server.
-- The plugin starts or finds the server, opens the tab and shows a roster.
-- A pinned, tested OpenMausBot version is raised by an automatic check.
+The panel lists bots with their engine/model, Working or Waiting state, unread
+indicator, and Main badge. The main bot appears first. The roster refreshes every
+five seconds while visible and keeps the last list if a refresh fails.
+Click a bot to open chat, then select its conversation in OpenMausBot: this version
+has no verified bot-ID-only link. **New bot** opens the same UI, where you create bots.
 
 ## How it starts OpenMausBot
 
