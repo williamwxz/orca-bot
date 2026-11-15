@@ -2,7 +2,7 @@
 // keychain or reaches a real Grok Bot account. Always go through mount() below: it is the
 // only place that builds a worker, and it never uses the real defaults.
 import { assert, mockHost, mountWorker, test } from 'orca/testing'
-import { removeRoutineMessage, routinesFrom, scheduleMessage, toEntry } from '../shared/model.ts'
+import { removeRoutineMessage, routinesFrom, scheduleMessage, toEntry, waitingState } from '../shared/model.ts'
 import type { DesktopSession } from './session.ts'
 import { register } from './worker.ts'
 
@@ -238,6 +238,36 @@ test('drops the route when the signed-in account changes during a refresh', asyn
   })
   await assert.rejects(worker.request('bots.list'), /account changed/)
   await worker.deactivate()
+})
+
+test('waiting starts without a reply and ignores user and event entries', () => {
+  const entries = [
+    toEntry({ kind: 'message', role: 'user', timestampMs: 101, text: 'Hello' }),
+    toEntry({ kind: 'event', timestampMs: 102, event: { type: 'updated' } })
+  ]
+  assert.equal(waitingState([], 100, 100), 'working')
+  assert.equal(waitingState(entries, 100, 200), 'working')
+})
+
+test('a streaming bot reply keeps waiting until it finishes', () => {
+  const entry = toEntry({ kind: 'message', role: 'assistant', timestampMs: 101, isStreaming: true, text: 'Hello' })
+  assert.equal(waitingState([entry], 100, 200), 'working')
+  assert.equal(waitingState([{ ...entry, streaming: false }], 100, 200), 'done')
+  assert.equal(waitingState([{ ...entry, streaming: false }], 100, 180_100), 'done')
+})
+
+test('older bot messages and messages at the send timestamp do not complete waiting', () => {
+  for (const timestampMs of [99, 100]) {
+    const entry = toEntry({ kind: 'message', role: 'assistant', timestampMs, text: 'Older' })
+    assert.equal(waitingState([entry], 100, 200), 'working')
+  }
+})
+
+test('waiting slows at exactly three minutes, including unfinished streaming replies', () => {
+  assert.equal(waitingState([], 100, 180_099), 'working')
+  assert.equal(waitingState([], 100, 180_100), 'slow')
+  const entry = toEntry({ kind: 'message', role: 'assistant', timestampMs: 101, isStreaming: true })
+  assert.equal(waitingState([entry], 100, 180_100), 'slow')
 })
 
 test('scheduling and routine removal are plain messages to the bot', () => {

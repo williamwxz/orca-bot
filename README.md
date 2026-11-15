@@ -27,9 +27,9 @@ and your requests only to Grok Bot's own servers: hosts under `cursor.sh`,
 
 | Feature | How |
 | --- | --- |
-| List and select bots | Reads your bots from Grok Bot |
+| List and select bots | Reads your bots from Grok Bot and refreshes the list automatically |
 | Read a conversation | Refreshes recent messages while the panel is visible |
-| Send a message | Sends your message directly to the bot |
+| Send a message | Sends your message directly to the bot and shows a working indicator while it replies |
 | Create, hide, delete a bot; edit instructions | Sends changes to Grok Bot |
 | Schedule a task | Sends the bot a clearly worded request; Grok Bot creates routines from chat |
 | See recent routine changes | Reads routine events from the latest messages; this is not a full routine list |

@@ -3,6 +3,7 @@ import {
   removeRoutineMessage,
   routinesFrom,
   scheduleMessage,
+  waitingState,
   type Bot,
   type Entry
 } from '../shared/model.ts'
@@ -42,7 +43,8 @@ const state = {
   showHidden: false,
   infoOpen: false,
   threadError: '',
-  fastUntil: 0,
+  waiting: new Map<string, number>(),
+  selectedBot: null as Bot | null,
   lastPoll: 0,
   drawn: ''
 }
@@ -73,7 +75,8 @@ function avatar(bot: Bot, size = ''): HTMLElement {
   return node
 }
 
-const current = () => state.bots.find((bot) => bot.id === state.selected) ?? null
+const current = () => state.bots.find((bot) => bot.id === state.selected) ??
+  (state.selectedBot?.id === state.selected ? state.selectedBot : null)
 
 function setView(): void {
   const bot = current()
@@ -83,6 +86,9 @@ function setView(): void {
 // ---------- Bot list ----------
 
 function renderBots(): void {
+  const scrollTop = botsEl.scrollTop
+  const focused = document.activeElement as HTMLElement | null
+  const focusKey = botsEl.contains(focused) ? focused?.dataset.listKey : undefined
   botsEl.replaceChildren()
   const row = (bot: Bot) => {
     const button = el(
@@ -96,6 +102,7 @@ function renderBots(): void {
         el('span', { class: 'preview' }, state.previews.get(bot.id) ?? '')
       )
     )
+    button.dataset.listKey = bot.id
     button.setAttribute('role', 'option')
     button.setAttribute('aria-selected', String(bot.id === state.selected))
     button.onclick = () => select(bot.id)
@@ -110,9 +117,12 @@ function renderBots(): void {
   if (hidden.length) {
     const toggle = el(
       'button',
-      { class: 'link group-label', type: 'button' },
-      `${state.showHidden ? 'Hide' : 'Show'} hidden bots (${hidden.length})`
+      { class: 'group-label', type: 'button' },
+      el('span', {}, 'Hidden Bots'),
+      el('span', {}, String(hidden.length))
     )
+    toggle.dataset.listKey = 'hidden-toggle'
+    toggle.setAttribute('aria-expanded', String(state.showHidden))
     toggle.onclick = () => {
       state.showHidden = !state.showHidden
       renderBots()
@@ -120,6 +130,12 @@ function renderBots(): void {
     botsEl.append(toggle)
     if (state.showHidden) botsEl.append(...hidden.map(row))
   }
+  if (focusKey) {
+    const replacement = [...botsEl.querySelectorAll<HTMLElement>('[data-list-key]')]
+      .find(node => node.dataset.listKey === focusKey)
+    replacement?.focus({ preventScroll: true })
+  }
+  botsEl.scrollTop = scrollTop
 }
 
 async function loadPreviews(): Promise<void> {
@@ -143,6 +159,7 @@ function applyWrite(bots: Bot[] | null): void {
 
 function applyBots(bots: Bot[]): void {
   state.bots = bots
+  state.selectedBot = null
   if (state.selected && !current()) {
     state.selected = null
     state.infoOpen = false
@@ -154,8 +171,15 @@ function applyBots(bots: Bot[]): void {
   setView()
 }
 
+let listing = false
 async function loadBots(): Promise<void> {
-  applyBots(await request('bots.list', {}))
+  if (listing) return
+  listing = true
+  try {
+    applyBots(await request('bots.list', {}))
+  } finally {
+    listing = false
+  }
   if (!state.selected) {
     let remembered: string | null = null
     try {
@@ -171,8 +195,33 @@ async function loadBots(): Promise<void> {
   void loadPreviews()
 }
 
+// Background roster reads never rebuild the conversation or details editor.
+async function refreshBots(): Promise<void> {
+  if (document.visibilityState !== 'visible' || !modal.hidden || listing || starting || app.dataset.view === 'empty') return
+  listing = true
+  let signedOut = false
+  try {
+    const bots = await request('bots.list', {})
+    state.selectedBot = current()
+    state.bots = bots
+    renderBots()
+    renderHeader()
+  } catch (error) {
+    signedOut = errorText(error).startsWith('Open the Grok Bot app and sign in')
+  } finally {
+    listing = false
+  }
+  if (signedOut) void start()
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') void refreshBots()
+})
+setInterval(() => void refreshBots(), 60_000)
+
 function select(id: string): void {
   state.selected = id
+  state.selectedBot = state.bots.find(bot => bot.id === id) ?? null
   state.entries = []
   state.pending = []
   state.limit = 60
@@ -253,8 +302,18 @@ function bubble(entry: Entry): HTMLElement {
   return node
 }
 
+function replyState(): 'working' | 'slow' | 'done' {
+  const id = state.selected
+  const sentAt = id ? state.waiting.get(id) : undefined
+  if (!id || sentAt === undefined) return 'done'
+  const result = waitingState(state.entries, sentAt, Date.now())
+  if (result === 'done') state.waiting.delete(id)
+  return result
+}
+
 function renderMessages(forceBottom = false): void {
-  const signature = JSON.stringify([state.selected, state.entries, state.pending, state.threadError])
+  const waiting = replyState()
+  const signature = JSON.stringify([state.selected, state.entries, state.pending, state.threadError, waiting])
   if (signature === state.drawn && !forceBottom) return
   state.drawn = signature
   if (forceBottom) stick = true
@@ -278,6 +337,13 @@ function renderMessages(forceBottom = false): void {
       nodes.push(bubble(entry))
     }
     for (const text of state.pending) nodes.push(el('div', { class: 'msg user pending' }, text))
+    if (waiting === 'slow') {
+      nodes.push(el('div', { class: 'note' }, 'Still working. The reply will appear here.'))
+    } else if (waiting === 'working' && !state.entries.some(entry => entry.role === 'bot' && entry.streaming)) {
+      const dots = el('span', { class: 'working-dots' }, ...[1, 2, 3].map(() => el('span', {}, '•')))
+      dots.setAttribute('aria-hidden', 'true')
+      nodes.push(el('div', { class: 'msg working' }, dots, 'Working…'))
+    }
     if (state.threadError) nodes.push(el('div', { class: 'note error' }, state.threadError))
     if (!nodes.length) nodes.push(el('div', { class: 'note' }, 'Loading…'))
   }
@@ -326,12 +392,18 @@ async function send(text: string): Promise<void> {
   const id = state.selected
   const body = text.trim()
   if (!id || !body) return
+  const sentAt = Date.now()
   state.pending.push(body)
   renderMessages(true)
   try {
-    await request('message.send', { id, text: body }, 70_000)
-    state.fastUntil = Date.now() + 120_000
-    void refreshThread(true)
+    const result = await request('message.send', { id, text: body }, 70_000)
+    if (result?.sent !== true) throw new Error('The message was not confirmed. Check the conversation before sending it again.')
+    state.waiting.set(id, Math.max(sentAt, state.waiting.get(id) ?? sentAt))
+    if (state.selected === id) {
+      state.threadError = ''
+      renderMessages(true)
+      void refreshThread(true)
+    }
   } catch (error) {
     if (state.selected !== id) return
     state.pending = state.pending.filter((item) => item !== body)
@@ -344,7 +416,8 @@ async function send(text: string): Promise<void> {
 // Poll while the panel is visible: quickly while a reply is expected, slowly otherwise.
 setInterval(() => {
   if (document.visibilityState !== 'visible' || !state.selected || !modal.hidden) return
-  const interval = Date.now() < state.fastUntil ? 1500 : 5000
+  renderMessages()
+  const interval = replyState() === 'working' ? 1500 : 5000
   if (Date.now() - state.lastPoll >= interval) void refreshThread()
 }, 500)
 
@@ -359,7 +432,8 @@ function renderInfo(): void {
   }
   // Keep unsaved instruction edits across background refreshes.
   const editing = body.querySelector<HTMLTextAreaElement>('#instructions')
-  if (editing && editing.dataset.bot === bot.id && document.activeElement === editing) return
+  if (editing && editing.dataset.bot === bot.id &&
+    (document.activeElement === editing || editing.value !== editing.dataset.saved)) return
 
   const routines = routinesFrom(state.entries)
   const routineRows = el('div', { class: 'rows' })
@@ -401,6 +475,7 @@ function renderInfo(): void {
 
   const instructions = el('textarea', { id: 'instructions', rows: 6, value: bot.instructions })
   instructions.dataset.bot = bot.id
+  instructions.dataset.saved = bot.instructions
   instructions.setAttribute('aria-label', 'Instructions')
   const saveError = el('div', { class: 'error' })
   const save = el('button', { type: 'button' }, 'Save instructions')
@@ -408,7 +483,11 @@ function renderInfo(): void {
     save.disabled = true
     saveError.textContent = ''
     try {
-      applyWrite(await request('bots.update', { id: bot.id, instructions: instructions.value }))
+      const value = instructions.value
+      const bots = await request('bots.update', { id: bot.id, instructions: value })
+      instructions.dataset.saved = value
+      save.disabled = false
+      applyWrite(bots)
     } catch (error) {
       saveError.textContent = errorText(error)
       save.disabled = false
@@ -619,17 +698,20 @@ function showSetup(message: string): void {
   app.dataset.view = 'empty'
 }
 
+let starting = false
 async function start(): Promise<void> {
+  if (starting) return
+  starting = true
   try {
     const status = await request('status', {})
     if (!status.ok) return showSetup(status.message)
     await loadBots()
   } catch (error) {
     showSetup(errorText(error))
+  } finally {
+    starting = false
   }
 }
-
-$('refresh').onclick = () => void start()
 $('new-bot').onclick = newBotDialog
 $('back').onclick = () => {
   state.selected = null
