@@ -15,6 +15,14 @@ export function addableMausBot(bot: { hidden?: unknown; sidebarHidden?: unknown;
   return !bot.hidden && bot.sidebarHidden === true && !!bot.defaultBot && !bot.defaultBot.person
 }
 
+// The pairing page's Connect button, enabled or not (it is disabled until a code is filled in).
+export function pairingScreen(snapshot: string): boolean {
+  return /button "Connect" \[[^\]\n]*\bref=e\d+\]/.test(snapshot)
+}
+
+// The Connect button's reference, only while it can be pressed.
 export function connectRef(snapshot: string): string | undefined {
-  return /button "Connect"[^\n]*\[ref=(e\d+)\]/.exec(snapshot)?.[1]
+  const match = /button "Connect" \[([^\]\n]*)\]/.exec(snapshot)
+  if (!match || /\bdisabled\b/.test(match[1])) return undefined
+  return /\bref=(e\d+)\b/.exec(match[1])?.[1]
 }
