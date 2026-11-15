@@ -21,7 +21,7 @@ Opening the panel reuses an OpenMausBot server on port 8799, 18799 or 28799. If
 none is running, it installs the tested npm package version (pinned in
 `shared/omb-version.ts`) into `~/.bot-deck/openmausbot/<version>` and starts it on
 the first free port. The first download is about 75 MB and can take a minute.
-It uses your normal OpenMausBot data folder. Running servers with suffixed or
+It keeps its own OpenMausBot workspace in `~/.bot-deck/data`, apart from any you already have in `~/.openmausbot`, so starting it never resumes routines or connections set up elsewhere. A server that is already running is reused with whatever workspace it has. Running servers with suffixed or
 unknown versions are reused too; the panel notes when compatibility is unknown.
 
 The detached server keeps running when the panel or plugin worker closes.

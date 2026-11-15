@@ -148,7 +148,7 @@ test('startServer detaches, truncates log, saves launcher and child pids and wai
   }
   assert.deepEqual(await startServer('/fake/bin/omb', 8799, deps), { port: 8799, version })
   assert.equal(checks, 2)
-  assert.deepEqual(calls[0].args, ['serve', '--port', '8799'])
+  assert.deepEqual(calls[0].args, ['serve', '--port', '8799', '--data-dir', '/fake/.bot-deck/data'])
   assert.equal(calls[0].file, '/fake/bin/omb')
   assert.equal((calls[0].options as { detached: boolean }).detached, true)
   assert.deepEqual((calls[0].options as { stdio: unknown }).stdio, ['ignore', 7, 7])
@@ -192,7 +192,7 @@ test('ensureServer skips occupied ports and installs and starts once', async () 
   assert.equal(first, ensureServer(deps))
   assert.deepEqual(await first, { port: 18799, version, started: true })
   assert.equal(calls.length, 3)
-  assert.deepEqual(calls[2].args, ['serve', '--port', '18799'])
+  assert.deepEqual(calls[2].args, ['serve', '--port', '18799', '--data-dir', '/fake/.bot-deck/data'])
 })
 
 test('stopServer refuses a pid mismatch and only signals a matching OpenMausBot', async () => {

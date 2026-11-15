@@ -173,7 +173,11 @@ export async function startServer(bin: string, port: number, deps: ServerDeps = 
     const fd = deps.open(join(folder, 'server.log'))
     let child: { pid: number; unref(): void }
     try {
-      child = await deps.spawn(bin, ['serve', '--port', String(port)], { env: environment(deps), detached: true, stdio: ['ignore', fd, fd] })
+      // Bot Deck keeps its own OpenMausBot workspace, apart from any the person already has in
+      // ~/.openmausbot, so starting it never resumes routines or connections they set up elsewhere.
+      const dataDir = join(folder, 'data')
+      deps.mkdir(dataDir)
+      child = await deps.spawn(bin, ['serve', '--port', String(port), '--data-dir', dataDir], { env: environment(deps), detached: true, stdio: ['ignore', fd, fd] })
       child.unref()
     } finally {
       deps.close(fd)
