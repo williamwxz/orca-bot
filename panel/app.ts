@@ -8,18 +8,26 @@ type FrameApi = {
 const frame = (globalThis as unknown as { orca: FrameApi }).orca
 const message = document.getElementById('message') as HTMLParagraphElement
 const retry = document.getElementById('retry') as HTMLButtonElement
+let timer: ReturnType<typeof setTimeout> | undefined
 
-async function refresh(): Promise<void> {
+async function refresh(explicitRetry = false): Promise<void> {
+  clearTimeout(timer)
   retry.disabled = true
   try {
-    const status = await frame.plugin.request('status', {})
-    message.textContent = status.message
-  } catch (error) {
-    message.textContent = error instanceof Error ? error.message : 'Could not read status. Please retry.'
+    const status = await frame.plugin.request('status', { retry: explicitRetry })
+    message.textContent = status.state === 'running'
+      ? `Running OpenMausBot ${status.version} on port ${status.port}. ${status.message}`
+      : status.message
+    retry.hidden = status.state === 'running' || status.state === 'starting'
+    if (status.state === 'starting') timer = setTimeout(() => void refresh(), 2000)
+  } catch {
+    message.textContent = 'Could not read status. Please retry.'
+    retry.hidden = false
   } finally {
     retry.disabled = false
   }
 }
 
-retry.addEventListener('click', () => void refresh())
+retry.addEventListener('click', () => void refresh(true))
+window.addEventListener('pagehide', () => clearTimeout(timer))
 void refresh()

@@ -20,6 +20,12 @@
         "icon": "bot",
         "entry": "panel/index.html"
       }
+    ],
+    "commands": [
+      {
+        "id": "botdeck.stopServer",
+        "title": "Bot Deck: Stop the OpenMausBot server"
+      }
     ]
   }
 }
