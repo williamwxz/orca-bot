@@ -59,3 +59,10 @@ test('version messages explain compatibility in either direction', () => {
   assert.equal(versionMessage('0.0'), `OpenMausBot 0.0 is older than Bot Deck expects (${testedVersion}). Update OpenMausBot.`)
   assert.equal(versionMessage(testedVersion), 'OpenMausBot is ready.')
 })
+
+
+test('version messages support suffixed and unknown versions', () => {
+  assert.match(versionMessage('0.2.0-beta.1'), /newer than/)
+  assert.match(versionMessage('development'), /version .* is unknown/)
+  assert.match(versionMessage('unknown'), /cannot compare/)
+})

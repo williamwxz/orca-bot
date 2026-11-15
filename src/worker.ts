@@ -18,6 +18,7 @@ function defaults(): WorkerDeps {
 export function versionMessage(version: string): string {
   const tested = TESTED_OPENMAUSBOT_VERSION
   const comparison = compareVersions(version, tested)
+  if (comparison === undefined) return `OpenMausBot is running, but its version (${version}) is unknown. Bot Deck cannot compare it with the tested version (${tested}).`
   if (comparison > 0) return `OpenMausBot ${version} is newer than the version Bot Deck was tested with (${tested}). It should work; tell us if something looks wrong.`
   if (comparison < 0) return `OpenMausBot ${version} is older than Bot Deck expects (${tested}). Update OpenMausBot.`
   return 'OpenMausBot is ready.'

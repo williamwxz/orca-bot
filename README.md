@@ -21,14 +21,17 @@ Opening the panel reuses an OpenMausBot server on port 8799, 18799 or 28799. If
 none is running, it installs the tested npm package version (pinned in
 `shared/omb-version.ts`) into `~/.bot-deck/openmausbot/<version>` and starts it on
 the first free port. The first download is about 75 MB and can take a minute.
-It uses your normal OpenMausBot data folder.
+It uses your normal OpenMausBot data folder. Running servers with suffixed or
+unknown versions are reused too; the panel notes when compatibility is unknown.
 
 The detached server keeps running when the panel or plugin worker closes.
 `~/.bot-deck/server.log` is truncated on each start and may contain a pairing
 code; inspect it locally and keep it private. `~/.bot-deck/server.pid` records
-the process ID and port. Use **Bot Deck: Stop the OpenMausBot server** in Orca's
+the launcher PID, listening server PID and port. Use **Bot Deck: Stop the OpenMausBot server** in Orca's
 command palette to stop a server this plugin started. Bot Deck checks its
-identity before sending a signal and does not stop servers it merely reused.
+listening server’s identity before signaling its launcher, waits up to 10 seconds
+for health to disappear before removing the pid file, and does not stop servers
+it merely reused.
 Press Retry in the panel after resolving a startup error or stopping the server.
 
 Develop with Orca 1.4.246 or newer; no dependencies or build step:

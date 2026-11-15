@@ -35,6 +35,7 @@ function fake() {
     write: (path, value) => { files.set(path, value) },
     remove: (path) => { files.delete(path) },
     kill: (pid) => { signals.push(pid) },
+    processAlive: (pid) => pid === 42,
     portFree: async () => true,
     now: () => time,
     sleep: async (ms) => { time += ms },
@@ -55,7 +56,7 @@ function response(value: unknown) {
   return { ok: true, json: async () => value }
 }
 
-function healthy(pid = 42) {
+function healthy(pid = 43) {
   return response({ app: 'openmausbot', version, pid })
 }
 
@@ -136,13 +137,14 @@ test('failed installation preserves files and redacts tokens from last lines', a
   assert.equal(files.get('partial'), 'keep')
 })
 
-test('startServer detaches, truncates log, saves pid and waits for matching health', async () => {
+test('startServer detaches, truncates log, saves launcher and child pids and waits for health', async () => {
   const { deps, files, calls } = fake()
   files.set('/fake/.bot-deck/server.log', 'private pairing code')
   let checks = 0
   deps.fetch = async () => {
     checks++
-    return healthy(checks === 1 ? 99 : 42)
+    if (checks === 1) throw new Error('starting')
+    return healthy()
   }
   assert.deepEqual(await startServer('/fake/bin/omb', 8799, deps), { port: 8799, version })
   assert.equal(checks, 2)
@@ -151,7 +153,7 @@ test('startServer detaches, truncates log, saves pid and waits for matching heal
   assert.equal((calls[0].options as { detached: boolean }).detached, true)
   assert.deepEqual((calls[0].options as { stdio: unknown }).stdio, ['ignore', 7, 7])
   assert.equal(files.get('/fake/.bot-deck/server.log'), '')
-  assert.deepEqual(JSON.parse(files.get('/fake/.bot-deck/server.pid')!), { pid: 42, port: 8799 })
+  assert.deepEqual(JSON.parse(files.get('/fake/.bot-deck/server.pid')!), { launcherPid: 42, serverPid: 43, port: 8799 })
   assert.equal(files.get('unref'), 'yes')
   assert.equal(files.get('closed'), '7')
 })
@@ -195,15 +197,24 @@ test('ensureServer skips occupied ports and installs and starts once', async () 
 
 test('stopServer refuses a pid mismatch and only signals a matching OpenMausBot', async () => {
   const { deps, files, signals } = fake()
-  files.set('/fake/.bot-deck/server.pid', JSON.stringify({ port: 8799, pid: 42 }))
+  files.set('/fake/.bot-deck/server.pid', JSON.stringify({ port: 8799, launcherPid: 42, serverPid: 43 }))
   deps.fetch = async () => healthy(99)
   assert.equal((await stopServer(deps)).stopped, false)
   assert.deepEqual(signals, [])
   deps.fetch = async () => response({ app: 'other', version, pid: 42 })
   assert.equal((await stopServer(deps)).stopped, false)
   assert.deepEqual(signals, [])
-  deps.fetch = async () => healthy()
+  let checksAfterSignal = 0
+  deps.fetch = async () => {
+    if (signals.length) {
+      checksAfterSignal++
+      assert.equal(files.has('/fake/.bot-deck/server.pid'), true)
+      if (checksAfterSignal === 2) throw new Error('stopped')
+    }
+    return healthy()
+  }
   assert.equal((await stopServer(deps)).stopped, true)
+  assert.equal(checksAfterSignal, 2)
   assert.deepEqual(signals, [42])
   assert.equal(files.has('/fake/.bot-deck/server.pid'), false)
 })
@@ -212,4 +223,51 @@ test('numeric version comparison handles multi-digit parts and omitted zeros', (
   assert.equal(compareVersions('1.10', '1.9'), 1)
   assert.equal(compareVersions('1', '1.0.0'), 0)
   assert.equal(compareVersions('0.9', '1'), -1)
+})
+
+
+test('startup refuses health when its launcher has exited', async () => {
+  const { deps, files } = fake()
+  deps.fetch = async () => healthy()
+  deps.processAlive = () => false
+  await assert.rejects(startServer('/fake/bin/omb', 8799, deps), /launcher exited/)
+  assert.equal(files.has('/fake/.bot-deck/server.pid'), false)
+})
+
+test('stop keeps the pid file if health continues after signaling the launcher', async () => {
+  const { deps, files, signals } = fake()
+  files.set('/fake/.bot-deck/server.pid', JSON.stringify({ launcherPid: 42, serverPid: 43, port: 8799 }))
+  deps.fetch = async () => healthy()
+  const result = await stopServer(deps)
+  assert.equal(result.stopped, false)
+  assert.match(result.message, /health is still responding/)
+  assert.deepEqual(signals, [42])
+  assert.equal(files.has('/fake/.bot-deck/server.pid'), true)
+})
+
+test('stop refuses a dead launcher and legacy pid records', async () => {
+  const { deps, files, signals } = fake()
+  files.set('/fake/.bot-deck/server.pid', JSON.stringify({ launcherPid: 42, serverPid: 43, port: 8799 }))
+  deps.fetch = async () => healthy()
+  deps.processAlive = () => false
+  assert.equal((await stopServer(deps)).stopped, false)
+  files.set('/fake/.bot-deck/server.pid', JSON.stringify({ pid: 42, port: 8799 }))
+  assert.equal((await stopServer(deps)).stopped, false)
+  assert.deepEqual(signals, [])
+})
+
+test('ensureServer reuses suffixed, unparseable and missing versions without spawning', async () => {
+  for (const reported of ['0.2.0-beta.1', 'development', '', undefined]) {
+    const { deps, calls } = fake()
+    deps.fetch = async () => response({ app: 'openmausbot', version: reported, pid: 43 })
+    assert.deepEqual(await ensureServer(deps), { port: 8799, version: reported || 'unknown', started: false })
+    assert.equal(calls.length, 0)
+  }
+})
+
+test('versions compare their numeric prefix and report unknown without one', () => {
+  assert.equal(compareVersions('0.2.0-beta.1', '0.1.999'), 1)
+  assert.equal(compareVersions('1.2.3-dev', '1.2.3'), 0)
+  assert.equal(compareVersions('development', '1.2.3'), undefined)
+  assert.equal(compareVersions('1.2.3', 'unknown'), undefined)
 })

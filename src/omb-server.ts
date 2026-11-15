@@ -20,6 +20,7 @@ export type ServerDeps = {
   write: (path: string, value: string) => void
   remove: (path: string) => void
   kill: (pid: number) => void
+  processAlive: (pid: number) => boolean
   portFree: (port: number) => Promise<boolean>
   now: () => number
   sleep: (ms: number) => Promise<void>
@@ -62,6 +63,14 @@ export function defaultServerDeps(): ServerDeps {
     write: (path, value) => fs.writeFileSync(path, value, { mode: 0o600 }),
     remove: fs.unlinkSync,
     kill: (pid) => { process.kill(pid, 'SIGTERM') },
+    processAlive: (pid) => {
+      try {
+        process.kill(pid, 0)
+        return true
+      } catch {
+        return false
+      }
+    },
     portFree: (port) => new Promise((resolve) => {
       const probe = createServer()
       probe.once('error', () => resolve(false))
@@ -94,8 +103,9 @@ async function health(port: number, deps: ServerDeps, timeoutMs = 1500): Promise
       const response = await deps.fetch(`http://127.0.0.1:${port}/api/health`, { signal: controller.signal })
       if (!response.ok) return undefined
       const value = await response.json() as Partial<Health> | null
-      if (value?.app !== 'openmausbot' || typeof value.version !== 'string' || !/^\d+(\.\d+)*$/.test(value.version)) return undefined
-      return value as Health
+      if (value?.app !== 'openmausbot') return undefined
+      const version = typeof value.version === 'string' && value.version.trim() ? value.version : 'unknown'
+      return { app: 'openmausbot', version, pid: value.pid }
     }
     return await Promise.race([request(), timeout])
   } catch {
@@ -126,7 +136,7 @@ export async function checkNode(deps: ServerDeps = defaultServerDeps()): Promise
   } catch {
     throw new ServerError('needs_node', 'Node.js was not found on PATH. Install Node.js 24 or newer, then press Retry.')
   }
-  if (!/^\d+(\.\d+)*$/.test(version) || compareVersions(version, '24') < 0) {
+  if (!/^\d+(\.\d+)*$/.test(version) || (compareVersions(version, '24') ?? -1) < 0) {
     throw new ServerError('needs_node', `Node.js ${version} is too old or unsupported. Install Node.js 24 or newer, then press Retry.`)
   }
   return version
@@ -165,14 +175,18 @@ export async function startServer(bin: string, port: number, deps: ServerDeps = 
     try {
       child = await deps.spawn(bin, ['serve', '--port', String(port)], { env: environment(deps), detached: true, stdio: ['ignore', fd, fd] })
       child.unref()
-      deps.write(join(folder, 'server.pid'), JSON.stringify({ pid: child.pid, port }))
     } finally {
       deps.close(fd)
     }
     const deadline = deps.now() + 30000
     while (deps.now() < deadline) {
       const result = await health(port, deps, Math.min(1500, deadline - deps.now()))
-      if (result?.pid === child.pid) return { port, version: result.version }
+      if (!deps.processAlive(child.pid)) throw new Error('The OpenMausBot launcher exited before the server became ready.')
+      if (result && Number.isSafeInteger(result.pid) && result.pid! > 0) {
+        // The launcher owns the listening child and must receive the stop signal.
+        deps.write(join(folder, 'server.pid'), JSON.stringify({ launcherPid: child.pid, serverPid: result.pid, port }))
+        return { port, version: result.version }
+      }
       await deps.sleep(Math.min(250, Math.max(0, deadline - deps.now())))
     }
     throw new Error('The server did not become healthy within 30 seconds.')
@@ -205,13 +219,21 @@ export function ensureServer(deps: ServerDeps = defaultServerDeps()): Promise<Se
 export async function stopServer(deps: ServerDeps = defaultServerDeps()): Promise<StopResult> {
   const path = join(deps.home, '.bot-deck/server.pid')
   try {
-    const record = JSON.parse(deps.read(path)) as { pid: number; port: number }
-    if (!Number.isSafeInteger(record.pid) || record.pid <= 0 || !ports.includes(record.port)) throw new Error('Invalid pid file')
+    const record = JSON.parse(deps.read(path)) as { launcherPid: number; serverPid: number; port: number }
+    if (!Number.isSafeInteger(record.launcherPid) || record.launcherPid <= 0 || !Number.isSafeInteger(record.serverPid) || record.serverPid <= 0 || !ports.includes(record.port)) throw new Error('Invalid pid file')
     const result = await health(record.port, deps)
-    if (!result || result.pid !== record.pid) return { stopped: false, message: 'Server identity did not match the pid file; no signal was sent.' }
-    deps.kill(record.pid)
-    deps.remove(path)
-    return { stopped: true, message: 'Stopped the OpenMausBot server started by Bot Deck.' }
+    if (!result || result.pid !== record.serverPid || !deps.processAlive(record.launcherPid)) return { stopped: false, message: 'Server identity did not match the pid file; no signal was sent.' }
+    deps.kill(record.launcherPid)
+    const deadline = deps.now() + 10000
+    while (deps.now() < deadline) {
+      const remaining = await health(record.port, deps, Math.min(1500, deadline - deps.now()))
+      if (!remaining) {
+        deps.remove(path)
+        return { stopped: true, message: 'Stopped the OpenMausBot server started by Bot Deck.' }
+      }
+      await deps.sleep(Math.min(250, Math.max(0, deadline - deps.now())))
+    }
+    return { stopped: false, message: 'Sent the stop signal, but OpenMausBot health is still responding. The pid file was kept; try stopping again.' }
   } catch {
     return { stopped: false, message: 'Could not verify or stop a server started by Bot Deck; no other server was touched.' }
   }
