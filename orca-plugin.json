@@ -60,5 +60,26 @@
     {
       "kind": "storage:own"
     }
+  ],
+  "cover": {
+    "path": "images/cover.png",
+    "alt": "Orca Bot: a team of AI bots in the sidebar, with a fictional Chief of Staff, researcher, writer and developer."
+  },
+  "screenshots": [
+    {
+      "path": "images/screenshot-bots.png",
+      "alt": "Light-theme bot list with fictional bots Milo, Scout, Quill and Patch, a Chief of Staff badge, previews and an unread dot.",
+      "caption": "Your team, right in the sidebar."
+    },
+    {
+      "path": "images/screenshot-chat.png",
+      "alt": "Dark-theme chat with fictional researcher Scout, sample messages, a working avatar and the status Working · 12s.",
+      "caption": "Keep the conversation moving."
+    },
+    {
+      "path": "images/screenshot-setup.png",
+      "alt": "Setup card with three choices: share tools, connect Orca agents, and import three tools from Cursor and Claude Desktop.",
+      "caption": "Choose what your bots can access."
+    }
   ]
 }
