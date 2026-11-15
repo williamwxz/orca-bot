@@ -152,6 +152,6 @@ export async function importTools(port: number, deps: ImportDeps = defaultImport
 }
 export function importMessage(result: ImportResult): string {
   const failed = result.skipped.filter(s => s.reason === 'failed').length
-  return (result.added.length ? `Brought in ${result.added.length} tools, switched off. Turn them on per bot in the Bot Dashboard.` : 'Nothing new to bring in.') +
-    (failed ? ` ${failed} tools failed to import or switch off; check them in the Bot Dashboard.` : '')
+  return (result.added.length ? `Brought in ${result.added.length} ${result.added.length === 1 ? 'tool' : 'tools'}, switched off. Turn them on per bot in the Bot Dashboard.` : 'Nothing new to bring in.') +
+    (failed ? ` ${failed} ${failed === 1 ? 'tool' : 'tools'} failed to import or switch off; check them in the Bot Dashboard.` : '')
 }

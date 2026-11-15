@@ -22,7 +22,7 @@ function renderSetup(): void {
   element('link-agents-label').hidden = !agentNames(state.agents)
   element('agent-names').textContent = agentNames(state.agents)
   element('import-tools-label').hidden = state.tools.length === 0
-  element('import-tools-copy').textContent = `Adds ${state.tools.length} tools from ${[...new Set(state.tools.map(t => t.source))].join(', ')} to OpenMausBot, switched off. Turn them on per bot in the Bot Dashboard. Tokens saved in those apps are copied to OpenMausBot on this computer.`
+  element('import-tools-copy').textContent = `Adds ${state.tools.length} ${state.tools.length === 1 ? 'tool' : 'tools'} from ${[...new Set(state.tools.map(t => t.source))].join(', ')} to OpenMausBot, switched off. Turn them on per bot in the Bot Dashboard. Tokens saved in those apps are copied to OpenMausBot on this computer.`
   element('setup-message').textContent = state.message
   for (const id of ['setup-allow', 'setup-skip']) element<HTMLButtonElement>(id).disabled = state.busy
   importTools.disabled = shareTools.disabled = linkAgents.disabled = state.busy
