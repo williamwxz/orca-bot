@@ -438,27 +438,87 @@ test('main settings and roster enrichment start in parallel and settle independe
   assert.equal((await rosterFailure.client.listBots())[0].main, true)
 })
 
-test('a main settings deadline returns the roster without failing or replaying', async () => {
-  let expire: (() => void) | undefined
-  const calls: string[] = []
-  const client = createGatewayClient({
-    getRoute: () => route, refreshRoute: () => route,
-    getAccount: () => ({ account: { key: 'fixture-account', accessToken: 'fixture-token' } }),
-    fetch: (async (url: any) => {
-      const method = String(url).split('/').pop()!
-      calls.push(method)
-      if (method === 'listAgents') return new Response(JSON.stringify({ agents: [{ id: 'example-bot', harness: 'box' }] }))
-      return new Promise(() => {})
-    }) as typeof globalThis.fetch,
-    setTimeout: ((fn: () => void) => { expire = fn; return 1 }) as any,
-    clearTimeout: (() => {}) as any
-  })
-  const pending = client.listBots()
-  // Drain the finite promise chain until the optional request has installed its deadline.
-  while (!calls.includes('GetGrokBotUserRuntimeSettings')) await Promise.resolve()
-  expire!()
-  const bots = await pending
-  assert.equal(bots.length, 1)
-  assert.equal(bots[0].main, false)
-  assert.deepEqual(calls, ['listAgents', 'GetGrokBotUserRuntimeSettings'])
+test('optional reads abort at five seconds and the next refresh can recover', async () => {
+  for (const stalled of ['settings', 'roster', 'both']) {
+    let now = 0
+    let nextTimer = 0
+    const timers = new Map<number, { at: number; fire: () => void }>()
+    const durations: number[] = []
+    const signals = new Map<string, AbortSignal>()
+    const calls: string[] = []
+    let recovering = false
+    let bothStarted: () => void = () => {}
+    const started = new Promise<void>(resolve => { bothStarted = resolve })
+    const clock = {
+      setTimeout: ((fire: () => void, ms: number) => {
+        durations.push(ms)
+        const id = ++nextTimer
+        timers.set(id, { at: now + ms, fire })
+        return id
+      }) as any,
+      clearTimeout: ((id: number) => { timers.delete(id) }) as any
+    }
+    const advance = (ms: number) => {
+      now += ms
+      for (const [id, timer] of [...timers]) {
+        if (timer.at <= now) {
+          timers.delete(id)
+          timer.fire()
+        }
+      }
+    }
+    const client = createGatewayClient({
+      ...clock,
+      getRoute: () => route, refreshRoute: () => route,
+      getAccount: () => ({ account: { key: 'fixture-account', accessToken: 'fixture-token' } }),
+      fetch: (async (url: any, init: any) => {
+        const method = String(url).split('/').pop()!
+        calls.push(method)
+        if (method === 'listAgents') return new Response(JSON.stringify({ agents: [{ id: 'example-bot' }] }))
+        signals.set(method, init.signal)
+        if (signals.size === 2) bothStarted()
+        const isSettings = method === 'GetGrokBotUserRuntimeSettings'
+        if (!recovering && (stalled === 'both' || (isSettings ? stalled === 'settings' : stalled === 'roster'))) {
+          // Like real fetch, reject when transport aborts the in-flight request.
+          return new Promise<Response>((_, reject) => {
+            init.signal.addEventListener('abort', () => reject(new Error('fixture aborted')), { once: true })
+          })
+        }
+        return new Response(JSON.stringify(isSettings
+          ? { settings: { mainAgentId: 'example-bot' } }
+          : { agents: [{ agentId: 'example-bot', id: 'server-record', harness: 'temporal' }] }))
+      }) as typeof globalThis.fetch
+    })
+    let settled = false
+    const pending = client.listBots().then(bots => { settled = true; return bots })
+    await started
+    // Let successful response bodies finish before advancing the fake clock.
+    await new Promise<void>(resolve => setImmediate(resolve))
+    assert.deepEqual(durations, [30_000, 5_000, 5_000])
+    advance(4_999)
+    await Promise.resolve()
+    assert.equal(settled, false)
+    assert.ok([...signals.values()].every(signal => !signal.aborted))
+    advance(1)
+    const bots = await pending
+    assert.equal(now, 5_000)
+    assert.equal(bots.length, 1)
+    if (stalled !== 'roster') {
+      assert.equal(bots[0].main, false)
+      assert.equal(signals.get('GetGrokBotUserRuntimeSettings')?.aborted, true)
+    }
+    if (stalled !== 'settings') {
+      assert.equal(bots[0].serverRun, false)
+      assert.equal(signals.get('ListGrokBotAgents')?.aborted, true)
+    }
+    if (stalled === 'roster') assert.equal(bots[0].main, true)
+    if (stalled === 'settings') assert.equal(bots[0].serverRun, true)
+    assert.equal(timers.size, 0)
+    assert.deepEqual(calls, ['listAgents', 'GetGrokBotUserRuntimeSettings', 'ListGrokBotAgents'])
+    recovering = true
+    const refreshed = await client.listBots()
+    assert.equal(refreshed[0].main, true)
+    assert.equal(refreshed[0].serverRun, true)
+    assert.equal(timers.size, 0)
+  }
 })

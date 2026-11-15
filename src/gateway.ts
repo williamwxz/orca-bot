@@ -147,11 +147,13 @@ export function createGatewayClient(options: ClientOptions) {
       if (options.getAccount) {
         try {
           const { account, appVersion } = await serverAccount()
-          // Independent optional reads: neither failure can discard the gateway roster.
+          // Optional reads share a short budget, enforced by transport aborts.
+          // Neither failure can discard the gateway roster or stall it for 30 seconds.
+          const optionalReads = { ...options, timeoutMs: 5_000 }
           const [mainResult, rosterResult] = await Promise.allSettled([
-            getMainBotId(account, appVersion, options),
+            getMainBotId(account, appVersion, optionalReads),
             rows.some(row => row.harness == null)
-              ? listServerBots(account, appVersion, options) : Promise.resolve([])
+              ? listServerBots(account, appVersion, optionalReads) : Promise.resolve([])
           ])
           if (mainResult.status === 'fulfilled') mainAgentId = mainResult.value
           if (rosterResult.status === 'fulfilled') {

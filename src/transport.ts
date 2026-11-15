@@ -1,5 +1,6 @@
 export type Account = { key: string; accessToken: string; teamId?: string }
 export type Dependencies = {
+  timeoutMs?: number
   fetch?: typeof globalThis.fetch
   setTimeout?: typeof globalThis.setTimeout
   clearTimeout?: typeof globalThis.clearTimeout
@@ -129,7 +130,7 @@ export async function request(
       timer = start(() => {
         controller.abort()
         reject(failure('timeout', 'The request timed out'))
-      }, TIMEOUT_MS)
+      }, deps.timeoutMs ?? TIMEOUT_MS)
     })
     return await Promise.race([timeout, perform()])
   } catch (error) {
