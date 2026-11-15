@@ -17,7 +17,7 @@ function fake() {
     execFile: async (file, args, options) => {
       calls.push({ file, args, options })
       if (file === 'node') return 'v24.1.0\n'
-      files.set(`/fake/.bot-deck/openmausbot/${version}/node_modules/.bin/openmausbot`, '')
+      files.set(`/fake/.orca-bot/openmausbot/${version}/node_modules/.bin/openmausbot`, '')
       return ''
     },
     spawn: async (file, args, options) => {
@@ -115,7 +115,7 @@ test('checkNode uses PATH and appends known folders', async () => {
 
 test('ensureInstalled skips an existing binary', async () => {
   const { deps, files, calls } = fake()
-  const bin = `/fake/.bot-deck/openmausbot/${version}/node_modules/.bin/openmausbot`
+  const bin = `/fake/.orca-bot/openmausbot/${version}/node_modules/.bin/openmausbot`
   files.set(bin, '')
   assert.equal(await ensureInstalled(version, deps), bin)
   assert.equal(calls.length, 0)
@@ -125,7 +125,7 @@ test('ensureInstalled runs npm with exact args and a five minute limit', async (
   const { deps, calls } = fake()
   await ensureInstalled(version, deps)
   assert.equal(calls[0].file, 'npm')
-  assert.deepEqual(calls[0].args, ['install', '--prefix', `/fake/.bot-deck/openmausbot/${version}`, '--no-audit', '--no-fund', '--ignore-scripts', `openmausbot@${version}`])
+  assert.deepEqual(calls[0].args, ['install', '--prefix', `/fake/.orca-bot/openmausbot/${version}`, '--no-audit', '--no-fund', '--ignore-scripts', `openmausbot@${version}`])
   assert.equal((calls[0].options as { timeout: number }).timeout, 300000)
 })
 
@@ -144,7 +144,7 @@ test('failed installation preserves files and redacts tokens from last lines', a
 
 test('startServer detaches, truncates log, saves launcher and child pids and waits for health', async () => {
   const { deps, files, calls } = fake()
-  files.set('/fake/.bot-deck/server.log', 'private pairing code')
+  files.set('/fake/.orca-bot/server.log', 'private pairing code')
   let checks = 0
   deps.fetch = async () => {
     checks++
@@ -153,13 +153,13 @@ test('startServer detaches, truncates log, saves launcher and child pids and wai
   }
   assert.deepEqual(await startServer('/fake/bin/omb', 8799, deps), { port: 8799, version })
   assert.equal(checks, 2)
-  assert.deepEqual(calls[0].args, ['serve', '--port', '8799', '--data-dir', '/fake/.bot-deck/data'])
+  assert.deepEqual(calls[0].args, ['serve', '--port', '8799', '--data-dir', '/fake/.orca-bot/data'])
   assert.equal(calls[0].file, '/fake/bin/omb')
   assert.equal((calls[0].options as { detached: boolean }).detached, true)
   assert.equal((calls[0].options as any).env.OMB_CLAUDE_INHERIT_USER_CONFIG, undefined)
   assert.deepEqual((calls[0].options as { stdio: unknown }).stdio, ['ignore', 7, 7])
-  assert.equal(files.get('/fake/.bot-deck/server.log'), '')
-  assert.deepEqual(JSON.parse(files.get('/fake/.bot-deck/server.pid')!), { launcherPid: 42, serverPid: 43, port: 8799, claudeHome: false, inherit: false, env: 2 })
+  assert.equal(files.get('/fake/.orca-bot/server.log'), '')
+  assert.deepEqual(JSON.parse(files.get('/fake/.orca-bot/server.pid')!), { launcherPid: 42, serverPid: 43, port: 8799, claudeHome: false, inherit: false, env: 2 })
   assert.equal(files.get('unref'), 'yes')
   assert.equal(files.get('closed'), '7')
 })
@@ -198,12 +198,12 @@ test('ensureServer skips occupied ports and installs and starts once', async () 
   assert.equal(first, ensureServer(deps))
   assert.deepEqual(await first, { port: 18799, version, started: true, startedByPlugin: true })
   assert.equal(calls.length, 3)
-  assert.deepEqual(calls[2].args, ['serve', '--port', '18799', '--data-dir', '/fake/.bot-deck/data'])
+  assert.deepEqual(calls[2].args, ['serve', '--port', '18799', '--data-dir', '/fake/.orca-bot/data'])
 })
 
 test('stopServer refuses a pid mismatch and only signals a matching OpenMausBot', async () => {
   const { deps, files, signals } = fake()
-  files.set('/fake/.bot-deck/server.pid', JSON.stringify({ port: 8799, launcherPid: 42, serverPid: 43 }))
+  files.set('/fake/.orca-bot/server.pid', JSON.stringify({ port: 8799, launcherPid: 42, serverPid: 43 }))
   deps.fetch = async () => healthy(99)
   assert.equal((await stopServer(deps)).stopped, false)
   assert.deepEqual(signals, [])
@@ -214,7 +214,7 @@ test('stopServer refuses a pid mismatch and only signals a matching OpenMausBot'
   deps.fetch = async () => {
     if (signals.length) {
       checksAfterSignal++
-      assert.equal(files.has('/fake/.bot-deck/server.pid'), true)
+      assert.equal(files.has('/fake/.orca-bot/server.pid'), true)
       if (checksAfterSignal === 2) throw new Error('stopped')
     }
     return healthy()
@@ -222,7 +222,7 @@ test('stopServer refuses a pid mismatch and only signals a matching OpenMausBot'
   assert.equal((await stopServer(deps)).stopped, true)
   assert.equal(checksAfterSignal, 2)
   assert.deepEqual(signals, [42])
-  assert.equal(files.has('/fake/.bot-deck/server.pid'), false)
+  assert.equal(files.has('/fake/.orca-bot/server.pid'), false)
 })
 
 test('numeric version comparison handles multi-digit parts and omitted zeros', () => {
@@ -237,27 +237,27 @@ test('startup refuses health when its launcher has exited', async () => {
   deps.fetch = async () => healthy()
   deps.processAlive = () => false
   await assert.rejects(startServer('/fake/bin/omb', 8799, deps), /launcher exited/)
-  assert.equal(files.has('/fake/.bot-deck/server.pid'), false)
+  assert.equal(files.has('/fake/.orca-bot/server.pid'), false)
 })
 
 test('stop keeps the pid file if health continues after signaling the launcher', async () => {
   const { deps, files, signals } = fake()
-  files.set('/fake/.bot-deck/server.pid', JSON.stringify({ launcherPid: 42, serverPid: 43, port: 8799 }))
+  files.set('/fake/.orca-bot/server.pid', JSON.stringify({ launcherPid: 42, serverPid: 43, port: 8799 }))
   deps.fetch = async () => healthy()
   const result = await stopServer(deps)
   assert.equal(result.stopped, false)
   assert.match(result.message, /health is still responding/)
   assert.deepEqual(signals, [42])
-  assert.equal(files.has('/fake/.bot-deck/server.pid'), true)
+  assert.equal(files.has('/fake/.orca-bot/server.pid'), true)
 })
 
 test('stop refuses a dead launcher and legacy pid records', async () => {
   const { deps, files, signals } = fake()
-  files.set('/fake/.bot-deck/server.pid', JSON.stringify({ launcherPid: 42, serverPid: 43, port: 8799 }))
+  files.set('/fake/.orca-bot/server.pid', JSON.stringify({ launcherPid: 42, serverPid: 43, port: 8799 }))
   deps.fetch = async () => healthy()
   deps.processAlive = () => false
   assert.equal((await stopServer(deps)).stopped, false)
-  files.set('/fake/.bot-deck/server.pid', JSON.stringify({ pid: 42, port: 8799 }))
+  files.set('/fake/.orca-bot/server.pid', JSON.stringify({ pid: 42, port: 8799 }))
   assert.equal((await stopServer(deps)).stopped, false)
   assert.deepEqual(signals, [])
 })
@@ -282,7 +282,7 @@ test('fresh workers recover pairing ownership only from a matching persisted ser
   for (const record of [undefined, { port: 8799, serverPid: 99 }, { port: 18799, serverPid: 43 }, { port: 8799, serverPid: 43 }]) {
     const { deps, files } = fake()
     deps.fetch = async () => healthy(43)
-    if (record) files.set('/fake/.bot-deck/server.pid', JSON.stringify(record))
+    if (record) files.set('/fake/.orca-bot/server.pid', JSON.stringify(record))
     const cliCalls: string[][] = []
     const cli: CliDeps = {
       userInfo: () => ({ username: 'fake-user', shell: '/fake/shell' }), home: '/fake', platform: 'darwin', env: {},
@@ -357,7 +357,7 @@ test('selected-host accepts only an absolute contained directory ending in home,
     assert.equal((calls[0].options as any).env.CLAUDE_CONFIG_DIR, accepted ? selectedHome : undefined)
     assert.deepEqual(reads, [`${profiles}/selected-host`])
     assert.equal(JSON.stringify(result).includes(selectedHome), false)
-    assert.equal(files.get('/fake/.bot-deck/server.pid')!.includes(selectedHome), false)
+    assert.equal(files.get('/fake/.orca-bot/server.pid')!.includes(selectedHome), false)
   }
 })
 
@@ -375,7 +375,7 @@ test('server environment and pid flags cover home, sharing and explicit config c
       ...(preset || found ? { CLAUDE_CONFIG_DIR: preset ? '/explicit/config' : selectedHome } : {}),
       ...(share ? { OMB_CLAUDE_INHERIT_USER_CONFIG: '1' } : {})
     })
-    assert.deepEqual(JSON.parse(files.get('/fake/.bot-deck/server.pid')!), { launcherPid: 42, serverPid: 43, port: 8799, claudeHome: found || preset, inherit: share, env: 2 })
+    assert.deepEqual(JSON.parse(files.get('/fake/.orca-bot/server.pid')!), { launcherPid: 42, serverPid: 43, port: 8799, claudeHome: found || preset, inherit: share, env: 2 })
     assert.equal((await claudeSetupStatus(8799, share, deps)).restart, false)
     assert.equal((await claudeSetupStatus(8799, !share, deps)).restart, true)
     assert.equal((await claudeSetupStatus(8799, share, deps)).message, '')
@@ -425,7 +425,7 @@ test('profile paths never reach errors, public results, pid records or plugin lo
 
 test('legacy flags require restart only for an owned healthy server', async () => {
   const { deps, files } = fake()
-  files.set('/fake/.bot-deck/server.pid', JSON.stringify({ launcherPid: 42, serverPid: 43, port: 8799 }))
+  files.set('/fake/.orca-bot/server.pid', JSON.stringify({ launcherPid: 42, serverPid: 43, port: 8799 }))
   deps.fetch = async () => healthy()
   assert.equal((await claudeSetupStatus(8799, true, deps)).restart, true)
   deps.fetch = async () => healthy(99)
@@ -436,11 +436,11 @@ test('environment version migrates owned records once even when Claude flags mat
   const { deps, files } = fake()
   deps.fetch = async () => healthy()
   for (const env of [undefined, 1, 2, 3]) {
-    files.set('/fake/.bot-deck/server.pid', JSON.stringify({ launcherPid: 42, serverPid: 43, port: 8799, claudeHome: false, inherit: true, env }))
+    files.set('/fake/.orca-bot/server.pid', JSON.stringify({ launcherPid: 42, serverPid: 43, port: 8799, claudeHome: false, inherit: true, env }))
     assert.equal((await claudeSetupStatus(8799, true, deps)).restart, env === undefined || env < 2)
   }
   await startServer('/fake/bin/omb', 8799, deps)
-  const record = JSON.parse(files.get('/fake/.bot-deck/server.pid')!)
+  const record = JSON.parse(files.get('/fake/.orca-bot/server.pid')!)
   assert.equal(record.env, 2)
   assert.doesNotMatch(JSON.stringify(record), /fake-user|fake\/shell|USER|LOGNAME|SHELL|LANG/)
   assert.equal((await claudeSetupStatus(8799, false, deps)).restart, false)

@@ -32,8 +32,8 @@ test('adds exact agent commands and records only port and bin', async () => {
   const { deps, calls, record } = fake()
   await syncAgentLinks(input, deps)
   assert.deepEqual(calls.map((call) => [call.file, call.args]), [
-    ['/fake/bin/claude', ['mcp', 'add', '--scope', 'user', 'bot-deck', '-e', 'OMB_PORT=8799', '--', deps.bin, 'mcp']],
-    ['/fake/bin/codex', ['mcp', 'add', 'bot-deck', '--env', 'OMB_PORT=8799', '--', deps.bin, 'mcp']]
+    ['/fake/bin/claude', ['mcp', 'add', '--scope', 'user', 'orca-bot', '-e', 'OMB_PORT=8799', '--', deps.bin, 'mcp']],
+    ['/fake/bin/codex', ['mcp', 'add', 'orca-bot', '--env', 'OMB_PORT=8799', '--', deps.bin, 'mcp']]
   ])
   assert.equal(calls[0].env.CLAUDE_CONFIG_DIR, '/fake/profile')
   assert.deepEqual(record(), { claude: { port: 8799, bin: deps.bin }, codex: { port: 8799, bin: deps.bin } })
@@ -58,11 +58,11 @@ test('port or pinned binary changes remove and add again', async () => {
     assert.deepEqual(record().codex, { port: next.port, bin: deps.bin })
   }
 })
-test('unlink removes only recorded bot-deck entries', async () => {
+test('unlink removes only recorded orca-bot entries', async () => {
   const { deps, calls, record } = fake()
   deps.read = () => JSON.stringify({ claude: { port: 8799, bin: deps.bin } })
   await syncAgentLinks({ ...input, enabled: false }, deps)
-  assert.deepEqual(calls.map((call) => call.args), [['mcp', 'remove', '--scope', 'user', 'bot-deck']])
+  assert.deepEqual(calls.map((call) => call.args), [['mcp', 'remove', '--scope', 'user', 'orca-bot']])
   assert.deepEqual(record(), {})
 })
 test('unowned servers never read records or run commands', async () => {
@@ -72,21 +72,21 @@ test('unowned servers never read records or run commands', async () => {
   await syncAgentLinks({ ...input, owned: false, enabled: false }, deps)
   assert.deepEqual(calls, [])
 })
-test('existing unrecorded Codex bot-deck entry is preserved', async () => {
+test('existing unrecorded Codex orca-bot entry is preserved', async () => {
   const { deps, calls } = fake(['codex'])
   deps.codexEntryExists = async () => true
-  await assert.rejects(syncAgentLinks(input, deps), { message: 'Could not add Bot Deck to Codex.' })
+  await assert.rejects(syncAgentLinks(input, deps), { message: 'Could not add Orca Bot to Codex.' })
   assert.deepEqual(calls, [])
 })
 test('failures contain only the generic agent sentence and preserve successful entries', async () => {
   const { deps, record } = fake()
   deps.execFile = async (file) => { if (file.endsWith('codex')) throw new Error('private-output') }
-  await assert.rejects(syncAgentLinks(input, deps), { message: 'Could not add Bot Deck to Codex.' })
+  await assert.rejects(syncAgentLinks(input, deps), { message: 'Could not add Orca Bot to Codex.' })
   assert.deepEqual(record(), { claude: { port: 8799, bin: deps.bin } })
 })
 test('corrupt ownership record fails closed', async () => {
   const { deps, calls } = fake()
   deps.read = () => '{bad record'
-  await assert.rejects(syncAgentLinks(input, deps), { message: 'Could not read Bot Deck setup.' })
+  await assert.rejects(syncAgentLinks(input, deps), { message: 'Could not read Orca Bot setup.' })
   assert.deepEqual(calls, [])
 })

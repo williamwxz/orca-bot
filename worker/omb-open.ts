@@ -86,7 +86,7 @@ export async function openChat(input: OpenInput, deps: CliDeps = defaultCliDeps(
     throw new Error('Could not open chat. Check Orca and OpenMausBot, then try again.')
   }
   try {
-    const output = await deps.execFile(ombBinary(deps), ['pair', '--label', 'Orca', '--port', String(input.port), '--data-dir', join(deps.home, '.bot-deck/data')], cliOptions(deps))
+    const output = await deps.execFile(ombBinary(deps), ['pair', '--label', 'Orca', '--port', String(input.port), '--data-dir', join(deps.home, '.orca-bot/data')], cliOptions(deps))
     const links = output.match(/http:\/\/127\.0\.0\.1:\d+\/pair#[^\s\x1b]+/g) ?? []
     const link = links.find((value) => new URL(value).origin === origin)
     if (!link) throw new Error('Missing pairing link')

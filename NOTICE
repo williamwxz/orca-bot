@@ -1,4 +1,4 @@
-Bot Deck
+Orca Bot
 Copyright 2026 William Weixin Zhang
 
 Licensed under the Apache License, Version 2.0; see LICENSE.
@@ -16,21 +16,21 @@ Sources in the published package:
     font fallback stack, shadows and thinking shimmer)
   dist/assets/App-C-ZCwqeX.js (sidebar/chat/composer presentation classes)
 Adapted in panel/styles.css, panel/app.ts and panel/chat-view.ts.
-The crown SVG is an original small drawing for Bot Deck.
+The crown SVG is an original small drawing for Orca Bot.
 No enterprise code or assets were used.
 
 No font or image asset files were copied.
 The package ships Geist Variable Latin as
   dist/assets/geist-latin-wght-normal-BgDaEnEv.woff2 (29,400 bytes),
 but its own redistribution license text was not present in the inspected
-dist assets. Bot Deck uses OpenMausBot's fallback font stack instead:
+dist assets. Orca Bot uses OpenMausBot's fallback font stack instead:
 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif.
 
 OpenMausBot's procedural mascot component in PlacesRail-Bg3fXQbs.js uses
 bot.color, mascotBody and mascotFaceColor (plus appearance preferences),
 not a deterministic colour derived from the bot ID. These fields are not
-available in Bot Deck's existing roster protocol. To preserve the protocol,
-Bot Deck retains its original generated SVG avatars and stored-image support,
+available in Orca Bot's existing roster protocol. To preserve the protocol,
+Orca Bot retains its original generated SVG avatars and stored-image support,
 including working animation and reduced-motion handling.
 
-OpenMausBot is under the same license as Bot Deck; its text is in LICENSE.
+OpenMausBot is under the same license as Orca Bot; its text is in LICENSE.
