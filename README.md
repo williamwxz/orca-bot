@@ -18,7 +18,7 @@ Codex or Grok agent, and a chat window for each.
   page in an Orca browser tab, one click away.
 - **Runs locally.** Orca Bot has no server of its own and collects nothing.
 
-Unofficial. Not made by or affiliated with Orca, OpenMausBot or the makers of the models it runs. Desktop only: Orca's mobile app does not show plugins yet.
+Unofficial. Not made by or affiliated with Orca, OpenMausBot or the makers of the models it runs. For now it runs on macOS only: it has not been tested on Windows or Linux, and Orca's mobile app does not show plugins yet.
 
 ## How to use
 

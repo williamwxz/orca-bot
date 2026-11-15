@@ -11,3 +11,4 @@
 - OpenMausBot's usage analytics are switched off for a server Orca Bot starts.
 - Message text is no longer passed on a command line.
 - License changed from MIT to Apache-2.0.
+- Plugin id is `bot-for-orca`; the name stays Orca Bot. macOS only for now.
