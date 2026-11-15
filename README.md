@@ -1,7 +1,7 @@
 # Bot Deck
 
 Open the **Bot Deck** panel to see the bot list. Each row shows its avatar,
-name, Main tag when applicable, model label and unread dot. Click a row to open
+name, Chief of Staff tag when applicable, a last-read message preview (or model label) and unread dot. Click a row to open
 its chat window; use the back arrow to return to the list. **Open bot** opens
 that bot's full chat in an Orca browser tab, reusing the existing server tab.
 When there are no bots, **Open OpenMausBot** opens the browser UI where you can
@@ -65,7 +65,9 @@ orca plugin dev watch .    # load locally and reload on save
 ```
 
 Bot Deck is MIT licensed. Credit to milind-soni and the OpenMausBot contributors;
-OpenMausBot is licensed under Apache-2.0. This plugin is unofficial and is not
+OpenMausBot is licensed under Apache-2.0. The panel adapts its daylight and midnight
+visual design values; see [NOTICE](NOTICE) for sources and font/avatar limitations.
+This plugin is unofficial and is not
 affiliated with OpenMausBot or its engines.
 
 The earlier Grok Bot client is preserved at the tag `grok-bot-final`.

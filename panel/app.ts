@@ -19,8 +19,9 @@ let bots: Bot[] = []
 let rosterKey = ''
 const changing = new Set<string>()
 const readBots = new Set<string>()
+const previews = new Map<string, string>()
 const rosterView = element<HTMLElement>('roster-view')
-const chatView = createChatView(element('bot-view'), frame, makeAvatar, (id) => void open(id), () => { rosterView.hidden = false; element('list-title').hidden = false })
+const chatView = createChatView(element('bot-view'), frame, makeAvatar, (id) => void open(id), () => { rosterView.hidden = false; element('list-title').hidden = false; renderBots() }, (id, preview) => { if (preview) previews.set(id, preview); else previews.delete(id) })
 function showBot(bot: Bot): void {
   readBots.add(bot.id)
   rosterView.hidden = true
@@ -44,6 +45,7 @@ function makeAvatar(bot: Bot): HTMLElement {
 }
 const icons = {
   plus: '<path d="M8 3v10M3 8h10"/>',
+  crown: '<path d="M3 12 1.5 5l4 2L8 3l2.5 4 4-2-1.5 7Z"/><path d="M3 14h10"/>',
   clock: '<circle cx="8" cy="8" r="5.5"/><path d="M8 4.5V8l2.5 1.5"/>'
 }
 function icon(kind: keyof typeof icons): SVGElement {
@@ -84,7 +86,7 @@ async function addMausBot(bot: Bot): Promise<void> {
 }
 
 function renderBots(): void {
-  const key = JSON.stringify([bots, selected, opening, [...changing], [...readBots]])
+  const key = JSON.stringify([bots, selected, opening, [...changing], [...readBots], [...previews]])
   if (key === rosterKey) return
   rosterKey = key
   const focused = (document.activeElement as HTMLElement)?.dataset.focus
@@ -124,12 +126,15 @@ function renderBots(): void {
     const name = document.createElement('span')
     name.className = 'bot-name'
     name.textContent = bot.name
-    chat.append(avatar, name)
+    const copy = document.createElement('span'); copy.className = 'bot-copy'
+    const heading = document.createElement('span'); heading.className = 'bot-heading'; heading.append(name)
+    copy.append(heading)
+    chat.append(avatar, copy)
     if (bot.main) {
       const main = document.createElement('span')
       main.className = 'main-badge'
-      main.textContent = 'Main'
-      chat.append(main)
+      main.append(icon('crown'), document.createTextNode('Chief of Staff'))
+      heading.append(main)
     }
     chat.addEventListener('click', () => showBot(bot))
     row.addEventListener('click', (event) => {
@@ -137,7 +142,8 @@ function renderBots(): void {
     })
     const model = document.createElement('span')
     model.className = 'model'
-    model.textContent = bot.modelLabel
+    model.textContent = previews.get(bot.id) ?? bot.modelLabel
+    copy.append(model)
     const state = document.createElement('span')
     state.className = 'state'
     if (bot.unread && !readBots.has(bot.id)) {
@@ -147,7 +153,7 @@ function renderBots(): void {
       unread.title = 'Unread'
       state.append(unread)
     }
-    row.append(chat, model, state)
+    row.append(chat, state)
     roster.append(row)
   }
   if (focused) Array.from(roster.querySelectorAll<HTMLElement>('[data-focus]')).find((node) => node.dataset.focus === focused)?.focus()
