@@ -39,26 +39,8 @@ backend API. Conversation reads still use the gateway. Routines cannot be
 listed, paused or edited directly (ask the bot in chat). Forms and attachments
 open in the Grok Bot app. The bot's computer view is not shown.
 
-## Terminal chat
-
-The Orca mobile app can read and type into terminals on the paired Mac, even
-though it does not show plugin panels. From this plugin folder, start:
-
-```sh
-node cli/botdeck.ts
-```
-
-Requires Node 22.18 or newer and the signed-in Grok Bot desktop app. Choose a
-bot by number or name prefix, then type a message. Replies refresh every three
-seconds for up to two minutes; forms, files and drafts open in the Grok Bot app.
-
-Commands: `/b` bot list, `/r` refresh, `/m N` last N messages (maximum 50),
-`/h` help, `/q` quit. Ctrl-C or end-of-input also quits. An unclear send is
-never repeated automatically; use `/r` to check before sending again.
-
 ## Layout
 
-- `cli/`: plain terminal chat using the same client as the worker
 - `panel/`: the sidebar UI (HTML, CSS, TypeScript; Orca transpiles it, no build step)
 - `src/worker.ts`: handlers for panel actions
 - `src/session.ts`: reads the signed-in desktop app's session
