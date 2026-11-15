@@ -1,73 +1,144 @@
 # Bot Deck
 
-Open the **Bot Deck** panel to see the bot list. Each row shows its avatar,
-name, Chief of Staff tag when applicable, a last-read message preview (or model label) and unread dot. Click a row to open
-its chat window; use the back arrow to return to the list. **Open bot** opens
-that bot's full chat in an Orca browser tab, reusing the existing server tab.
-When there are no bots, **Open OpenMausBot** opens the browser UI where you can
-create them. **Bot Deck: Open chat** remains available in the command palette.
+A team of bots inside [Orca](https://github.com/stablyai/orca).
 
-The roster refreshes every five seconds while visible and retains the last list
-when a refresh fails. Hidden bots stay hidden; **Add MausBot** restores a hidden
-local MausBot using OpenMausBot's own welcome visibility settings.
+## Summary
 
-For a server Bot Deck owns, a pairing screen is completed automatically, including
-when a browser session expires. If that fails, press **Connect** in that browser tab.
-For a server started elsewhere, sign in in the browser yourself; Bot Deck never
-creates credentials or presses Connect for an external server.
+Bot Deck is an Orca plugin that runs the open-source
+[OpenMausBot](https://github.com/milind-soni/OpenMausBot) on your own computer
+and puts it in Orca's sidebar. You get a list of bots, each one its own Claude,
+Codex or Grok agent, and a chat window for each.
 
-Bot Deck reads the local fleet route used by OpenMausBot's CLI to obtain sidebar
-visibility and stored avatars. Small stored images are passed to the panel as data
-URLs; missing or oversized images use a stable generated SVG. Person-owned default
-bots are omitted because the plugin does not know the browser's signed-in identity.
+- **Nothing to set up.** Opening the panel installs and starts OpenMausBot for
+  you. You never run a command.
+- **Your existing sign-ins and tools.** Codex bots use your Codex setup. Claude
+  bots use the Claude login you already have in Orca, with your connectors and
+  MCP servers.
+- **Two places to chat.** A quick chat in the panel, and the full OpenMausBot
+  page in an Orca browser tab, one click away.
+- **Runs locally.** Bot Deck has no server of its own and collects nothing.
 
-The panel is for a glance and a quick reply: view the last 20 entries as plain text and send a message of up to 16,000 characters. Tool steps are summarized; internal digests are hidden. Earlier history, long messages, approvals, attachments, routines, instruction editing and other rich content belong in **Open bot**. Sent messages appear immediately. While awaiting a reply or observing a working bot, a small avatar and **Working · 3s** line count elapsed time, changing to minutes after 60 seconds. Reduced motion keeps the avatar still and the elapsed text visible.
+Bot Deck is unofficial. It is not affiliated with OpenMausBot or with the makers
+of the models it runs. Desktop only: Orca's mobile app does not show plugins yet.
 
-## Your existing tools
+## How to use
 
-Codex bots use your Codex setup. Servers started by Bot Deck give Claude bots
-your Orca Claude login and, by default, your whole Claude setup: connectors,
-MCP servers, skills and instructions. More tools means more tokens per message.
-Turn off **Give Claude bots my Claude tools** in Orca’s Settings to use only tools
-you add in OpenMausBot. Bot Deck applies changes by restarting its server when
-no bot is working or waiting; servers started elsewhere are left alone.
-An existing `CLAUDE_CONFIG_DIR` environment variable takes precedence over Orca’s login.
+**You need** Orca 1.4.246 or newer, and Node.js 24 or newer with `node` and
+`npm` on your PATH. To run bots you also need at least one of Claude, Codex or
+Grok signed in on this computer.
 
-## How it starts OpenMausBot
+1. Install Bot Deck in Orca and open the **Bot Deck** panel in the right
+   sidebar. The first start downloads OpenMausBot (about 75 MB) and can take a
+   minute. Until Bot Deck is in Orca's plugin catalog, load it from a copy of
+   this repository with `orca plugin dev load .`.
+2. The panel lists your bots. With none yet, press **Open OpenMausBot** and
+   create one there.
+3. Click a bot to open its chat window. Type a message and press Enter. While
+   the bot works you see a moving avatar and **Working · 3s**.
+4. Press **Open bot** for the full chat in a browser tab: earlier history,
+   approvals, attachments, routines, models and settings all live there.
 
-Install Node.js 24 or newer and make `node` and `npm` available on PATH. Bot Deck
-also checks the usual Homebrew, local and Volta binary folders.
+Good to know:
 
-Opening the panel reuses an OpenMausBot server on port 8799, 18799 or 28799. If
-none is running, it installs the tested npm package version (pinned in
-`shared/omb-version.ts`) into `~/.bot-deck/openmausbot/<version>` and starts it on
-the first free port. The first download is about 75 MB and can take a minute.
-It keeps its own OpenMausBot workspace in `~/.bot-deck/data`, apart from any you already have in `~/.openmausbot`, so starting it never resumes routines or connections set up elsewhere. A server that is already running is reused with whatever workspace it has. Running servers with suffixed or
-unknown versions are reused too; the panel notes when compatibility is unknown.
+- The panel shows the last 20 messages as plain text and sends messages of up to
+  16,000 characters. Anything richer says "This needs the full chat."
+- **Add MausBot** brings back the main bot if you hid it.
+- **Give Claude bots my Claude tools** (Orca Settings, on by default) decides
+  whether Claude bots get your connectors, MCP servers, skills and instructions.
+  Read [Security review](#security-review) before leaving it on.
+- **Bot Deck: Stop the OpenMausBot server** in the command palette stops the
+  server. It keeps running after you close the panel, so that routines and long
+  tasks can finish.
+- If an OpenMausBot server is already running on port 8799, 18799 or 28799, Bot
+  Deck uses it as it is and never changes or stops it.
 
-The detached server keeps running when the panel or plugin worker closes.
-`~/.bot-deck/server.log` is truncated on each start and may contain a pairing
-code; inspect it locally and keep it private. `~/.bot-deck/server.pid` records
-the launcher PID, listening server PID and port. Use **Bot Deck: Stop the OpenMausBot server** in Orca's
-command palette to stop a server this plugin started. Bot Deck checks its
-listening server’s identity before signaling its launcher, waits up to 10 seconds
-for health to disappear before removing the pid file, and does not stop servers
-it merely reused.
-Press Retry in the panel after resolving a startup error or stopping the server.
+## Security review
 
-Develop with Orca 1.4.246 or newer; no dependencies or build step:
+Reviewed on 15 November 2026 against OpenMausBot 0.1.158. This describes what
+the plugin does; OpenMausBot and the model providers have their own terms.
+
+### Where your data goes
+
+| Data | Where it goes |
+|---|---|
+| Messages, replies, files a bot reads | To the model provider of that bot (Anthropic, OpenAI or xAI), under your own account. This is how any bot works. |
+| Chat history, bot settings, memory | Stays on this computer in `~/.bot-deck/data`, readable only by your user account. |
+| Anything a tool or connector touches | To that service (for example Gmail or Linear) when a bot uses the tool. |
+| Bot Deck itself | Sends nothing anywhere. It has no analytics, no account and no server. |
+
+The panel cannot reach the network at all. The plugin's worker talks only to
+`127.0.0.1`, to npm once to download OpenMausBot, and to Orca's own command
+line tool to open the browser tab.
+
+### What Bot Deck does to protect you
+
+- **Usage analytics are off.** OpenMausBot's page sends anonymous usage events
+  to PostHog by default. For a server Bot Deck starts, it switches this off
+  before the page first loads. If you turn it on yourself in OpenMausBot's
+  Settings, Bot Deck leaves your choice alone.
+- **Local only.** The server listens on `127.0.0.1`, so other computers on your
+  network cannot reach it.
+- **Its own workspace.** Bot Deck uses `~/.bot-deck/data` and never opens an
+  existing `~/.openmausbot`, so it cannot wake routines or connections you set
+  up elsewhere.
+- **A pinned version.** It installs one tested OpenMausBot version (in
+  `shared/omb-version.ts`) from npm, without running install scripts. It never
+  updates by itself.
+- **Secrets stay out of sight.** The browser sign-in link is used once and is
+  never shown, logged or returned by the plugin. Your message text is passed to
+  OpenMausBot privately, not on a command line that other programs can read.
+  Error messages never include raw output.
+- **No credentials stored.** Bot Deck does not read, copy or keep your Claude,
+  Codex or Grok login. It only tells Claude which Orca login folder to use.
+
+### Risks you should know about
+
+1. **Bots act with your access.** A new OpenMausBot bot starts at "Full access":
+   it can run commands and read files as you, without asking. Lower this per
+   bot in the full chat if you want to approve each step.
+2. **Your Claude tools are shared by default.** With **Give Claude bots my
+   Claude tools** on, every Claude bot can use every connector you have, such as
+   mail, calendar, documents and trackers, and it loads your personal
+   instructions, skills and hooks. A bot that reads a malicious web page or
+   document could be tricked into misusing those tools (prompt injection). Turn
+   the setting off if a bot will read content you do not trust, and add only the
+   tools it needs in OpenMausBot.
+3. **Any program on this computer can talk to the server.** OpenMausBot trusts
+   local programs as the owner. This is its design, and it means other software
+   running under your account can read chats and message your bots.
+4. **A reused server is trusted as it is.** If something else is already
+   answering as OpenMausBot on one of the three ports, Bot Deck talks to it and
+   your messages go there. Bot Deck does not switch off analytics on a server it
+   did not start.
+5. **The download is trusted.** The pinned version comes from npm, and npm
+   checks it against its own records. Bot Deck does not add a second check.
+6. **`~/.bot-deck/server.log` can contain a sign-in code.** It is readable only
+   by you and is emptied on each start. Do not share it.
+7. **OpenMausBot checks for updates.** It asks GitHub for its own latest release
+   and npm for the latest Codex version. These requests reveal your IP address
+   to those services; we found nothing else in them.
+
+To remove everything: stop the server from the command palette, uninstall the
+plugin, and delete `~/.bot-deck`.
+
+Found a problem? Please report it privately to the maintainer (GitHub's
+"Report a vulnerability" on this repository) rather than in a public issue.
+
+## Development
+
+No dependencies and no build step.
 
 ```sh
 orca plugin types .        # generate local SDK types if missing
 orca plugin validate .
-orca plugin test .         # mounts the worker with a fake host
+orca plugin test .         # every test uses fakes; none reaches a real server
 orca plugin dev watch .    # load locally and reload on save
 ```
 
-Bot Deck is MIT licensed. Credit to milind-soni and the OpenMausBot contributors;
-OpenMausBot is licensed under Apache-2.0. The panel adapts its daylight and midnight
-visual design values; see [NOTICE](NOTICE) for sources and font/avatar limitations.
-This plugin is unofficial and is not
-affiliated with OpenMausBot or its engines.
+## License and credits
 
-The earlier Grok Bot client is preserved at the tag `grok-bot-final`.
+Bot Deck is MIT licensed. OpenMausBot is by milind-soni and contributors, under
+Apache-2.0. The panel adapts its colours and layout values; see
+[NOTICE](NOTICE).
+
+The earlier Grok Bot client is kept at the tag `grok-bot-final`.
