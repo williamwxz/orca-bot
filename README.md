@@ -12,7 +12,7 @@ the command is never retried automatically.
 
 Use the model picker under a bot's name to change its model while it is idle.
 Working and Waiting bots cannot be changed. Each row shows an avatar, model
-label, activity icon and unread dot. Click the name or avatar to open its chat.
+label, activity icon and unread dot. Click a bot row to see its recent messages in the panel.
 The roster refreshes every five seconds while visible and retains the last list
 when a refresh fails. Hidden bots stay hidden; **Add MausBot** restores a hidden
 local MausBot using OpenMausBot's own welcome visibility settings.
@@ -27,6 +27,8 @@ Bot Deck reads the local fleet route used by OpenMausBot's CLI to obtain sidebar
 visibility and stored avatars. Small stored images are passed to the panel as data
 URLs; missing or oversized images use a stable generated SVG. Person-owned default
 bots are omitted because the plugin does not know the browser's signed-in identity.
+
+The panel is for a glance and a quick reply: view the last 20 entries as plain text and send a message of up to 16,000 characters. Tool steps are summarized; internal digests are hidden. Earlier history, long messages, approvals, attachments, routines, instruction editing and other rich content belong in **Open full chat**. Working avatars move gently (or show a static Working label with reduced motion).
 
 ## How it starts OpenMausBot
 
