@@ -43,7 +43,7 @@ const state = {
   showHidden: false,
   infoOpen: false,
   threadError: '',
-  waiting: new Map<string, number>(),
+  waiting: new Map<string, { newestTsAtSend: number; startedAt: number }>(),
   selectedBot: null as Bot | null,
   lastPoll: 0,
   drawn: ''
@@ -304,9 +304,9 @@ function bubble(entry: Entry): HTMLElement {
 
 function replyState(): 'working' | 'slow' | 'done' {
   const id = state.selected
-  const sentAt = id ? state.waiting.get(id) : undefined
-  if (!id || sentAt === undefined) return 'done'
-  const result = waitingState(state.entries, sentAt, Date.now())
+  const waiting = id ? state.waiting.get(id) : undefined
+  if (!id || !waiting) return 'done'
+  const result = waitingState(state.entries, waiting.newestTsAtSend, waiting.startedAt, Date.now())
   if (result === 'done') state.waiting.delete(id)
   return result
 }
@@ -392,19 +392,24 @@ async function send(text: string): Promise<void> {
   const id = state.selected
   const body = text.trim()
   if (!id || !body) return
-  const sentAt = Date.now()
+  const waiting = {
+    newestTsAtSend: state.entries.reduce((newest, entry) => Math.max(newest, entry.ts), 0),
+    startedAt: Date.now()
+  }
+  state.waiting.set(id, waiting)
   state.pending.push(body)
   renderMessages(true)
   try {
     const result = await request('message.send', { id, text: body }, 70_000)
     if (result?.sent !== true) throw new Error('The message was not confirmed. Check the conversation before sending it again.')
-    state.waiting.set(id, Math.max(sentAt, state.waiting.get(id) ?? sentAt))
     if (state.selected === id) {
       state.threadError = ''
       renderMessages(true)
       void refreshThread(true)
     }
   } catch (error) {
+    // A late failure must not remove a newer send's indicator, even after switching bots.
+    if (state.waiting.get(id) === waiting) state.waiting.delete(id)
     if (state.selected !== id) return
     state.pending = state.pending.filter((item) => item !== body)
     state.threadError = `Not sent: ${errorText(error)}`
