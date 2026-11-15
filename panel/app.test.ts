@@ -56,7 +56,7 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
     assert.equal(get('message').hidden, true)
     assert.equal(get('agent-names').textContent, 'Claude')
     assert.equal(get('import-tools-label').hidden, false)
-    assert.match(get('import-tools-copy').textContent, /Adds 1 tools from Cursor/)
+    assert.match(get('import-tools-copy').textContent, /Adds 1 tool from Cursor/)
     assert.equal(get('import-tools').checked, true)
     get('roster').children[0].children[0].emit('click'); await flush()
     assert.equal(get('list-header').hidden, true)
