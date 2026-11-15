@@ -2,7 +2,7 @@
 // keychain or reaches a real Grok Bot account. Always go through mount() below: it is the
 // only place that builds a worker, and it never uses the real defaults.
 import { assert, mockHost, mountWorker, test } from 'orca/testing'
-import { removeRoutineMessage, routinesFrom, scheduleMessage, toEntry } from '../shared/model.ts'
+import { removeRoutineMessage, routinesFrom, scheduleMessage, toEntry, waitingState } from '../shared/model.ts'
 import type { DesktopSession } from './session.ts'
 import { register } from './worker.ts'
 
@@ -238,6 +238,53 @@ test('drops the route when the signed-in account changes during a refresh', asyn
   })
   await assert.rejects(worker.request('bots.list'), /account changed/)
   await worker.deactivate()
+})
+
+test('waiting starts without a reply and ignores user and event entries', () => {
+  const entries = [
+    toEntry({ kind: 'message', role: 'user', timestampMs: 101, text: 'Hello' }),
+    toEntry({ kind: 'event', timestampMs: 102, event: { type: 'updated' } })
+  ]
+  assert.equal(waitingState([], 100, 100, 100), 'working')
+  assert.equal(waitingState(entries, 100, 100, 200), 'working')
+})
+
+test('a streaming bot reply keeps waiting until it finishes', () => {
+  const entry = toEntry({ kind: 'message', role: 'assistant', timestampMs: 101, isStreaming: true, text: 'Hello' })
+  assert.equal(waitingState([entry], 100, 100, 200), 'working')
+  assert.equal(waitingState([{ ...entry, streaming: false }], 100, 100, 200), 'done')
+  assert.equal(waitingState([{ ...entry, streaming: false }], 100, 100, 180_100), 'done')
+})
+
+test('older bot messages and messages at the transcript baseline do not complete waiting', () => {
+  for (const timestampMs of [99, 100]) {
+    const entry = toEntry({ kind: 'message', role: 'assistant', timestampMs, text: 'Older' })
+    assert.equal(waitingState([entry], 100, 100, 200), 'working')
+  }
+})
+
+test('waiting slows at exactly three minutes, including unfinished streaming replies', () => {
+  assert.equal(waitingState([], 100, 100, 180_099), 'working')
+  assert.equal(waitingState([], 100, 100, 180_100), 'slow')
+  const entry = toEntry({ kind: 'message', role: 'assistant', timestampMs: 101, isStreaming: true })
+  assert.equal(waitingState([entry], 100, 100, 180_100), 'slow')
+})
+
+test('reply completion uses server timestamps even when the local clock is ahead', () => {
+  const older = toEntry({ kind: 'message', role: 'assistant', timestampMs: 1000, text: 'Older' })
+  const reply = toEntry({ kind: 'message', role: 'assistant', timestampMs: 1100, text: 'Reply' })
+  const startedAt = 10_000
+  assert.equal(waitingState([older], 1000, startedAt, startedAt + 100), 'working')
+  assert.equal(waitingState([older, reply], 1000, startedAt, startedAt + 100), 'done')
+  assert.equal(waitingState([older], 1000, startedAt, startedAt + 179_999), 'working')
+  assert.equal(waitingState([older], 1000, startedAt, startedAt + 180_000), 'slow')
+  assert.equal(waitingState([older, reply], 1000, startedAt, startedAt + 180_000), 'done')
+})
+
+test('an empty transcript uses zero as its reply baseline', () => {
+  const reply = toEntry({ kind: 'message', role: 'assistant', timestampMs: 1, text: 'First reply' })
+  assert.equal(waitingState([], 0, 10_000, 10_001), 'working')
+  assert.equal(waitingState([reply], 0, 10_000, 10_001), 'done')
 })
 
 test('scheduling and routine removal are plain messages to the bot', () => {

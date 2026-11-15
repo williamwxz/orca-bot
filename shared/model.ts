@@ -22,6 +22,12 @@ export type Entry = {
   routine?: { id: string; name: string; action: string }
 }
 
+/** Compare server timestamps to the transcript baseline, and local time only to the timeout. */
+export function waitingState(entries: Entry[], newestTsAtSend: number, startedAt: number, now: number): 'working' | 'slow' | 'done' {
+  if (entries.some(entry => entry.role === 'bot' && entry.ts > newestTsAtSend && !entry.streaming)) return 'done'
+  return now - startedAt >= 180_000 ? 'slow' : 'working'
+}
+
 export type Routine = { id: string; name: string; lastAction: string; ts: number }
 
 const MAX_TEXT = 20_000
