@@ -31,7 +31,7 @@ Grok signed in on this computer.
    sidebar. The first start downloads OpenMausBot (about 75 MB) and can take a
    minute. Until Bot Deck is in Orca's plugin catalog, load it from a copy of
    this repository with `orca plugin dev load .`.
-2. The panel lists your bots. With none yet, press **Open OpenMausBot** and
+2. The panel lists your bots. With none yet, press **Jump to Bot Dashboard** and
    create one there.
 3. Click a bot to open its chat window. Type a message and press Enter. While
    the bot works you see a moving avatar and **Working · 3s**.

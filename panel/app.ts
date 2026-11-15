@@ -125,7 +125,7 @@ function renderBots(): void {
     empty.textContent = 'No bots yet.'
     roster.append(empty)
     const openButton = document.createElement('button')
-    openButton.type = 'button'; openButton.textContent = 'Open OpenMausBot'
+    openButton.type = 'button'; openButton.textContent = 'Jump to Bot Dashboard'
     openButton.disabled = opening
     openButton.addEventListener('click', () => void open())
     roster.append(openButton)
