@@ -15,6 +15,8 @@ test('status answers starting immediately and running after the fake attempt set
       return attempt
     },
     openChat: async () => ({ message: 'Opened' }),
+    readThread: async () => ({ messages: [], hasMore: false }),
+    sendMessage: async () => ({ sendId: 'fake-send-id-000000' }),
     listModels: async () => [],
     createBot: async () => { throw new Error('Unused') },
     setModel: async () => {},
@@ -48,6 +50,8 @@ test('worker preserves failure until explicit Retry', async () => {
       throw new ServerError('needs_node', 'Install Node.js 24 or newer, then press Retry.')
     },
     openChat: async () => ({ message: 'Opened' }),
+    readThread: async () => ({ messages: [], hasMore: false }),
+    sendMessage: async () => ({ sendId: 'fake-send-id-000000' }),
     listModels: async () => [],
     createBot: async () => { throw new Error('Unused') },
     setModel: async () => {},
@@ -88,6 +92,8 @@ test('chat and roster handlers refuse before running and validate bot IDs', asyn
       calls.push(input)
       return { message: 'Opened' }
     },
+    readThread: async () => ({ messages: [], hasMore: false }),
+    sendMessage: async () => ({ sendId: 'fake-send-id-000000' }),
     listModels: async () => [],
     createBot: async () => { throw new Error('Unused') },
     setModel: async () => {},
@@ -134,6 +140,8 @@ test('bot chat resolves its thread from the last worker roster, never panel inpu
       calls.push(input)
       return { message: 'Opened' }
     },
+    readThread: async () => ({ messages: [], hasMore: false }),
+    sendMessage: async () => ({ sendId: 'fake-send-id-000000' }),
     listModels: async () => [],
     createBot: async () => { throw new Error('Unused') },
     setModel: async () => {},
@@ -178,6 +186,8 @@ test('create is coalesced by refusal, returns a receipt, and later opens its thr
       return { message: '' }
     },
     listBots: async () => { throw new Error('offline') },
+    readThread: async () => ({ messages: [], hasMore: false }),
+    sendMessage: async () => ({ sendId: 'fake-send-id-000000' }),
     listModels: async () => [],
     createBot: (input) => {
       calls.push(input)
@@ -203,4 +213,35 @@ test('create is coalesced by refusal, returns a receipt, and later opens its thr
   } finally {
     await worker.deactivate()
   }
+})
+
+test('thread and send require a roster bot, with fresh worker-generated send IDs', async () => {
+  const botId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+  const calls: any[] = []
+  const worker = await mountWorker({ default: (orca) => register(orca, {
+    ensureServer: async () => ({ port: 18799, version: testedVersion, started: false, startedByPlugin: false }),
+    stopServer: async () => ({ stopped: false, message: '' }),
+    openChat: async () => ({ message: '' }), listModels: async () => [],
+    createBot: async () => { throw new Error('unused') }, setModel: async () => {}, addMausBot: async () => {},
+    listBots: async () => [{ id: botId, name: 'Bot', title: '', main: false, state: 'idle', unread: false, modelLabel: '' }],
+    readThread: async (input) => { calls.push(input); return { messages: [], hasMore: false } },
+    sendMessage: async (input) => { calls.push(input); return { sendId: input.sendId } }
+  }) }, { host: mockHost() })
+  try {
+    await worker.request('status', {})
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    for (const name of ['thread.read', 'message.send']) {
+      await assert.rejects(worker.request(name, { botId, text: 'Hello' }), /not in the roster/)
+      await assert.rejects(worker.request(name, { botId: 'bad', text: 'Hello' }), /Invalid bot ID/)
+    }
+    assert.equal(calls.length, 0)
+    await worker.request('bots.list', {})
+    await worker.request('thread.read', { botId, limit: 20 })
+    await worker.request('message.send', { botId, text: 'Hello', sendId: 'untrusted-panel-value' })
+    await worker.request('message.send', { botId, text: 'Again' })
+    assert.deepEqual(calls[0], { port: 18799, botId, limit: 20 })
+    assert.match(calls[1].sendId, /^[a-zA-Z0-9_-]{16,80}$/)
+    assert.notEqual(calls[1].sendId, 'untrusted-panel-value')
+    assert.notEqual(calls[1].sendId, calls[2].sendId)
+  } finally { await worker.deactivate() }
 })

@@ -297,6 +297,8 @@ test('fresh workers recover pairing ownership only from a matching persisted ser
       ensureServer: () => ensureServer(deps),
       stopServer: async () => ({ stopped: false, message: 'Unused' }),
       openChat: (input) => openChat(input, cli),
+      readThread: async () => ({ messages: [], hasMore: false }),
+      sendMessage: async () => ({ sendId: 'fake-send-id-000000' }),
       listModels: async () => [],
       createBot: async () => { throw new Error('Unused') },
       setModel: async () => {},

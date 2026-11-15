@@ -4,6 +4,16 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { TESTED_OPENMAUSBOT_VERSION } from '../shared/omb-version.ts'
 
+export class CliFailure extends Error {
+  code: number | string | undefined
+  stdout: string
+  constructor(code: number | string | undefined, stdout: string) {
+    super('Command failed.')
+    this.code = code
+    this.stdout = stdout
+  }
+}
+
 export type CliDeps = {
   execFile: (file: string, args: string[], options: { env: NodeJS.ProcessEnv; timeout: number }) => Promise<string>
   exists: (path: string) => boolean
@@ -19,7 +29,7 @@ export function defaultCliDeps(): CliDeps {
     execFile: (file, args, options) => new Promise((resolve, reject) => {
       execFile(file, args, options, (error, stdout) => {
         // Command errors can contain the pairing URL in argv, stdout or stderr.
-        if (error) reject(new Error('Command failed.'))
+        if (error) reject(new CliFailure(error.code, stdout))
         else resolve(stdout)
       })
     }),

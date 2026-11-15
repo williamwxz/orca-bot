@@ -10,10 +10,13 @@
   <main>
     <header><h1>Bot Deck</h1><p id="message" role="status">Starting…</p></header>
     <section id="running" aria-label="Chat and bots" hidden>
+      <div id="roster-view">
       <div class="toolbar"><button id="open" type="button">Open chat</button><button id="new-bot" type="button">New bot</button></div>
-      <p id="result" role="status" aria-live="polite"></p>
       <div id="roster" aria-label="Bots"></div>
       <p id="refresh-note" role="status"></p>
+      </div>
+      <section id="bot-view" aria-label="Bot conversation" hidden></section>
+      <p id="result" role="status" aria-live="polite"></p>
     </section>
     <button id="retry" type="button" hidden>Retry</button>
   </main>

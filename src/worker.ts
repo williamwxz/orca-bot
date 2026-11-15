@@ -1,3 +1,4 @@
+import { readThread, sendMessage, newSendId } from './omb-chat.ts'
 import type { OrcaWorkerApi } from 'orca/worker'
 import { openChat, validBotId } from './omb-open.ts'
 import type { OpenInput, OpenResult } from './omb-open.ts'
@@ -21,6 +22,8 @@ export type WorkerDeps = {
   createBot: (input: { port: number; name: string; model: string }) => Promise<{ id: string; activeTaskId?: string }>
   setModel: (input: { port: number; botId: string; model: string }) => Promise<void>
   addMausBot: (input: { port: number; botId: string }) => Promise<void>
+  readThread: typeof readThread
+  sendMessage: typeof sendMessage
   listBots: (input: { port: number }) => Promise<Bot[]>
 }
 
@@ -37,6 +40,8 @@ function defaults(): WorkerDeps {
     createBot: (input) => createBot(input, cli),
     setModel: (input) => setModel(input, cli),
     addMausBot: (input) => addMausBot(input, http),
+    readThread: (input) => readThread(input, cli),
+    sendMessage: (input) => sendMessage(input, cli),
     listBots: (input) => listBots(input, http)
   }
 }
@@ -93,6 +98,14 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaults()): vo
     opening = Promise.resolve().then(() => deps.openChat({ port, startedByPlugin, botId: input.botId, ...(activeTaskId ? { activeTaskId } : {}) })).finally(() => { opening = undefined })
     return opening
   }
+  const knownBot = (input: { botId: string }): number => {
+    const port = runningPort()
+    if (!input || !validBotId(input.botId)) throw new Error('Invalid bot ID.')
+    if (!lastRoster.some((bot) => bot.id === input.botId && !bot.addable)) throw new Error('This bot is not in the roster. Refresh the roster.')
+    return port
+  }
+  orca.panels.handle('thread.read', (input: { botId: string; limit?: number }) => deps.readThread({ port: knownBot(input), botId: input.botId, limit: input.limit }))
+  orca.panels.handle('message.send', (input: { botId: string; text: string }) => deps.sendMessage({ port: knownBot(input), botId: input.botId, text: input.text, sendId: newSendId() }))
   orca.panels.handle('chat.open', (input: { botId?: string }) => chat(input))
   orca.panels.handle('bots.list', async () => {
     const port = runningPort()

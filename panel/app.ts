@@ -1,11 +1,11 @@
-import type { Requests } from '../src/protocol.ts'
+import { createChatView } from './chat-view.ts'
+import type { FrameApi } from './chat-view.ts'
 import { stateLabel } from '../shared/roster.ts'
 import type { Bot } from '../shared/roster.ts'
 import { availableModels, defaultModel } from '../shared/models.ts'
 import type { ModelGroup } from '../shared/models.ts'
 import { avatarSvg } from '../shared/appearance.ts'
 
-type FrameApi = { plugin: { request<K extends keyof Requests>(name: K, input: Requests[K]['input']): Promise<Requests[K]['output']> } }
 const frame = (globalThis as unknown as { orca: FrameApi }).orca
 const element = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
 const message = element<HTMLParagraphElement>('message')
@@ -29,6 +29,29 @@ let models: ModelGroup[] = []
 let bots: Bot[] = []
 let rosterKey = ''
 const changing = new Set<string>()
+const readBots = new Set<string>()
+const rosterView = element<HTMLElement>('roster-view')
+const chatView = createChatView(element('bot-view'), frame, makeAvatar, (id) => void open(id), () => { rosterView.hidden = false })
+function showBot(bot: Bot): void {
+  readBots.add(bot.id)
+  rosterView.hidden = true
+  chatView.open(bot)
+  renderBots()
+}
+function makeAvatar(bot: Bot): HTMLElement {
+  const avatar = document.createElement('span')
+  avatar.className = `avatar avatar-${bot.state} ${bot.avatar ? 'picture' : 'drawn'}`
+  if (bot.avatar) {
+    const img = document.createElement('img'); img.src = bot.avatar; img.alt = ''; avatar.append(img)
+  } else avatar.innerHTML = avatarSvg(bot.id)
+  if (bot.state === 'waiting') {
+    const badge = document.createElement('span'); badge.className = 'clock-badge'; badge.setAttribute('aria-label', 'Waiting'); badge.append(icon('clock')); avatar.append(badge)
+  }
+  if (bot.state === 'working') {
+    const label = document.createElement('span'); label.className = 'motion-label'; label.textContent = 'Working'; avatar.append(label)
+  }
+  return avatar
+}
 const icons = {
   plus: '<path d="M8 3v10M3 8h10"/>',
   chat: '<path d="M3 3h10v8H7l-4 3V3Z"/>',
@@ -110,7 +133,7 @@ async function addMausBot(bot: Bot): Promise<void> {
 }
 
 function renderBots(): void {
-  const key = JSON.stringify([bots, models, selected, opening, [...changing]])
+  const key = JSON.stringify([bots, models, selected, opening, [...changing], [...readBots]])
   if (key === rosterKey) return
   rosterKey = key
   const focused = (document.activeElement as HTMLElement)?.dataset.focus
@@ -141,14 +164,7 @@ function renderBots(): void {
     chat.disabled = opening
     chat.title = bot.title || `Open ${bot.name}'s chat`
     chat.setAttribute('aria-label', `Open ${bot.name}'s chat`)
-    const avatar = document.createElement('span')
-    avatar.className = 'avatar'
-    if (bot.avatar) {
-      const img = document.createElement('img')
-      img.src = bot.avatar
-      img.alt = ''
-      avatar.append(img)
-    } else avatar.innerHTML = avatarSvg(bot.id)
+    const avatar = makeAvatar(bot)
     const name = document.createElement('span')
     name.className = 'bot-name'
     name.textContent = bot.name
@@ -159,7 +175,10 @@ function renderBots(): void {
       main.textContent = 'Main'
       chat.append(main)
     }
-    chat.addEventListener('click', () => void open(bot.id))
+    chat.addEventListener('click', () => showBot(bot))
+    row.addEventListener('click', (event) => {
+      if (!(event.target as Element).closest('button, select, option')) showBot(bot)
+    })
     const model = document.createElement('select')
     model.className = 'model'
     model.dataset.focus = `${bot.id}-model`
@@ -173,7 +192,7 @@ function renderBots(): void {
     if (bot.state === 'waiting') state.append(icon('clock'))
     state.append(document.createTextNode(stateLabel(bot.state)))
     if (bot.state !== 'idle') state.title = 'Wait until this bot is idle to change its model.'
-    if (bot.unread) {
+    if (bot.unread && !readBots.has(bot.id)) {
       const unread = document.createElement('span')
       unread.className = 'unread-dot'
       unread.setAttribute('aria-label', 'Unread')
@@ -211,7 +230,9 @@ async function refreshNow(explicitRetry: boolean): Promise<void> {
     if (status.state === 'running') {
       try {
         const [nextBots, nextModels] = await Promise.all([frame.plugin.request('bots.list', {}), frame.plugin.request('models.list', {})])
+        for (const bot of nextBots) if (!bot.unread) readBots.delete(bot.id)
         bots = nextBots
+        chatView.update(bots)
         models = nextModels
         renderBots()
         refreshNote.textContent = ''
