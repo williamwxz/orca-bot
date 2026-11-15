@@ -435,3 +435,30 @@ test('setup answers bypass a previous link backoff but failed answers do not cau
     assert.equal((await worker.request('status', {}) as any).message, '')
   } finally { await worker.deactivate() }
 })
+
+test('tools handlers coalesce imports, refuse unowned servers, and sanitize failures', async () => {
+  for (const owned of [true, false]) {
+    let calls = 0
+    let finish!: (result: { added: string[]; skipped: [] }) => void
+    const result = new Promise<{ added: string[]; skipped: [] }>(resolve => { finish = resolve })
+    const worker = await mountWorker({ default: orca => register(orca, {
+      checkHealth: async () => true, now: () => 0,
+      ensureServer: async () => ({ port: 1234, version: testedVersion, started: owned, startedByPlugin: owned }),
+      stopServer: async () => ({ stopped: true, message: '' }), openChat: async () => ({ message: '' }),
+      listBots: async () => [], addMausBot: async () => {}, readThread: async () => ({ messages: [], hasMore: false }), sendMessage: async () => ({ sendId: 'fake' }),
+      findTools: async () => [{ name: 'test', source: 'Cursor' }],
+      importTools: async () => { calls++; return result }
+    }) }, { host: mockHost() })
+    try {
+      assert.deepEqual(await worker.request('tools.find', {}), { tools: [{ name: 'test', source: 'Cursor' }] })
+      const first = worker.request('tools.import', {})
+      if (!owned) { await assert.rejects(first, /server Orca Bot started/); assert.equal(calls, 0); continue }
+      const second = worker.request('tools.import', {})
+      await new Promise<void>(resolve => setImmediate(resolve))
+      assert.equal(calls, 1)
+      finish({ added: ['test'], skipped: [] })
+      assert.deepEqual(await first, { added: ['test'], skipped: [] })
+      assert.deepEqual(await second, { added: ['test'], skipped: [] })
+    } finally { await worker.deactivate() }
+  }
+})

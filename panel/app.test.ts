@@ -37,6 +37,7 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
   let resolve!: () => void
   const frame = { plugin: { request: async (name: string, input: unknown) => {
     calls.push({ name, input })
+    if (name === 'tools.find') return { tools: [{ name: 'fake', source: 'Cursor' }] }
     if (name === 'setup.get') return { answered, agents: { claude: true, codex: false } }
     if (name === 'status') return { state: 'running', message: '' }
     if (name === 'bots.list') return [{ id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', name: 'Fake bot', avatar: 'fake-avatar', state: 'idle', modelLabel: 'Codex' }]
@@ -54,6 +55,9 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
     assert.equal(get('roster').children.length, 1)
     assert.equal(get('message').hidden, true)
     assert.equal(get('agent-names').textContent, 'Claude')
+    assert.equal(get('import-tools-label').hidden, false)
+    assert.match(get('import-tools-copy').textContent, /Adds 1 tools from Cursor/)
+    assert.equal(get('import-tools').checked, true)
     get('roster').children[0].children[0].emit('click'); await flush()
     assert.equal(get('list-header').hidden, true)
     assert.equal(get('setup').hidden, true)

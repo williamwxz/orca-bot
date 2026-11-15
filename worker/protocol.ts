@@ -1,3 +1,4 @@
+import type { Tool, ImportResult } from './import-tools.ts'
 import type { Thread } from '../shared/chat.ts'
 import type { Bot } from '../shared/roster.ts'
 
@@ -13,6 +14,8 @@ export type Setup = { answered: boolean; agents: { claude: boolean; codex: boole
 export type SetupAnswer = { shareTools: boolean; linkAgents: boolean }
 
 export type Requests = {
+  'tools.find': { input: Record<string, never>; output: { tools: Tool[] } }
+  'tools.import': { input: Record<string, never>; output: ImportResult }
   'setup.get': { input: Record<string, never>; output: Setup }
   'setup.answer': { input: SetupAnswer; output: { answered: true } }
   'thread.read': { input: { botId: string; limit?: number }; output: Thread }

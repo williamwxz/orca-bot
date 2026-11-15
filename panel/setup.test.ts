@@ -47,3 +47,24 @@ test('applying disables repeats, shows progress, and failures keep the card for 
   assert.equal(setup.state.answered, false)
   assert.equal(setup.state.message, 'Could not finish setup. Please try again.')
 })
+
+test('import row starts on, imports only visible checked tools after setup, and hides even on import failure', async () => {
+  for (const mode of ['success', 'failure', 'partial', 'off', 'empty', 'skip']) {
+    const calls: string[] = []
+    const setup = createSetup(async () => { calls.push('setup') }, async () => {
+      calls.push('import')
+      if (mode === 'failure') throw new Error('SECRET_FAKE_TOKEN_789')
+      return { added: [], skipped: mode === 'partial' ? [{ name: 'test', reason: 'failed' }] : [] }
+    })
+    assert.equal(setup.state.importTools, true)
+    assert.deepEqual(setup.state.tools, [])
+    setup.load({ answered: false, agents: { claude: true, codex: false } })
+    if (mode !== 'empty') setup.loadTools([{ name: 'test', source: 'Cursor' }])
+    if (mode === 'off') setup.state.importTools = false
+    await setup.answer(mode !== 'skip')
+    assert.deepEqual(calls, ['off', 'empty', 'skip'].includes(mode) ? ['setup'] : ['setup', 'import'])
+    assert.equal(setup.state.answered, true)
+    assert.equal(setup.state.message.includes('SECRET_FAKE_TOKEN_789'), false)
+    if (['failure', 'partial'].includes(mode)) assert.match(setup.state.message, /could not be imported or switched off/)
+  }
+})
