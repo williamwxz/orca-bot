@@ -1,5 +1,5 @@
 import { assert, test } from 'orca/testing'
-import { openChat } from './omb-open.ts'
+import { openChat, repairChat } from './omb-open.ts'
 import type { CliDeps } from './omb-cli.ts'
 
 const origin = 'http://127.0.0.1:18799'
@@ -206,4 +206,72 @@ test('unowned new and existing tabs never access storage', async () => {
     assert.equal(calls.some((args) => args[0] === 'goto'), false)
     if (!existing) assert.deepEqual(calls[1], ['tab', 'create', '--url', `${origin}/`, '--json'])
   }
+})
+
+function existingFake(paired = false, url = `${origin}/?thread=current`, value: string | null = '1') {
+  const f = fake(paired, value)
+  const run = f.deps.execFile
+  f.deps.execFile = async (file, args, options) => {
+    if (args[1] === 'list') {
+      f.calls.push(args)
+      return JSON.stringify({ ok: true, result: { tabs: [{ browserPageId: 'existing', url }] } })
+    }
+    return run(file, args, options)
+  }
+  return f
+}
+
+test('background repair pairs an existing tab without focus and restores a safe address', async () => {
+  for (const url of [`${origin}/?thread=current`, `${origin}/pair#old-secret`]) {
+    for (const value of [null, '0', '1']) {
+      const { deps, calls } = existingFake(false, url, value)
+      assert.equal(await repairChat(input, deps), true)
+      const wanted = url.includes('/pair') ? `${origin}/` : url
+      assert.equal(calls.some(args => args.includes('--focus') || ['create', 'switch'].includes(args[1])), false)
+      assert.deepEqual(calls.filter(args => args[0] === 'goto').at(-1), ['goto', '--url', wanted, '--page', 'existing', '--json'])
+      const firstGoto = calls.findIndex(args => args[0] === 'goto')
+      assert.ok(calls.findIndex(args => args[0] === 'storage') < firstGoto)
+      assert.equal(calls.filter(args => args[0] === 'storage' && args[2] === 'set').length, value === null ? 1 : 0)
+      assert.equal(calls.filter(args => args[0] === 'pair').length, 1)
+    }
+  }
+})
+
+test('background repair does nothing for absent, foreign, signed-in or unowned tabs', async () => {
+  for (const mode of ['absent', 'foreign', 'signed-in', 'unowned']) {
+    const { deps, calls } = mode === 'absent' ? fake() : existingFake(mode === 'signed-in', mode === 'foreign' ? 'http://127.0.0.1:9999/' : `${origin}/`)
+    assert.equal(await repairChat({ ...input, startedByPlugin: mode !== 'unowned' }, deps), true)
+    assert.equal(calls.some(args => ['goto', 'pair', 'click', 'storage'].includes(args[0]) || args[1] === 'create'), false)
+    if (mode === 'unowned') assert.equal(calls.length, 0)
+  }
+})
+
+test('background failures expose only false, including storage, pairing and confirmation failures', async () => {
+  for (const stage of ['list', 'snapshot', 'storage', 'pair', 'goto', 'click', 'confirmation']) {
+    const { deps, calls } = existingFake()
+    const run = deps.execFile
+    deps.execFile = async (file, args, options) => {
+      if (args[0] === stage || args[1] === stage) throw new Error(secret)
+      const result = await run(file, args, options)
+      if (stage === 'confirmation' && args[0] === 'snapshot') return 'button "Connect" [ref=e11]'
+      return result
+    }
+    assert.equal(await repairChat(input, deps), false)
+    if (stage === 'storage') assert.equal(calls.some(args => ['goto', 'pair', 'click'].includes(args[0])), false)
+  }
+})
+
+test('background repair waits for enabled Connect before clicking', async () => {
+  const { deps, calls } = existingFake()
+  const run = deps.execFile
+  let pairing = false, reads = 0
+  deps.execFile = async (file, args, options) => {
+    const result = await run(file, args, options)
+    if (args[0] === 'pair') pairing = true
+    if (pairing && args[0] === 'snapshot' && ++reads < 3) return 'button "Connect" [disabled ref=e11]'
+    return result
+  }
+  assert.equal(await repairChat(input, deps), true)
+  assert.equal(calls.filter(args => args[0] === 'click').length, 1)
+  assert.ok(reads >= 3)
 })

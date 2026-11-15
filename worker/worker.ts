@@ -6,7 +6,7 @@ import { defaultLinkDeps, findAgents, syncAgentLinks } from './agent-link.ts'
 import type { SetupAnswer } from './protocol.ts'
 import { readThread, sendMessage, newSendId } from './omb-chat.ts'
 import type { OrcaWorkerApi } from 'orca/worker'
-import { openChat, validBotId } from './omb-open.ts'
+import { openChat, repairChat, validBotId } from './omb-open.ts'
 import type { OpenInput, OpenResult } from './omb-open.ts'
 import { listBots, addMausBot, rosterBusy } from './omb-roster.ts'
 import { defaultHttpDeps } from './omb-http.ts'
@@ -29,6 +29,7 @@ export type WorkerDeps = {
   rosterBusy?: (port: number) => Promise<boolean>
   stopServer: () => Promise<StopResult>
   openChat: (input: OpenInput) => Promise<OpenResult>
+  repairChat?: (input: OpenInput) => Promise<boolean>
   addMausBot: (input: { port: number; botId: string }) => Promise<void>
   readThread: typeof readThread
   sendMessage: typeof sendMessage
@@ -54,6 +55,7 @@ function defaults(): WorkerDeps {
     rosterBusy: (port) => rosterBusy(port, http),
     stopServer: () => stopServer(deps),
     openChat: async (input) => openChat({ ...input, startedByPlugin: input.startedByPlugin && await isPluginServer(input.port, deps) }, cli),
+    repairChat: async (input) => repairChat({ ...input, startedByPlugin: input.startedByPlugin && await isPluginServer(input.port, deps) }, cli),
     addMausBot: (input) => addMausBot(input, http),
     readThread: (input) => readThread(input, cli),
     sendMessage: (input) => sendMessage(input, cli),
@@ -77,6 +79,18 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaults()): vo
   let startedByPlugin = false
   let lastRoster: Bot[] = []
   let opening: Promise<OpenResult> | undefined
+  let repairAt = -Infinity
+  let repairFailedUntil = -Infinity
+  const repair = (immediate = false): void => {
+    if (!deps.repairChat || !startedByPlugin || status?.state !== 'running' || opening) return
+    if (deps.now() < repairFailedUntil || (!immediate && deps.now() < repairAt)) return
+    const port = status.port!
+    repairAt = deps.now() + 30000
+    opening = Promise.resolve().then(() => deps.repairChat!({ port, startedByPlugin: true })).catch(() => false).then(ok => {
+      if (!ok) repairFailedUntil = deps.now() + 60000
+      return { message: '' }
+    }).finally(() => { opening = undefined })
+  }
   let lastHealthCheck = -Infinity
   let checking: Promise<void> | undefined
   let importing: Promise<ImportResult> | undefined
@@ -141,6 +155,7 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaults()): vo
             try { await updateLinks(answered && nextLinkSetting, checked.port!) }
             catch { /* Keep the failure visible while waiting to retry. */ }
           }
+          repair()
           const setup = await deps.claudeSetupStatus?.(checked.port!, share) ?? { restart: false, message: '' }
           if (status !== checked) return
           checked.message = [versionMessage(checked.version!), setup.message, linkMessage].filter(Boolean).join(' ')
@@ -149,12 +164,14 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaults()): vo
           const restartShare = share
           status = { ...checked, state: 'starting', message: 'Restarting OpenMausBot to apply your Claude setup…' }
           pending = Promise.resolve().then(async () => {
+            await opening?.catch(() => {})
             const result = await deps.stopServer()
             if (!result.stopped) { status = checked; return }
             lastRoster = []
             const server = await deps.ensureServer(restartShare)
             startedByPlugin = server.startedByPlugin
             status = { state: 'running', message: versionMessage(server.version), port: server.port, version: server.version, testedVersion: TESTED_OPENMAUSBOT_VERSION }
+            repair(true)
           }).catch(() => {
             status = { state: 'start_failed', message: 'Could not restart OpenMausBot. Press Retry to try again.', testedVersion: TESTED_OPENMAUSBOT_VERSION }
           }).finally(() => { pending = undefined })
@@ -172,6 +189,7 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaults()): vo
       pending = Promise.resolve().then(() => deps.ensureServer(share)).then((server) => {
         startedByPlugin = server.startedByPlugin
         status = { state: 'running', message: versionMessage(server.version), port: server.port, version: server.version, testedVersion: TESTED_OPENMAUSBOT_VERSION }
+        if (server.started) repair(true)
       }).catch((error: unknown) => {
         status = {
           state: error instanceof ServerError ? error.state : 'start_failed',
