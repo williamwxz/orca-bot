@@ -1,3 +1,4 @@
+import { dayLabel, threadPreview } from './presentation.ts'
 import type { Requests } from '../src/protocol.ts'
 import type { Bot } from '../shared/roster.ts'
 import { collapseActivities, refreshInterval, sendDraft, reconcileAttempts, elapsedTime, displayText } from '../shared/chat.ts'
@@ -19,7 +20,7 @@ function button(label: string, click: () => void): HTMLButtonElement {
   el.addEventListener('click', click)
   return el
 }
-export function createChatView(root: HTMLElement, frame: FrameApi, avatar: (bot: Bot) => HTMLElement, open: (id: string) => void, back: () => void) {
+export function createChatView(root: HTMLElement, frame: FrameApi, avatar: (bot: Bot) => HTMLElement, open: (id: string) => void, back: () => void, preview?: (id: string, text: string | undefined) => void) {
   let bot: Bot | undefined
   let generation = 0
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -45,10 +46,13 @@ export function createChatView(root: HTMLElement, frame: FrameApi, avatar: (bot:
   const composer = node('form'); composer.className = 'composer'
   const label = node('label', 'Message'); label.htmlFor = 'quick-message'
   const input = node('textarea'); input.id = 'quick-message'; input.maxLength = 16000; input.rows = 3
-  const send = node('button', 'Send'); send.type = 'submit'
+  const send = node('button', '↑'); send.type = 'submit'; send.setAttribute('aria-label', 'Send'); send.title = 'Send'
   composer.append(label, input, send)
   working.hidden = true
   const workingText = node('span')
+  const workingLabel = document.createTextNode('')
+  const sheen = node('span'); sheen.className = 'working-sheen'; sheen.setAttribute('aria-hidden', 'true')
+  const letters = node('span'); sheen.append(letters); workingText.append(workingLabel, sheen)
   root.append(header, list, note, working, composer)
   const atBottom = () => list.scrollHeight - list.scrollTop - list.clientHeight < 40
   function linkedText(parent: HTMLElement, text: string): void {
@@ -76,10 +80,19 @@ export function createChatView(root: HTMLElement, frame: FrameApi, avatar: (bot:
       identity.replaceChildren(avatar(bot))
       const names = node('div'); names.append(node('strong', bot.name), node('small', bot.modelLabel)); identity.append(names)
     }
+    input.placeholder = `Message ${bot.name}`
     renderWorking()
     list.replaceChildren()
     if (thread.hasMore) list.append(node('p', 'Earlier messages are in the full chat.'))
+    let previousAt: number | undefined
     for (const message of collapseActivities(thread.messages)) {
+      const stamp = dayLabel(message.at, previousAt)
+      if (stamp) {
+        const separator = node('time'); separator.className = 'day-separator'
+        separator.dateTime = new Date(message.at).toISOString()
+        separator.setAttribute('data-label', stamp); separator.setAttribute('aria-label', stamp); list.append(separator)
+      }
+      previousAt = message.at
       const item = node('div'); item.className = `chat-message ${message.kind} ${message.role}`
       if (message.kind === 'text') linkedText(item, displayText(message.text))
       else item.append(document.createTextNode(message.text))
@@ -109,7 +122,8 @@ export function createChatView(root: HTMLElement, frame: FrameApi, avatar: (bot:
       workingKey = key
       working.replaceChildren(avatar({ ...bot, state: 'working' }), workingText)
     }
-    workingText.textContent = `Working · ${elapsedTime(since, Date.now())}`
+    workingLabel.textContent = `Working · ${elapsedTime(since, Date.now())}`
+    letters.setAttribute('data-text', workingLabel.textContent)
     if (!document.hidden) clockTimer = setTimeout(renderWorking, 1000)
   }
   function schedule(): void {
@@ -129,6 +143,7 @@ export function createChatView(root: HTMLElement, frame: FrameApi, avatar: (bot:
       ))
       if (reply) { state.wait = undefined; if (bot?.state === 'working') finishedWorking.add(bot.id) }
       thread = next
+      preview?.(id, threadPreview(next.messages))
       loaded = true
       Object.assign(state, reconcileAttempts(state.attempts, next.messages, state.matchedIds))
       note.textContent = ''
