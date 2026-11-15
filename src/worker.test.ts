@@ -15,7 +15,10 @@ test('status answers starting immediately and running after the fake attempt set
       return attempt
     },
     openChat: async () => ({ message: 'Opened' }),
-    signInAgain: async () => ({ message: 'Opened' }),
+    listModels: async () => [],
+    createBot: async () => { throw new Error('Unused') },
+    setModel: async () => {},
+    addMausBot: async () => {},
     listBots: async () => [],
     stopServer: async () => ({ stopped: true, message: 'Stopped' })
   }) }, { host: mockHost() })
@@ -27,7 +30,7 @@ test('status answers starting immediately and running after the fake attempt set
     await attempt
     await new Promise<void>((resolve) => queueMicrotask(resolve))
     assert.deepEqual(await worker.request('status', {}), {
-      state: 'running', message: 'OpenMausBot is ready.', port: 8799, version: testedVersion, testedVersion
+      state: 'running', message: '', port: 8799, version: testedVersion, testedVersion
     })
     assert.deepEqual(await worker.request('server.stop', {}), { stopped: true, message: 'Stopped' })
     assert.equal((await worker.request('status', {}) as { state: string }).state, 'start_failed')
@@ -45,7 +48,10 @@ test('worker preserves failure until explicit Retry', async () => {
       throw new ServerError('needs_node', 'Install Node.js 24 or newer, then press Retry.')
     },
     openChat: async () => ({ message: 'Opened' }),
-    signInAgain: async () => ({ message: 'Opened' }),
+    listModels: async () => [],
+    createBot: async () => { throw new Error('Unused') },
+    setModel: async () => {},
+    addMausBot: async () => {},
     listBots: async () => [],
     stopServer: async () => ({ stopped: false, message: 'No server' })
   }) }, { host: mockHost() })
@@ -63,7 +69,7 @@ test('worker preserves failure until explicit Retry', async () => {
 test('version messages explain compatibility in either direction', () => {
   assert.equal(versionMessage('999.0'), `OpenMausBot 999.0 is newer than the version Bot Deck was tested with (${testedVersion}). It should work; tell us if something looks wrong.`)
   assert.equal(versionMessage('0.0'), `OpenMausBot 0.0 is older than Bot Deck expects (${testedVersion}). Update OpenMausBot.`)
-  assert.equal(versionMessage(testedVersion), 'OpenMausBot is ready.')
+  assert.equal(versionMessage(testedVersion), '')
 })
 
 
@@ -82,17 +88,17 @@ test('chat and roster handlers refuse before running and validate bot IDs', asyn
       calls.push(input)
       return { message: 'Opened' }
     },
-    signInAgain: async (input) => {
-      calls.push({ ...input, signIn: true })
-      return { message: 'Opened' }
-    },
+    listModels: async () => [],
+    createBot: async () => { throw new Error('Unused') },
+    setModel: async () => {},
+    addMausBot: async () => {},
     listBots: async (input) => {
       calls.push(input)
       return []
     }
   }) }, { host: mockHost() })
   try {
-    for (const name of ['chat.open', 'chat.signIn', 'bots.list']) {
+    for (const name of ['chat.open', 'bots.list', 'models.list', 'bots.create', 'bots.model', 'bots.addMausBot']) {
       await assert.rejects(worker.request(name, {}), /OpenMausBot is not running yet/)
     }
     assert.equal(calls.length, 0)
@@ -105,12 +111,10 @@ test('chat and roster handlers refuse before running and validate bot IDs', asyn
     const botId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
     assert.deepEqual(await worker.request('chat.open', { botId }), { message: 'Opened' })
     assert.deepEqual(calls[0], { port: 18799, startedByPlugin: true, botId })
-    await worker.request('chat.signIn', {})
-    assert.deepEqual(calls[1], { port: 18799, startedByPlugin: true, botId: undefined, signIn: true })
     assert.deepEqual(await worker.request('bots.list', {}), [])
-    assert.deepEqual(calls[2], { port: 18799 })
+    assert.deepEqual(calls[1], { port: 18799 })
     assert.deepEqual(await worker.command('botdeck.open'), { message: 'Opened' })
-    assert.deepEqual(calls[3], { port: 18799, startedByPlugin: true, botId: undefined })
+    assert.deepEqual(calls[2], { port: 18799, startedByPlugin: true, botId: undefined })
     await worker.request('server.stop', {})
     await assert.rejects(worker.request('chat.open', {}), /OpenMausBot is not running yet/)
   } finally {
@@ -130,7 +134,10 @@ test('bot chat resolves its thread from the last worker roster, never panel inpu
       calls.push(input)
       return { message: 'Opened' }
     },
-    signInAgain: async () => ({ message: 'Opened' }),
+    listModels: async () => [],
+    createBot: async () => { throw new Error('Unused') },
+    setModel: async () => {},
+    addMausBot: async () => {},
     listBots: async () => {
       if (failRefresh) throw new Error('Offline')
       return [{ id: botId, name: 'Bot', title: '', main: true, state: 'idle', unread: false, modelLabel: 'Codex', activeTaskId }]
@@ -153,6 +160,46 @@ test('bot chat resolves its thread from the last worker roster, never panel inpu
     await worker.request('bots.list', {})
     await worker.request('chat.open', { botId, activeTaskId: 'panel-thread' })
     assert.deepEqual(calls[3], calls[0])
+  } finally {
+    await worker.deactivate()
+  }
+})
+
+test('create is coalesced by refusal, returns a receipt, and later opens its thread even if roster refresh fails', async () => {
+  const id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+  let resolveCreate!: (value: { id: string; activeTaskId: string }) => void
+  const creation = new Promise<{ id: string; activeTaskId: string }>((resolve) => { resolveCreate = resolve })
+  const calls: unknown[] = []
+  const worker = await mountWorker({ default: (orca) => register(orca, {
+    ensureServer: async () => ({ port: 18799, version: testedVersion, started: true, startedByPlugin: true }),
+    stopServer: async () => ({ stopped: false, message: '' }),
+    openChat: async (input) => {
+      calls.push(input)
+      return { message: '' }
+    },
+    listBots: async () => { throw new Error('offline') },
+    listModels: async () => [],
+    createBot: (input) => {
+      calls.push(input)
+      return creation
+    },
+    setModel: async (input) => { calls.push(input) },
+    addMausBot: async (input) => { calls.push(input) }
+  }) }, { host: mockHost() })
+  try {
+    await worker.request('status', {})
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    const first = worker.request('bots.create', { name: 'Helper', model: 'claude/sonnet' })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    await assert.rejects(worker.request('bots.create', { name: 'Helper', model: 'claude/sonnet' }), /already being created/)
+    resolveCreate({ id, activeTaskId: 'new-thread' })
+    assert.deepEqual(await first, { id, activeTaskId: 'new-thread' })
+    await assert.rejects(worker.request('bots.list', {}), /offline/)
+    await worker.request('chat.open', { botId: id })
+    assert.deepEqual(calls, [{ port: 18799, name: 'Helper', model: 'claude/sonnet' }, { port: 18799, startedByPlugin: true, botId: id, activeTaskId: 'new-thread' }])
+    await worker.request('bots.model', { botId: id, model: 'claude/sonnet' })
+    await worker.request('bots.addMausBot', { botId: id })
+    assert.deepEqual(calls.slice(2), [{ port: 18799, botId: id, model: 'claude/sonnet' }, { port: 18799, botId: id }])
   } finally {
     await worker.deactivate()
   }

@@ -1,25 +1,31 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Bot Deck</title>
-    <link rel="stylesheet" href="styles.css" />
-  </head>
-  <body>
-    <main>
-      <h1>Bot Deck</h1>
-      <section id="running" aria-label="Chat and bots" hidden>
-        <button id="open" type="button">Open chat</button>
-        <button id="sign-in" type="button">Sign in again</button>
-        <p id="result" role="status" aria-live="polite"></p>
-        <div id="roster" aria-label="Bots"></div>
-        <p id="refresh-note" role="status"></p>
-        <button id="new-bot" type="button">New bot</button>
-      </section>
-      <p id="message" role="status">Checking status…</p>
-      <button id="retry" type="button">Retry</button>
-    </main>
-    <script type="module" src="app.ts"></script>
-  </body>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Bot Deck</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main>
+    <header><h1>Bot Deck</h1><p id="message" role="status">Starting…</p></header>
+    <section id="running" aria-label="Chat and bots" hidden>
+      <div class="toolbar"><button id="open" type="button">Open chat</button><button id="new-bot" type="button">New bot</button></div>
+      <p id="result" role="status" aria-live="polite"></p>
+      <div id="roster" aria-label="Bots"></div>
+      <p id="refresh-note" role="status"></p>
+    </section>
+    <button id="retry" type="button" hidden>Retry</button>
+  </main>
+  <dialog id="create-dialog" aria-labelledby="dialog-title">
+    <form id="create-form">
+      <h2 id="dialog-title">New bot</h2>
+      <label for="bot-name">Name</label><input id="bot-name" required maxlength="100" autocomplete="off" placeholder="Researcher" />
+      <label for="bot-model">Model</label><select id="bot-model" required></select>
+      <p id="dialog-error" role="alert"></p>
+      <div class="dialog-actions"><button id="cancel" type="button">Cancel</button><button id="create" type="submit">Create</button></div>
+    </form>
+  </dialog>
+  <script type="module" src="app.ts"></script>
+</body>
 </html>

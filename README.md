@@ -4,16 +4,29 @@ Open the **Bot Deck** panel and press **Open chat**. OpenMausBot's chat UI opens
 in an Orca browser tab; an existing tab for that server is reused. You can also
 use **Bot Deck: Open chat** in the command palette after the server is ready.
 
-On the first open of a server Bot Deck starts, press **Connect** once in the
-browser to sign in. If the browser loses its session, press **Sign in again**.
-For a server started elsewhere, its owner handles pairing; both buttons open
-its ordinary sign-in page without creating credentials.
+**New bot** opens a panel dialog: enter a name, choose a model and press **Create**.
+Available models are grouped by engine. Claude is preferred, then Codex, using
+the engine's default model. After creation the roster refreshes and the bot's chat
+opens. If creation cannot be confirmed, check the roster before trying again:
+the command is never retried automatically.
 
-The panel lists bots with their engine/model, Working or Waiting state, unread
-indicator, and Main badge. The main bot appears first. The roster refreshes every
-five seconds while visible and keeps the last list if a refresh fails.
-Click a bot to open its active conversation, or the main UI if it has no active task.
-Open chat brings an existing tab forward without changing its conversation. **New bot** opens the same UI, where you create bots.
+Use the model picker under a bot's name to change its model while it is idle.
+Working and Waiting bots cannot be changed. Each row shows an avatar, model
+label, activity icon and unread dot. Click the name or avatar to open its chat.
+The roster refreshes every five seconds while visible and retains the last list
+when a refresh fails. Hidden bots stay hidden; **Add MausBot** restores a hidden
+local MausBot using OpenMausBot's own welcome visibility settings.
+
+**Open chat** brings the existing server tab forward and preserves its conversation.
+For a server Bot Deck owns, a pairing screen is completed automatically, including
+when a browser session expires. If that fails, press **Connect** in that browser tab.
+For a server started elsewhere, sign in in the browser yourself; Bot Deck never
+creates credentials or presses Connect for an external server.
+
+Bot Deck reads the local fleet route used by OpenMausBot's CLI to obtain sidebar
+visibility and stored avatars. Small stored images are passed to the panel as data
+URLs; missing or oversized images use a stable generated SVG. Person-owned default
+bots are omitted because the plugin does not know the browser's signed-in identity.
 
 ## How it starts OpenMausBot
 

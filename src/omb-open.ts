@@ -1,3 +1,4 @@
+import { connectRef } from '../shared/appearance.ts'
 import { join } from 'node:path'
 import { cliOptions, defaultCliDeps, ombBinary } from './omb-cli.ts'
 import type { CliDeps } from './omb-cli.ts'
@@ -23,58 +24,76 @@ function resultOf(text: string): Record<string, unknown> {
   return response.result
 }
 
-async function open(input: OpenInput, deps: CliDeps, forcePair: boolean): Promise<OpenResult> {
+export async function openChat(input: OpenInput, deps: CliDeps = defaultCliDeps()): Promise<OpenResult> {
   if (input.botId !== undefined && !validBotId(input.botId)) throw new Error('Invalid bot ID.')
   const bin = orcaBinary(deps)
   const origin = `http://127.0.0.1:${input.port}`
-  const marker = join(deps.home, '.bot-deck/browser-signed-in')
+  const run = async (args: string[]) => resultOf(await deps.execFile(bin, args, cliOptions(deps, 60000)))
+  const snapshot = async (page: string) => deps.execFile(bin, ['snapshot', '--page', page], cliOptions(deps))
+  let page: string
+  let wanted = `${origin}/`
+  if (input.botId && input.activeTaskId) wanted += `?${new URLSearchParams({ thread: input.activeTaskId, bot: input.botId })}`
   try {
-    const run = async (args: string[]) => resultOf(await deps.execFile(bin, args, cliOptions(deps, 60000)))
     const listed = await run(['tab', 'list', '--json'])
     if (!Array.isArray(listed.tabs)) throw new Error('Invalid tab list')
-    const tab = listed.tabs.find((item: unknown) => {
-      if (!item || typeof item !== 'object') return false
-      const value = item as { url?: unknown; browserPageId?: unknown }
-      if (typeof value.url !== 'string' || typeof value.browserPageId !== 'string') return false
+    const tab = listed.tabs.find((item: { url?: unknown; browserPageId?: unknown }) => {
+      if (typeof item?.url !== 'string' || typeof item.browserPageId !== 'string') return false
       try {
-        return new URL(value.url).origin === origin
+        return new URL(item.url).origin === origin
       } catch {
         return false
       }
-    }) as { browserPageId: string } | undefined
-    const pair = input.startedByPlugin && (forcePair || !deps.fileExists(marker))
-    let url = `${origin}/`
-    // Observed on OpenMausBot 0.1.158: activeTaskId is the thread ID used by the web UI.
-    // The worker resolves this from its roster, never from panel-supplied thread data.
-    if (input.botId && input.activeTaskId) {
-      const query = new URLSearchParams({ thread: input.activeTaskId, bot: input.botId })
-      url += `?${query}`
-    }
-    if (pair) {
-      const output = await deps.execFile(ombBinary(deps), ['pair', '--label', 'Orca', '--port', String(input.port), '--data-dir', join(deps.home, '.bot-deck/data')], cliOptions(deps))
-      const links = output.match(/http:\/\/127\.0\.0\.1:\d+\/pair#[^\s\x1b]+/g) ?? []
-      const link = links.find((value) => new URL(value).origin === origin)
-      if (!link) throw new Error('Missing sign-in link')
-      url = link
-    }
+    }) as { browserPageId: string; url: string } | undefined
     if (tab) {
-      if (pair || input.botId) await run(['goto', '--url', url, '--page', tab.browserPageId, '--json'])
-      await run(['tab', 'switch', '--page', tab.browserPageId, '--focus', '--json'])
+      page = tab.browserPageId
+      if (input.botId) await run(['goto', '--url', wanted, '--page', page, '--json'])
+      else if (!new URL(tab.url).pathname.startsWith('/pair')) wanted = tab.url
+      await run(['tab', 'switch', '--page', page, '--focus', '--json'])
     } else {
-      await run(['tab', 'create', '--url', url, '--json'])
+      const created = await run(['tab', 'create', '--url', wanted, '--json'])
+      if (typeof created.browserPageId !== 'string') throw new Error('Missing page')
+      page = created.browserPageId
     }
-    if (pair) deps.write(marker, 'Sign-in link opened.\n', 0o600)
-    return { message: 'Opened in an Orca browser tab.' }
+    // Inspect every open so a lost browser session repairs itself without a marker.
+    let needsPair = false
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const tree = await snapshot(page)
+      if (connectRef(tree)) {
+        needsPair = true
+        break
+      }
+      if (attempt < 7) await deps.sleep(250)
+    }
+    if (!needsPair) return { message: '' }
+    if (!input.startedByPlugin) return { message: 'Sign in to OpenMausBot in the browser tab.' }
   } catch {
-    // Never expose subprocess output, errors or causes: they may carry a one-time credential.
     throw new Error('Could not open chat. Check Orca and OpenMausBot, then try again.')
   }
-}
-
-export function openChat(input: OpenInput, deps: CliDeps = defaultCliDeps()): Promise<OpenResult> {
-  return open(input, deps, false)
-}
-
-export function signInAgain(input: OpenInput, deps: CliDeps = defaultCliDeps()): Promise<OpenResult> {
-  return open(input, deps, true)
+  try {
+    const output = await deps.execFile(ombBinary(deps), ['pair', '--label', 'Orca', '--port', String(input.port), '--data-dir', join(deps.home, '.bot-deck/data')], cliOptions(deps))
+    const links = output.match(/http:\/\/127\.0\.0\.1:\d+\/pair#[^\s\x1b]+/g) ?? []
+    const link = links.find((value) => new URL(value).origin === origin)
+    if (!link) throw new Error('Missing pairing link')
+    await run(['goto', '--url', link, '--page', page, '--json'])
+    let ref: string | undefined
+    for (let attempt = 0; attempt < 8; attempt++) {
+      ref = connectRef(await snapshot(page))
+      if (ref) break
+      await deps.sleep(250)
+    }
+    if (!ref) throw new Error('Connect unavailable')
+    await run(['click', '--element', ref, '--page', page, '--json'])
+    // Allow the session cookie to settle before leaving the pairing page.
+    for (let attempt = 0; attempt < 8; attempt++) {
+      await deps.sleep(250)
+      if (!connectRef(await snapshot(page))) {
+        await run(['goto', '--url', wanted, '--page', page, '--json'])
+        if (connectRef(await snapshot(page))) throw new Error('Session did not persist')
+        return { message: '' }
+      }
+    }
+  } catch {
+    // Pairing commands carry credentials; no error, cause, URL or output crosses this boundary.
+  }
+  return { message: 'Press Connect in the browser tab to finish.' }
 }
