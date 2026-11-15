@@ -5,6 +5,8 @@ import type { CliDeps } from './omb-cli.ts'
 
 export type OpenInput = { port: number; startedByPlugin: boolean; botId?: string; activeTaskId?: string }
 export type OpenResult = { message: string }
+// Disable anonymous usage analytics by default, while preserving the person's choice.
+const ANALYTICS_OPT_OUT = 'omb-analytics-opt-out'
 export const validBotId = (value: unknown): value is string => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
 
 function orcaBinary(deps: CliDeps): string {
@@ -30,6 +32,15 @@ export async function openChat(input: OpenInput, deps: CliDeps = defaultCliDeps(
   const origin = `http://127.0.0.1:${input.port}`
   const run = async (args: string[]) => resultOf(await deps.execFile(bin, args, cliOptions(deps, 60000)))
   const snapshot = async (page: string) => deps.execFile(bin, ['snapshot', '--page', page], cliOptions(deps))
+  const defaultAnalyticsOff = async (page: string): Promise<boolean> => {
+    const stored = await run(['storage', 'local', 'get', '--key', ANALYTICS_OPT_OUT, '--page', page, '--json'])
+    if (stored.value === null) {
+      await run(['storage', 'local', 'set', '--key', ANALYTICS_OPT_OUT, '--value', '1', '--page', page, '--json'])
+      return true
+    }
+    if (typeof stored.value !== 'string') throw new Error('Invalid storage response')
+    return false
+  }
   let page: string
   let wanted = `${origin}/`
   if (input.botId && input.activeTaskId) wanted += `?${new URLSearchParams({ thread: input.activeTaskId, bot: input.botId })}`
@@ -46,13 +57,18 @@ export async function openChat(input: OpenInput, deps: CliDeps = defaultCliDeps(
     }) as { browserPageId: string; url: string } | undefined
     if (tab) {
       page = tab.browserPageId
-      if (input.botId) await run(['goto', '--url', wanted, '--page', page, '--json'])
-      else if (!new URL(tab.url).pathname.startsWith('/pair')) wanted = tab.url
+      if (!input.botId && !new URL(tab.url).pathname.startsWith('/pair')) wanted = tab.url
+      const changed = input.startedByPlugin && await defaultAnalyticsOff(page)
+      if (input.botId || changed) await run(['goto', '--url', wanted, '--page', page, '--json'])
       await run(['tab', 'switch', '--page', page, '--focus', '--json'])
     } else {
-      const created = await run(['tab', 'create', '--url', wanted, '--json'])
+      const created = await run(['tab', 'create', '--url', input.startedByPlugin ? `${origin}/api/health` : wanted, '--json'])
       if (typeof created.browserPageId !== 'string') throw new Error('Missing page')
       page = created.browserPageId
+      if (input.startedByPlugin) {
+        await defaultAnalyticsOff(page)
+        await run(['goto', '--url', wanted, '--page', page, '--json'])
+      }
     }
     // Inspect every open so a lost browser session repairs itself without a marker.
     let needsPair = false

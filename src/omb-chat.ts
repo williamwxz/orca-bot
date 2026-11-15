@@ -12,11 +12,11 @@ function failure(value: unknown, sending: boolean): string {
   if (code === 'UNAUTHORIZED' || code === 'unauthorized') return 'Open the full chat to sign in.'
   return sending ? 'Could not confirm sending. Check the full chat before trying again.' : 'Could not read messages. Open the full chat or try again.'
 }
-async function run(args: string[], sending: boolean, deps: CliDeps): Promise<unknown> {
+async function run(args: string[], sending: boolean, deps: CliDeps, input?: string): Promise<unknown> {
   let output: string
   let exitThree = false
   try {
-    output = await deps.execFile(ombBinary(deps), args, cliOptions(deps, 15000))
+    output = await deps.execFile(ombBinary(deps), args, cliOptions(deps, 15000), input)
   } catch (error) {
     if (error instanceof CliFailure && sending && error.code === 3) { output = error.stdout; exitThree = true }
     else {
@@ -44,7 +44,7 @@ export async function sendMessage(input: { port: number; botId: string; text: st
   if (!validBotId(input.botId)) throw new Error('Invalid bot ID.')
   if (typeof input.text !== 'string' || !input.text.trim() || input.text.length > 16000) throw new Error('Enter a message of 1–16,000 characters.')
   if (!/^[a-zA-Z0-9_-]{16,80}$/.test(input.sendId)) throw new Error('Invalid send ID.')
-  await run(['send', '--bot', input.botId, '--text', input.text, '--send-id', input.sendId, '--port', String(input.port), '--json'], true, deps)
+  await run(['send', '--bot', input.botId, '-', '--send-id', input.sendId, '--port', String(input.port), '--json'], true, deps, input.text)
   return { sendId: input.sendId }
 }
 export const newSendId = (): string => randomUUID()
