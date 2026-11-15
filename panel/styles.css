@@ -162,3 +162,11 @@ label { display: block; margin: 12px 0 5px; font-size: 12px; }
     html.dark { --bd-accent: color(display-p3 .2062 .5041 .9917); --bd-accent-text: color(display-p3 .5417 .7465 .9948); }
   }
 }
+
+#list-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+#open-page { font-size: 11px; padding: 4px 7px; }
+#setup { padding: 12px; margin-bottom: 12px; border: 1px solid var(--bd-border); border-radius: 10px; background: var(--bd-card); }
+#setup h2 { margin: 0; font-size: 15px; }
+#setup label { margin: 10px 0; }
+#setup-message { font-size: 12px; margin-bottom: 0; }
+#setup-message:empty { display: none; }

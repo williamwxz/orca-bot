@@ -136,7 +136,7 @@ export async function findServer(deps: ServerDeps = defaultServerDeps()): Promis
 }
 
 // Only this private helper handles the selected path; public results contain flags only.
-function claudeEnvironment(deps: ServerDeps, share: boolean) {
+export function claudeEnvironment(deps: Pick<ServerDeps, 'platform' | 'home' | 'env' | 'read' | 'realpath' | 'isDirectory' | 'userInfo'>, share: boolean) {
   const path = deps.platform === 'win32' ? win32 : posix
   let home: string | undefined
   try {
@@ -167,7 +167,7 @@ export async function claudeSetupStatus(port: number, share: boolean, deps: Serv
     const record = JSON.parse(deps.read(join(deps.home, '.bot-deck/server.pid')))
     const restart = !Number.isInteger(record.env) || record.env < ENV_VERSION || record.claudeHome !== flags.claudeHome || record.inherit !== flags.inherit
     return { restart, message: !found ? '' : restart ? 'Claude setup changes will apply when bots are idle.'
-      : share ? 'Claude bots use your Claude login and tools.' : 'Claude bots use your Claude login; shared tools are off.' }
+      : '' }
   } catch { return { restart: false, message: '' } }
 }
 
@@ -208,7 +208,7 @@ export async function ensureInstalled(version: string, deps: ServerDeps = defaul
   }
 }
 
-export async function startServer(bin: string, port: number, deps: ServerDeps = defaultServerDeps(), share = true): Promise<Server> {
+export async function startServer(bin: string, port: number, deps: ServerDeps = defaultServerDeps(), share = false): Promise<Server> {
   try {
     const setup = claudeEnvironment(deps, share)
     const folder = join(deps.home, '.bot-deck')
@@ -255,7 +255,7 @@ export async function isPluginServer(port: number, deps: ServerDeps = defaultSer
 }
 
 const attempts = new WeakMap<ServerDeps, Promise<ServerResult>>()
-export function ensureServer(deps: ServerDeps = defaultServerDeps(), share = true): Promise<ServerResult> {
+export function ensureServer(deps: ServerDeps = defaultServerDeps(), share = false): Promise<ServerResult> {
   const existing = attempts.get(deps)
   if (existing) return existing
   const attempt = async (): Promise<ServerResult> => {

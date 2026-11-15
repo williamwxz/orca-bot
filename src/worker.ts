@@ -1,3 +1,5 @@
+import { defaultLinkDeps, findAgents, syncAgentLinks } from './agent-link.ts'
+import type { SetupAnswer } from './protocol.ts'
 import { readThread, sendMessage, newSendId } from './omb-chat.ts'
 import type { OrcaWorkerApi } from 'orca/worker'
 import { openChat, validBotId } from './omb-open.ts'
@@ -12,6 +14,8 @@ import type { ServerResult, StopResult } from './omb-server.ts'
 import { TESTED_OPENMAUSBOT_VERSION, compareVersions } from '../shared/omb-version.ts'
 
 export type WorkerDeps = {
+  findAgents?: () => { claude: boolean; codex: boolean }
+  syncAgentLinks?: (input: { enabled: boolean; owned: boolean; port: number }) => Promise<void>
   checkHealth: (port: number) => Promise<boolean>
   now: () => number
   ensureServer: (share: boolean) => Promise<ServerResult>
@@ -30,7 +34,10 @@ function defaults(): WorkerDeps {
   const deps = defaultServerDeps()
   const cli = defaultCliDeps()
   const http = defaultHttpDeps()
+  const links = defaultLinkDeps()
   return {
+    findAgents: () => findAgents(links),
+    syncAgentLinks: async (input) => syncAgentLinks({ ...input, owned: input.owned && await isPluginServer(input.port, deps) }, links),
     checkHealth: (port) => serverHealthy(port, deps),
     now: Date.now,
     ensureServer: (share) => ensureServer(deps, share),
@@ -63,8 +70,55 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaults()): vo
   let opening: Promise<OpenResult> | undefined
   let lastHealthCheck = -Infinity
   let checking: Promise<void> | undefined
+  let answering: Promise<{ answered: true }> | undefined
+  let linkSetting: boolean | undefined
+  let linkRetryAt = -Infinity
+  let linkMessage = ''
+  const updateLinks = async (enabled: boolean, port: number): Promise<void> => {
+    try {
+      await deps.syncAgentLinks?.({ enabled, owned: true, port })
+      linkMessage = ''
+      linkRetryAt = -Infinity
+    } catch (error) {
+      linkMessage = error instanceof Error && /^Could not add Bot Deck to (Claude|Codex)\.$/.test(error.message) ? error.message : 'Could not update Bot Deck setup.'
+      linkRetryAt = deps.now() + 60000
+      throw new Error(linkMessage)
+    }
+  }
+  orca.panels.handle('setup.get', async () => ({
+    answered: await orca.storage.get('setupAnswered') === true,
+    agents: deps.findAgents?.() ?? { claude: false, codex: false }
+  }))
+  orca.panels.handle('setup.answer', (input: SetupAnswer) => {
+    if (!input || typeof input.shareTools !== 'boolean' || typeof input.linkAgents !== 'boolean') throw new Error('Choose your setup options.')
+    answering ??= (async (): Promise<{ answered: true }> => {
+      if (await orca.storage.get('setupAnswered') === true) return { answered: true }
+      try {
+        linkRetryAt = -Infinity
+        lastHealthCheck = -Infinity
+        await orca.settings.set('shareClaudeSetup', input.shareTools)
+        await orca.settings.set('linkAgents', input.linkAgents)
+        linkSetting = input.linkAgents
+        if (status?.state === 'running' && startedByPlugin) {
+          await checking
+          if (status?.state === 'running' && startedByPlugin) await updateLinks(input.linkAgents, status.port!)
+        }
+        await orca.storage.set('setupAnswered', true)
+        lastHealthCheck = -Infinity
+        return { answered: true }
+      } catch { throw new Error('Could not finish setup. Please try again.') }
+    })().finally(() => { answering = undefined })
+    return answering
+  })
   orca.panels.handle('status', async (input: { retry?: boolean } = {}): Promise<Status> => {
-    const share = (await orca.settings.get('shareClaudeSetup')) !== false
+    const answered = await orca.storage.get('setupAnswered') === true
+    const share = answered && await orca.settings.get('shareClaudeSetup') === true
+    const nextLinkSetting = await orca.settings.get('linkAgents') === true
+    if (linkSetting !== nextLinkSetting) {
+      linkSetting = nextLinkSetting
+      linkRetryAt = -Infinity
+      lastHealthCheck = -Infinity
+    }
     if (status?.state === 'running') {
       if (!checking && deps.now() - lastHealthCheck >= 2000) {
         const checked = status
@@ -72,10 +126,14 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaults()): vo
         checking = Promise.resolve().then(() => deps.checkHealth(checked.port!)).catch(() => false).then(async (healthy) => {
           if (status !== checked) return
           if (!healthy) { status = undefined; startedByPlugin = false; lastRoster = []; return }
-          if (!startedByPlugin || !deps.claudeSetupStatus) return
-          const setup = await deps.claudeSetupStatus(checked.port!, share)
+          if (!startedByPlugin || answering) return
+          if (deps.now() >= linkRetryAt) {
+            try { await updateLinks(answered && nextLinkSetting, checked.port!) }
+            catch { /* Keep the failure visible while waiting to retry. */ }
+          }
+          const setup = await deps.claudeSetupStatus?.(checked.port!, share) ?? { restart: false, message: '' }
           if (status !== checked) return
-          checked.message = [versionMessage(checked.version!), setup.message].filter(Boolean).join(' ')
+          checked.message = [versionMessage(checked.version!), setup.message, linkMessage].filter(Boolean).join(' ')
           if (!setup.restart || !deps.rosterBusy || await deps.rosterBusy(checked.port!)) return
           if (status !== checked || pending) return
           const restartShare = share

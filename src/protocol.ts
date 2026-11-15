@@ -9,7 +9,12 @@ export type Status = {
   testedVersion: string
 }
 
+export type Setup = { answered: boolean; agents: { claude: boolean; codex: boolean } }
+export type SetupAnswer = { shareTools: boolean; linkAgents: boolean }
+
 export type Requests = {
+  'setup.get': { input: Record<string, never>; output: Setup }
+  'setup.answer': { input: SetupAnswer; output: { answered: true } }
   'thread.read': { input: { botId: string; limit?: number }; output: Thread }
   'message.send': { input: { botId: string; text: string }; output: { sendId: string } }
   'chat.open': { input: { botId?: string }; output: { message: string } }

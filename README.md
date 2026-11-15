@@ -12,8 +12,8 @@ Codex or Grok agent, and a chat window for each.
 - **Nothing to set up.** Opening the panel installs and starts OpenMausBot for
   you. You never run a command.
 - **Your existing sign-ins and tools.** Codex bots use your Codex setup. Claude
-  bots use the Claude login you already have in Orca, with your connectors and
-  MCP servers.
+  bots use your Orca Claude login. Claude tools are shared and Orca agents are
+  linked only after you approve in the setup card; change either in Orca's Settings.
 - **Two places to chat.** A quick chat in the panel, and the full OpenMausBot
   page in an Orca browser tab, one click away.
 - **Runs locally.** Bot Deck has no server of its own and collects nothing.
@@ -43,9 +43,9 @@ Good to know:
 - The panel shows the last 20 messages as plain text and sends messages of up to
   16,000 characters. Anything richer says "This needs the full chat."
 - **Add MausBot** brings back the main bot if you hid it.
-- **Give Claude bots my Claude tools** (Orca Settings, on by default) decides
-  whether Claude bots get your connectors, MCP servers, skills and instructions.
-  Read [Security review](#security-review) before leaving it on.
+- The **Set up Bot Deck** card asks before sharing Claude tools or linking your
+  Orca agents to the bots. Change either choice later in Orca's Settings.
+  Read [Security review](#security-review) before allowing access.
 - **Bot Deck: Stop the OpenMausBot server** in the command palette stops the
   server. It keeps running after you close the panel, so that routines and long
   tasks can finish.
@@ -72,6 +72,7 @@ line tool to open the browser tab.
 
 ### What Bot Deck does to protect you
 
+- **Asks first.**
 - **Usage analytics are off.** OpenMausBot's page sends anonymous usage events
   to PostHog by default. For a server Bot Deck starts, it switches this off
   before the page first loads. If you turn it on yourself in OpenMausBot's
@@ -96,13 +97,11 @@ line tool to open the browser tab.
 1. **Bots act with your access.** A new OpenMausBot bot starts at "Full access":
    it can run commands and read files as you, without asking. Lower this per
    bot in the full chat if you want to approve each step.
-2. **Your Claude tools are shared by default.** With **Give Claude bots my
-   Claude tools** on, every Claude bot can use every connector you have, such as
-   mail, calendar, documents and trackers, and it loads your personal
-   instructions, skills and hooks. A bot that reads a malicious web page or
-   document could be tricked into misusing those tools (prompt injection). Turn
-   the setting off if a bot will read content you do not trust, and add only the
-   tools it needs in OpenMausBot.
+2. **Shared tools give bots more access.** Claude tools are shared and Orca
+   agents are linked only after you approve in the setup card. With sharing on,
+   Claude bots can use your connectors, MCP servers, instructions, skills and
+   hooks. A malicious page or document could trick a bot into misusing those
+   tools. Change sharing and agent linking in Orca's Settings.
 3. **Any program on this computer can talk to the server.** OpenMausBot trusts
    local programs as the owner. This is its design, and it means other software
    running under your account can read chats and message your bots.

@@ -227,7 +227,7 @@ test('status restarts owned mismatched setup only after idle, reflects setting c
   for (const owned of [false, true]) for (const busyInitially of [false, true]) {
     let now = 0, busy = busyInitially, mismatch = true, starts = 0, stops = 0, inspections = 0
     let release!: () => void
-    const host = mockHost({ settings: { shareClaudeSetup: true } })
+    const host = mockHost({ storage: { setupAnswered: true }, settings: { shareClaudeSetup: true } })
     let api: any
     const choices: boolean[] = []
     const worker = await mountWorker({ default: (orca) => { api = orca; register(orca, {
@@ -286,4 +286,152 @@ test('automatic restart respects stop refusal and contains restart failures', as
       assert.doesNotMatch(JSON.stringify(status), /private path/)
     } finally { await worker.deactivate() }
   }
+})
+
+function setupDeps(owned = true) {
+  return {
+    now: () => 10000, checkHealth: async () => true,
+    findAgents: () => ({ claude: true, codex: false }),
+    ensureServer: async (_share: boolean) => ({ port: 8799, version: testedVersion, started: true, startedByPlugin: owned }),
+    syncAgentLinks: async (_input: { enabled: boolean; owned: boolean; port: number }) => {},
+    stopServer: async () => ({ stopped: true, message: '' }),
+    openChat: async () => ({ message: '' }), listBots: async () => [], addMausBot: async () => {},
+    readThread: async () => ({ messages: [], hasMore: false }), sendMessage: async () => ({ sendId: 'fake-send-id-000000' })
+  }
+}
+
+test('setup.get reports persisted answer and found agents', async () => {
+  for (const answered of [false, true]) {
+    const worker = await mountWorker({ default: (orca) => register(orca, setupDeps()) }, { host: mockHost({ storage: { setupAnswered: answered } }) })
+    try { assert.deepEqual(await worker.request('setup.get', {}), { answered, agents: { claude: true, codex: false } }) }
+    finally { await worker.deactivate() }
+  }
+})
+test('setup.answer writes both choices then persists answer and cannot answer twice', async () => {
+  for (const allowed of [false, true]) {
+    const host = mockHost()
+    const worker = await mountWorker({ default: (orca) => register(orca, setupDeps()) }, { host })
+    try {
+      await assert.rejects(worker.request('setup.answer', { shareTools: 'yes', linkAgents: true }), /Choose/)
+      assert.deepEqual(await worker.request('setup.answer', { shareTools: allowed, linkAgents: allowed }), { answered: true })
+      assert.deepEqual(host.data().settings, { shareClaudeSetup: allowed, linkAgents: allowed })
+      assert.equal(host.data().storage.setupAnswered, true)
+      await worker.request('setup.answer', { shareTools: !allowed, linkAgents: !allowed })
+      assert.deepEqual(host.data().settings, { shareClaudeSetup: allowed, linkAgents: allowed })
+    } finally { await worker.deactivate() }
+  }
+})
+test('unanswered setup prevents sharing even with a retained true setting', async () => {
+  const deps = setupDeps()
+  const choices: boolean[] = []
+  const start = deps.ensureServer
+  deps.ensureServer = async (share) => { choices.push(share); return start(share) }
+  const worker = await mountWorker({ default: (orca) => register(orca, deps) }, { host: mockHost({ settings: { shareClaudeSetup: true, linkAgents: true } }) })
+  try {
+    await worker.request('status', {}); await new Promise<void>((resolve) => setImmediate(resolve))
+    assert.deepEqual(choices, [false])
+    assert.equal((await worker.request('status', {}) as any).message, '')
+  } finally { await worker.deactivate() }
+})
+test('link choices apply only to owned servers and later Settings changes reconcile on health checks', async () => {
+  for (const owned of [false, true]) {
+    const deps = setupDeps(owned)
+    let now = 0, api: any
+    deps.now = () => now
+    const links: boolean[] = []
+    deps.syncAgentLinks = async (input) => { assert.equal(input.owned, true); links.push(input.enabled) }
+    const worker = await mountWorker({ default: (orca) => { api = orca; register(orca, deps) } }, { host: mockHost() })
+    try {
+      await worker.request('status', {}); await new Promise<void>((resolve) => setImmediate(resolve))
+      await worker.request('setup.answer', { shareTools: true, linkAgents: true })
+      assert.deepEqual(links, owned ? [true] : [])
+      await worker.request('status', {})
+      await api.settings.set('linkAgents', false)
+      now = 2000
+      await worker.request('status', {})
+      assert.deepEqual(links, owned ? [true, true, false] : [])
+    } finally { await worker.deactivate() }
+  }
+})
+test('setup link failure keeps unanswered state and allows retry with a generic error', async () => {
+  const deps = setupDeps()
+  let fail = true
+  deps.syncAgentLinks = async () => { if (fail) throw new Error('private-output') }
+  const host = mockHost()
+  const worker = await mountWorker({ default: (orca) => register(orca, deps) }, { host })
+  try {
+    await worker.request('status', {}); await new Promise<void>((resolve) => setImmediate(resolve))
+    await assert.rejects(worker.request('setup.answer', { shareTools: true, linkAgents: true }), /Could not finish setup. Please try again./)
+    assert.notEqual(host.data().storage.setupAnswered, true)
+    fail = false
+    await worker.request('setup.answer', { shareTools: false, linkAgents: false })
+    assert.equal(host.data().storage.setupAnswered, true)
+  } finally { await worker.deactivate() }
+})
+test('health link failure preserves running server with a generic notice', async () => {
+  const deps = setupDeps()
+  deps.syncAgentLinks = async () => { throw new Error('private-output') }
+  const worker = await mountWorker({ default: (orca) => register(orca, deps) }, { host: mockHost({ storage: { setupAnswered: true }, settings: { linkAgents: true } }) })
+  try {
+    await worker.request('status', {}); await new Promise<void>((resolve) => setImmediate(resolve))
+    const status = await worker.request('status', {}) as any
+    assert.equal(status.state, 'running')
+    assert.equal(status.message, 'Could not update Bot Deck setup.')
+  } finally { await worker.deactivate() }
+})
+
+test('failed links back off for 60 seconds, keep the notice, and retry immediately on a setting change', async () => {
+  const deps = setupDeps()
+  let now = 0, calls = 0, api: any, fail = true
+  deps.now = () => now
+  deps.syncAgentLinks = async () => { calls++; if (fail) throw new Error('Could not add Bot Deck to Codex.') }
+  const worker = await mountWorker({ default: (orca) => { api = orca; register(orca, deps) } }, { host: mockHost({ storage: { setupAnswered: true }, settings: { linkAgents: true } }) })
+  try {
+    await worker.request('status', {}); await new Promise<void>((resolve) => setImmediate(resolve))
+    await worker.request('status', {})
+    assert.equal(calls, 1)
+    for (now = 2000; now < 60000; now += 2000) {
+      const status = await worker.request('status', {}) as any
+      assert.equal(status.message, 'Could not add Bot Deck to Codex.')
+      assert.equal(calls, 1)
+    }
+    await worker.request('status', {})
+    assert.equal(calls, 2)
+    now = 60001
+    await api.settings.set('linkAgents', false)
+    await worker.request('status', {})
+    assert.equal(calls, 3)
+    now = 62001
+    await worker.request('status', {})
+    assert.equal(calls, 3)
+    fail = false
+    now = 62002
+    await api.settings.set('linkAgents', true)
+    assert.equal((await worker.request('status', {}) as any).message, '')
+    assert.equal(calls, 4)
+  } finally { await worker.deactivate() }
+})
+
+test('setup answers bypass a previous link backoff but failed answers do not cause rapid automatic retries', async () => {
+  const deps = setupDeps()
+  let now = 0, calls = 0, fail = true
+  deps.now = () => now
+  deps.syncAgentLinks = async () => { calls++; if (fail) throw new Error('Could not add Bot Deck to Claude.') }
+  const worker = await mountWorker({ default: (orca) => register(orca, deps) }, { host: mockHost() })
+  try {
+    await worker.request('status', {}); await new Promise<void>((resolve) => setImmediate(resolve))
+    await worker.request('status', {})
+    assert.equal(calls, 1)
+    now = 1
+    await assert.rejects(worker.request('setup.answer', { shareTools: true, linkAgents: true }), /Could not finish setup/)
+    assert.equal(calls, 2)
+    now = 2001
+    assert.equal((await worker.request('status', {}) as any).message, 'Could not add Bot Deck to Claude.')
+    assert.equal(calls, 2)
+    fail = false
+    await worker.request('setup.answer', { shareTools: true, linkAgents: true })
+    assert.equal(calls, 3)
+    assert.equal((await worker.request('setup.get', {}) as any).answered, true)
+    assert.equal((await worker.request('status', {}) as any).message, '')
+  } finally { await worker.deactivate() }
 })
