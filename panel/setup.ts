@@ -1,12 +1,14 @@
+import { agents as catalog, agentKeys } from '../shared/agents.ts'
 import type { Tool, ImportResult } from '../worker/import-tools.ts'
 import type { Setup, SetupAnswer } from '../worker/protocol.ts'
 
 export function agentNames(agents: Setup['agents']): string {
-  return [agents.claude ? 'Claude' : '', agents.codex ? 'Codex' : ''].filter(Boolean).join(' and ')
+  const names = agentKeys.filter(key => agents[key]).map(key => catalog[key].label)
+  return names.length > 2 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : names.join(' and ')
 }
 
 export function createSetup(send: (answer: SetupAnswer) => Promise<unknown>, bringTools?: () => Promise<ImportResult>) {
-  const state = { toolsLoaded: false, tools: [] as Tool[], importTools: true, loaded: false, answered: false, agents: { claude: false, codex: false }, shareTools: true, linkAgents: true, busy: false, message: '' }
+  const state = { toolsLoaded: false, tools: [] as Tool[], importTools: true, loaded: false, answered: false, agents: { claude: false, codex: false } as Setup['agents'], shareTools: true, linkAgents: true, busy: false, message: '' }
   return {
     state,
     loadTools(tools: Tool[]) { state.tools = tools; state.toolsLoaded = true },

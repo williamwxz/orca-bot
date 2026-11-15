@@ -80,3 +80,39 @@ test('unowned servers refuse before reading sources or requesting, and errors ar
   deps.request = async () => { throw new Error(token) }
   await assert.rejects(importTools(1234, deps), /Could not check existing tools/)
 })
+
+test('opencode V2 and legacy plus Antigravity import in order without exposing definitions', async () => {
+  for (const v2 of [true, false]) {
+    const entries = {
+      local: { type: 'local', command: ['tool', 'arg'], environment: { TOKEN: token } },
+      remote: { type: 'remote', url: 'https://fake', headers: { auth: token } },
+      disabled: { type: 'local', command: ['disabled'], disabled: true },
+      off: { type: 'local', command: ['off'], enabled: false },
+      cwd: { type: 'local', command: ['cwd'], cwd: '/tmp' },
+      indirect: { type: 'local', command: ['indirect'], environment: { KEY: '{env:KEY}' } },
+      own: { type: 'local', command: ['/bin/openmausbot', 'mcp'] },
+      'orca-bot': { type: 'remote', url: 'https://own' },
+      invalid: { type: 'local', command: [123] },
+      '123': { type: 'local', command: ['invalid-name'] }
+    }
+    const { deps, calls } = fake({
+      '/home/.config/opencode/opencode.json': { mcp: v2 ? { servers: entries, ignored: { type: 'local', command: ['ignored'] } } : entries },
+      '/home/.gemini/config/mcp_config.json': source({ agy: { command: 'agy-tool', args: [token], env: { TOKEN: token } }, agyremote: { url: 'https://agy', headers: { auth: token } }, agyoff: { command: 'off', disabled: true }, agyindirect: { command: '${TOOL}' }, 'orca-bot': { command: 'own' }, agyloop: { command: 'openmausbot', args: ['mcp'] } })
+    })
+    deps.listCodex = async () => [{ name: 'codex', transport: { type: 'stdio', command: 'codex-tool' } }]
+    const tools = await findTools(deps)
+    assert.deepEqual(tools.map(t => [t.name, t.source]), [['codex', 'Codex'], ['local', 'opencode'], ['remote', 'opencode'], ['agy', 'Antigravity'], ['agyremote', 'Antigravity']])
+    assert.equal(JSON.stringify(tools).includes(token), false)
+    const result = await importTools(1234, deps)
+    assert.equal(JSON.stringify(result).includes(token), false)
+    const imported = calls.filter(c => c.method === 'POST').map(c => JSON.parse(c.body.json).mcpServers)
+    assert.deepEqual(imported[1], { local: { command: 'tool', args: ['arg'], env: { TOKEN: token } } })
+    assert.deepEqual(imported[2], { remote: { url: 'https://fake', headers: { auth: token } } })
+    deps.request = async () => { throw new Error(token) }
+    await assert.rejects(importTools(1234, deps), error => !String(error).includes(token))
+  }
+})
+test('new import sources reject malformed V2 and unknown Antigravity shapes', async () => {
+  const { deps } = fake({ '/home/.config/opencode/opencode.json': { mcp: { servers: null, legacy: { type: 'local', command: ['ignored'] } } }, '/home/.gemini/config/mcp_config.json': { servers: { ignored: { command: 'ignored' } } } })
+  assert.deepEqual(await findTools(deps), [])
+})

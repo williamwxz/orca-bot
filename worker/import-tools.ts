@@ -1,3 +1,5 @@
+import { agents, agentKeys, MCP_ENTRY_NAME } from '../shared/agents.ts'
+import { opencodeEntries } from './agent-config.ts'
 import { execFile } from 'node:child_process'
 import * as fs from 'node:fs'
 import { join, basename } from 'node:path'
@@ -67,7 +69,7 @@ async function candidates(deps: ImportDeps): Promise<Candidate[]> {
   const add = (rawName: unknown, raw: unknown, source: string) => {
     if (typeof rawName !== 'string') return
     const name = nameOf(rawName), d = definition(raw)
-    if (!name || name === 'orca-bot' || !d || names.has(name)) return
+    if (!name || name === MCP_ENTRY_NAME || !d || names.has(name)) return
     names.add(name)
     const key = canonical(d)
     if (definitions.has(key)) return
@@ -98,6 +100,22 @@ async function candidates(deps: ImportDeps): Promise<Candidate[]> {
       }
     }
   } catch {}
+  for (const key of agentKeys) {
+    const spec = agents[key]
+    if (!('config' in spec)) continue
+    try {
+      const raw = JSON.parse(deps.read(join(deps.home, spec.config)))
+      const entries = spec.format === 'opencode' ? opencodeEntries(raw) : raw?.mcpServers
+      if (!object(entries)) continue
+      for (const [name, entry] of Object.entries(entries)) {
+        if (!object(entry) || entry.enabled === false || entry.disabled === true || entry.cwd || /\{(?:env|file):|\$\{[^}]+\}/.test(JSON.stringify(entry))) continue
+        if (spec.format === 'standard') add(name, entry, spec.label)
+        else if (entry.type === 'local' && Array.isArray(entry.command) && entry.command.length && entry.command.every((v: unknown) => typeof v === 'string')) {
+          add(name, { command: entry.command[0], args: entry.command.slice(1), env: entry.environment }, spec.label)
+        } else if (entry.type === 'remote') add(name, { url: entry.url, headers: entry.headers }, spec.label)
+      }
+    } catch {}
+  }
   return found
 }
 export async function findTools(deps: ImportDeps = defaultImportDeps()): Promise<Tool[]> {

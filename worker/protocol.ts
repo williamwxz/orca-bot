@@ -1,3 +1,4 @@
+import type { FoundAgents } from '../shared/agents.ts'
 import type { Tool, ImportResult } from './import-tools.ts'
 import type { Thread } from '../shared/chat.ts'
 import type { Bot } from '../shared/roster.ts'
@@ -10,7 +11,7 @@ export type Status = {
   testedVersion: string
 }
 
-export type Setup = { answered: boolean; agents: { claude: boolean; codex: boolean } }
+export type Setup = { answered: boolean; agents: FoundAgents }
 export type SetupAnswer = { shareTools: boolean; linkAgents: boolean }
 
 export type Requests = {
