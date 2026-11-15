@@ -67,8 +67,8 @@ test('worker preserves failure until explicit Retry', async () => {
 })
 
 test('version messages explain compatibility in either direction', () => {
-  assert.equal(versionMessage('999.0'), `OpenMausBot 999.0 is newer than the version Orca Bot was tested with (${testedVersion}). It should work; tell us if something looks wrong.`)
-  assert.equal(versionMessage('0.0'), `OpenMausBot 0.0 is older than Orca Bot expects (${testedVersion}). Update OpenMausBot.`)
+  assert.equal(versionMessage('999.0'), `OpenMausBot 999.0 is newer than the version Bot for Orca was tested with (${testedVersion}). It should work; tell us if something looks wrong.`)
+  assert.equal(versionMessage('0.0'), `OpenMausBot 0.0 is older than Bot for Orca expects (${testedVersion}). Update OpenMausBot.`)
   assert.equal(versionMessage(testedVersion), '')
 })
 
@@ -376,7 +376,7 @@ test('health link failure preserves running server with a generic notice', async
     await worker.request('status', {}); await new Promise<void>((resolve) => setImmediate(resolve))
     const status = await worker.request('status', {}) as any
     assert.equal(status.state, 'running')
-    assert.equal(status.message, 'Could not update Orca Bot setup.')
+    assert.equal(status.message, 'Could not update Bot for Orca setup.')
   } finally { await worker.deactivate() }
 })
 
@@ -384,7 +384,7 @@ test('failed links back off for 60 seconds, keep the notice, and retry immediate
   const deps = setupDeps()
   let now = 0, calls = 0, api: any, fail = true
   deps.now = () => now
-  deps.syncAgentLinks = async () => { calls++; if (fail) throw new Error('Could not add Orca Bot to Codex.') }
+  deps.syncAgentLinks = async () => { calls++; if (fail) throw new Error('Could not add Bot for Orca to Codex.') }
   const worker = await mountWorker({ default: (orca) => { api = orca; register(orca, deps) } }, { host: mockHost({ storage: { setupAnswered: true }, settings: { linkAgents: true } }) })
   try {
     await worker.request('status', {}); await new Promise<void>((resolve) => setImmediate(resolve))
@@ -392,7 +392,7 @@ test('failed links back off for 60 seconds, keep the notice, and retry immediate
     assert.equal(calls, 1)
     for (now = 2000; now < 60000; now += 2000) {
       const status = await worker.request('status', {}) as any
-      assert.equal(status.message, 'Could not add Orca Bot to Codex.')
+      assert.equal(status.message, 'Could not add Bot for Orca to Codex.')
       assert.equal(calls, 1)
     }
     await worker.request('status', {})
@@ -416,7 +416,7 @@ test('setup answers bypass a previous link backoff but failed answers do not cau
   const deps = setupDeps()
   let now = 0, calls = 0, fail = true
   deps.now = () => now
-  deps.syncAgentLinks = async () => { calls++; if (fail) throw new Error('Could not add Orca Bot to Claude.') }
+  deps.syncAgentLinks = async () => { calls++; if (fail) throw new Error('Could not add Bot for Orca to Claude.') }
   const worker = await mountWorker({ default: (orca) => register(orca, deps) }, { host: mockHost() })
   try {
     await worker.request('status', {}); await new Promise<void>((resolve) => setImmediate(resolve))
@@ -426,7 +426,7 @@ test('setup answers bypass a previous link backoff but failed answers do not cau
     await assert.rejects(worker.request('setup.answer', { shareTools: true, linkAgents: true }), /Could not finish setup/)
     assert.equal(calls, 2)
     now = 2001
-    assert.equal((await worker.request('status', {}) as any).message, 'Could not add Orca Bot to Claude.')
+    assert.equal((await worker.request('status', {}) as any).message, 'Could not add Bot for Orca to Claude.')
     assert.equal(calls, 2)
     fail = false
     await worker.request('setup.answer', { shareTools: true, linkAgents: true })
@@ -452,7 +452,7 @@ test('tools handlers coalesce imports, refuse unowned servers, and sanitize fail
     try {
       assert.deepEqual(await worker.request('tools.find', {}), { tools: [{ name: 'test', source: 'Cursor' }] })
       const first = worker.request('tools.import', {})
-      if (!owned) { await assert.rejects(first, /server Orca Bot started/); assert.equal(calls, 0); continue }
+      if (!owned) { await assert.rejects(first, /server Bot for Orca started/); assert.equal(calls, 0); continue }
       const second = worker.request('tools.import', {})
       await new Promise<void>(resolve => setImmediate(resolve))
       assert.equal(calls, 1)

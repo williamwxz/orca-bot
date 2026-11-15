@@ -124,7 +124,7 @@ export async function findTools(deps: ImportDeps = defaultImportDeps()): Promise
 export async function importTools(port: number, deps: ImportDeps = defaultImportDeps()): Promise<ImportResult> {
   try {
     if (!Number.isInteger(port) || port < 1 || port > 65535 || !await deps.owned(port)) throw new Error()
-  } catch { throw new Error('Tools can only be imported into a server Orca Bot started.') }
+  } catch { throw new Error('Tools can only be imported into a server Bot for Orca started.') }
   let existing: any[]
   try {
     const response = await deps.request(port, '/api/mcp/servers', 'GET')

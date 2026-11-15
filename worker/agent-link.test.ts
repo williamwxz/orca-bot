@@ -75,19 +75,19 @@ test('unowned servers never read records or run commands', async () => {
 test('existing unrecorded Codex orca-bot entry is preserved', async () => {
   const { deps, calls } = fake(['codex'])
   deps.codexEntryExists = async () => true
-  await assert.rejects(syncAgentLinks(input, deps), { message: 'Could not add Orca Bot to Codex.' })
+  await assert.rejects(syncAgentLinks(input, deps), { message: 'Could not add Bot for Orca to Codex.' })
   assert.deepEqual(calls, [])
 })
 test('failures contain only the generic agent sentence and preserve successful entries', async () => {
   const { deps, record } = fake()
   deps.execFile = async (file) => { if (file.endsWith('codex')) throw new Error('private-output') }
-  await assert.rejects(syncAgentLinks(input, deps), { message: 'Could not add Orca Bot to Codex.' })
+  await assert.rejects(syncAgentLinks(input, deps), { message: 'Could not add Bot for Orca to Codex.' })
   assert.deepEqual(record(), { claude: { port: 8799, bin: deps.bin } })
 })
 test('corrupt ownership record fails closed', async () => {
   const { deps, calls } = fake()
   deps.read = () => '{bad record'
-  await assert.rejects(syncAgentLinks(input, deps), { message: 'Could not read Orca Bot setup.' })
+  await assert.rejects(syncAgentLinks(input, deps), { message: 'Could not read Bot for Orca setup.' })
   assert.deepEqual(calls, [])
 })
 
@@ -134,7 +134,7 @@ for (const [agent, program, label] of [['opencode', 'opencode', 'opencode'], ['a
     const { deps, calls } = fake([program])
     deps.readConfig = () => JSON.stringify({ mcp: { servers: { 'orca-bot': { command: ['SECRET_FAKE_TOKEN'] } } } })
     deps.listAgent = async () => 'orca-bot SECRET_FAKE_TOKEN'
-    await assert.rejects(syncAgentLinks(input, deps), { message: `Could not add Orca Bot to ${label}.` })
+    await assert.rejects(syncAgentLinks(input, deps), { message: `Could not add Bot for Orca to ${label}.` })
     assert.deepEqual(calls, [])
     deps.readConfig = () => { throw new Error('SECRET_FAKE_TOKEN') }
     deps.listAgent = async () => { throw new Error('SECRET_FAKE_TOKEN') }
