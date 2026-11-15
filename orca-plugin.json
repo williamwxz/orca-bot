@@ -2,9 +2,9 @@
   "$schema": "https://raw.githubusercontent.com/stablyai/orca/main/docs/schemas/plugins/orca-plugin.v2.schema.json",
   "manifestVersion": 2,
   "id": "bot-deck",
-  "name": "Bot Deck for Grok Bot",
+  "name": "Bot Deck",
   "version": "0.1.0",
-  "description": "Unofficial sidebar client for your Grok Bot bots: pick a bot, chat, create and delete bots, and schedule tasks. Uses the signed-in Grok Bot desktop app on this Mac; it reads that app's saved login from your keychain.",
+  "description": "A team of bots inside Orca. Runs the open-source OpenMausBot on your machine: a roster of bots, each its own Claude, Codex or Grok agent. Unofficial; not affiliated with OpenMausBot or its engines.",
   "license": "MIT",
   "engines": {
     "orca": ">=1.4.246"
