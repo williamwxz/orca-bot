@@ -23,6 +23,10 @@
     ],
     "commands": [
       {
+        "id": "botdeck.open",
+        "title": "Bot Deck: Open chat"
+      },
+      {
         "id": "botdeck.stopServer",
         "title": "Bot Deck: Stop the OpenMausBot server"
       }

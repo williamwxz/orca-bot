@@ -1,4 +1,9 @@
 import type { OrcaWorkerApi } from 'orca/worker'
+import { openChat, signInAgain, validBotId } from './omb-open.ts'
+import type { OpenInput, OpenResult } from './omb-open.ts'
+import { listBots } from './omb-roster.ts'
+import { defaultCliDeps } from './omb-cli.ts'
+import type { Bot } from '../shared/roster.ts'
 import type { Status } from './protocol.ts'
 import { ensureServer, stopServer, ServerError, defaultServerDeps } from './omb-server.ts'
 import type { ServerResult, StopResult } from './omb-server.ts'
@@ -7,12 +12,22 @@ import { TESTED_OPENMAUSBOT_VERSION, compareVersions } from '../shared/omb-versi
 export type WorkerDeps = {
   ensureServer: () => Promise<ServerResult>
   stopServer: () => Promise<StopResult>
+  openChat: (input: OpenInput) => Promise<OpenResult>
+  signInAgain: (input: OpenInput) => Promise<OpenResult>
+  listBots: (input: { port: number }) => Promise<Bot[]>
 }
 
 function defaults(): WorkerDeps {
   if (process.env.NODE_TEST_CONTEXT) throw new Error('Tests must inject worker dependencies')
   const deps = defaultServerDeps()
-  return { ensureServer: () => ensureServer(deps), stopServer: () => stopServer(deps) }
+  const cli = defaultCliDeps()
+  return {
+    ensureServer: () => ensureServer(deps),
+    stopServer: () => stopServer(deps),
+    openChat: (input) => openChat(input, cli),
+    signInAgain: (input) => signInAgain(input, cli),
+    listBots: (input) => listBots(input, cli)
+  }
 }
 
 export function versionMessage(version: string): string {
@@ -28,14 +43,19 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaults()): vo
   let status: Status | undefined
   let pending: Promise<void> | undefined
   let stopped = false
+  let startedByPlugin = false
+  let lastRoster: Bot[] = []
+  let opening: Promise<OpenResult> | undefined
   orca.panels.handle('status', (input: { retry?: boolean } = {}): Status => {
     if (input.retry && !pending) {
+      lastRoster = []
       status = undefined
       stopped = false
     }
     if (!status && !pending && !stopped) {
       status = { state: 'starting', message: 'Starting OpenMausBot… The first start downloads about 75 MB and can take a minute.', testedVersion: TESTED_OPENMAUSBOT_VERSION }
       pending = Promise.resolve().then(() => deps.ensureServer()).then((server) => {
+        startedByPlugin = server.startedByPlugin
         status = { state: 'running', message: versionMessage(server.version), port: server.port, version: server.version, testedVersion: TESTED_OPENMAUSBOT_VERSION }
       }).catch((error: unknown) => {
         status = {
@@ -47,11 +67,35 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaults()): vo
     }
     return status!
   })
+  const runningPort = (): number => {
+    if (status?.state !== 'running' || status.port === undefined) throw new Error('OpenMausBot is not running yet.')
+    return status.port
+  }
+  const chat = (input: { botId?: string } = {}, signIn = false): Promise<OpenResult> => {
+    const port = runningPort()
+    if (!input || typeof input !== 'object' || (input.botId !== undefined && !validBotId(input.botId))) throw new Error('Invalid bot ID.')
+    // Coalesce rapid clicks so a first-open pairing link is not replaced by another click.
+    if (opening) return opening
+    const activeTaskId = lastRoster.find((bot) => bot.id === input.botId)?.activeTaskId
+    const action = signIn ? deps.signInAgain : deps.openChat
+    opening = Promise.resolve().then(() => action({ port, startedByPlugin, botId: input.botId, ...(activeTaskId ? { activeTaskId } : {}) })).finally(() => { opening = undefined })
+    return opening
+  }
+  orca.panels.handle('chat.open', (input: { botId?: string }) => chat(input))
+  orca.panels.handle('chat.signIn', () => chat({}, true))
+  orca.panels.handle('bots.list', async () => {
+    const port = runningPort()
+    const bots = await deps.listBots({ port })
+    if (status?.state === 'running' && status.port === port) lastRoster = bots
+    return bots
+  })
+  orca.commands.register('botdeck.open', () => chat())
   const stop = async (): Promise<StopResult> => {
     // Wait for our own startup so a stop command cannot leave it running afterwards.
     await pending
     const result = await deps.stopServer()
     if (result.stopped) {
+      lastRoster = []
       stopped = true
       status = { state: 'start_failed', message: 'OpenMausBot was stopped. Press Retry to start it again.', testedVersion: TESTED_OPENMAUSBOT_VERSION }
     }

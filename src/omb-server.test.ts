@@ -1,4 +1,7 @@
-import { assert, test } from 'orca/testing'
+import { register } from './worker.ts'
+import { openChat, signInAgain } from './omb-open.ts'
+import type { CliDeps } from './omb-cli.ts'
+import { assert, test, mockHost, mountWorker } from 'orca/testing'
 import { checkNode, ensureInstalled, ensureServer, findServer, startServer, stopServer } from './omb-server.ts'
 import type { ServerDeps } from './omb-server.ts'
 import { TESTED_OPENMAUSBOT_VERSION as version, compareVersions } from '../shared/omb-version.ts'
@@ -171,7 +174,7 @@ test('ensureServer shares an in-flight attempt and prefers a running server', as
   const first = ensureServer(deps)
   const second = ensureServer(deps)
   assert.equal(first, second)
-  assert.deepEqual(await first, { port: 8799, version, started: false })
+  assert.deepEqual(await first, { port: 8799, version, started: false, startedByPlugin: false })
   assert.equal(calls.length, 0)
 })
 
@@ -190,7 +193,7 @@ test('ensureServer skips occupied ports and installs and starts once', async () 
   deps.portFree = async (port) => port === 18799
   const first = ensureServer(deps)
   assert.equal(first, ensureServer(deps))
-  assert.deepEqual(await first, { port: 18799, version, started: true })
+  assert.deepEqual(await first, { port: 18799, version, started: true, startedByPlugin: true })
   assert.equal(calls.length, 3)
   assert.deepEqual(calls[2].args, ['serve', '--port', '18799', '--data-dir', '/fake/.bot-deck/data'])
 })
@@ -260,7 +263,7 @@ test('ensureServer reuses suffixed, unparseable and missing versions without spa
   for (const reported of ['0.2.0-beta.1', 'development', '', undefined]) {
     const { deps, calls } = fake()
     deps.fetch = async () => response({ app: 'openmausbot', version: reported, pid: 43 })
-    assert.deepEqual(await ensureServer(deps), { port: 8799, version: reported || 'unknown', started: false })
+    assert.deepEqual(await ensureServer(deps), { port: 8799, version: reported || 'unknown', started: false, startedByPlugin: false })
     assert.equal(calls.length, 0)
   }
 })
@@ -270,4 +273,43 @@ test('versions compare their numeric prefix and report unknown without one', () 
   assert.equal(compareVersions('1.2.3-dev', '1.2.3'), 0)
   assert.equal(compareVersions('development', '1.2.3'), undefined)
   assert.equal(compareVersions('1.2.3', 'unknown'), undefined)
+})
+
+test('fresh workers recover pairing ownership only from a matching persisted server identity', async () => {
+  for (const record of [undefined, { port: 8799, serverPid: 99 }, { port: 18799, serverPid: 43 }, { port: 8799, serverPid: 43 }]) {
+    const { deps, files } = fake()
+    deps.fetch = async () => healthy(43)
+    if (record) files.set('/fake/.bot-deck/server.pid', JSON.stringify(record))
+    const cliCalls: string[][] = []
+    const cli: CliDeps = {
+      home: '/fake', platform: 'darwin', env: {},
+      exists: () => true,
+      fileExists: (path) => files.has(path),
+      write: (path, value) => { files.set(path, value) },
+      execFile: async (_file, args) => {
+        cliCalls.push(args)
+        if (args[0] === 'pair') return 'http://127.0.0.1:8799/pair#code=FAKE-ONLY'
+        if (args[1] === 'list') return JSON.stringify({ ok: true, result: { tabs: [] } })
+        return JSON.stringify({ ok: true, result: { browserPageId: 'fake-page' } })
+      }
+    }
+    const worker = await mountWorker({ default: (orca) => register(orca, {
+      ensureServer: () => ensureServer(deps),
+      stopServer: async () => ({ stopped: false, message: 'Unused' }),
+      openChat: (input) => openChat(input, cli),
+      signInAgain: (input) => signInAgain(input, cli),
+      listBots: async () => []
+    }) }, { host: mockHost() })
+    try {
+      await worker.request('status', {})
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      await worker.request('chat.open', {})
+      const owned = record?.port === 8799 && record.serverPid === 43
+      assert.equal(cliCalls.filter((args) => args[0] === 'pair').length, owned ? 1 : 0)
+      await worker.request('chat.signIn', {})
+      assert.equal(cliCalls.filter((args) => args[0] === 'pair').length, owned ? 2 : 0)
+    } finally {
+      await worker.deactivate()
+    }
+  }
 })

@@ -6,7 +6,7 @@ import { createServer } from 'node:net'
 import { TESTED_OPENMAUSBOT_VERSION, compareVersions } from '../shared/omb-version.ts'
 
 export type Server = { port: number; version: string }
-export type ServerResult = Server & { started: boolean }
+export type ServerResult = Server & { started: boolean; startedByPlugin: boolean }
 export type StopResult = { stopped: boolean; message: string }
 export type ServerDeps = {
   fetch: (url: string, options: { signal: AbortSignal }) => Promise<{ ok: boolean; json(): Promise<unknown> }>
@@ -200,18 +200,29 @@ export async function startServer(bin: string, port: number, deps: ServerDeps = 
   }
 }
 
+export async function isPluginServer(port: number, deps: ServerDeps = defaultServerDeps()): Promise<boolean> {
+  try {
+    const record = JSON.parse(deps.read(join(deps.home, '.bot-deck/server.pid')))
+    if (record.port !== port || !Number.isSafeInteger(record.serverPid) || record.serverPid <= 0) return false
+    const running = await health(port, deps)
+    return running?.pid === record.serverPid
+  } catch {
+    return false
+  }
+}
+
 const attempts = new WeakMap<ServerDeps, Promise<ServerResult>>()
 export function ensureServer(deps: ServerDeps = defaultServerDeps()): Promise<ServerResult> {
   const existing = attempts.get(deps)
   if (existing) return existing
   const attempt = async (): Promise<ServerResult> => {
     const running = await findServer(deps)
-    if (running) return { ...running, started: false }
+    if (running) return { ...running, started: false, startedByPlugin: await isPluginServer(running.port, deps) }
     await checkNode(deps)
     const bin = await ensureInstalled(TESTED_OPENMAUSBOT_VERSION, deps)
     for (const port of ports) {
       if (!await deps.portFree(port)) continue
-      return { ...await startServer(bin, port, deps), started: true }
+      return { ...await startServer(bin, port, deps), started: true, startedByPlugin: true }
     }
     throw new ServerError('start_failed', 'Ports 8799, 18799 and 28799 are in use. Free one of these ports, then press Retry.')
   }
