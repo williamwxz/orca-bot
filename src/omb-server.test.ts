@@ -2,7 +2,7 @@ import { register } from './worker.ts'
 import { openChat } from './omb-open.ts'
 import type { CliDeps } from './omb-cli.ts'
 import { assert, test, mockHost, mountWorker } from 'orca/testing'
-import { checkNode, ensureInstalled, ensureServer, findServer, startServer, stopServer } from './omb-server.ts'
+import { checkNode, ensureInstalled, ensureServer, findServer, startServer, stopServer, serverHealthy } from './omb-server.ts'
 import type { ServerDeps } from './omb-server.ts'
 import { TESTED_OPENMAUSBOT_VERSION as version, compareVersions } from '../shared/omb-version.ts'
 
@@ -294,14 +294,12 @@ test('fresh workers recover pairing ownership only from a matching persisted ser
       }
     }
     const worker = await mountWorker({ default: (orca) => register(orca, {
+    checkHealth: async () => true, now: () => 0,
       ensureServer: () => ensureServer(deps),
       stopServer: async () => ({ stopped: false, message: 'Unused' }),
       openChat: (input) => openChat(input, cli),
       readThread: async () => ({ messages: [], hasMore: false }),
       sendMessage: async () => ({ sendId: 'fake-send-id-000000' }),
-      listModels: async () => [],
-      createBot: async () => { throw new Error('Unused') },
-      setModel: async () => {},
       addMausBot: async () => {},
       listBots: async () => []
     }) }, { host: mockHost() })
@@ -317,4 +315,21 @@ test('fresh workers recover pairing ownership only from a matching persisted ser
       await worker.deactivate()
     }
   }
+})
+
+
+test('status health probe uses only the known port with a one second deadline', async () => {
+  const { deps, timers } = fake()
+  const urls: string[] = []
+  const timer = deps.setTimer
+  deps.setTimer = (fn, ms) => { assert.equal(ms, 1000); return timer(fn, ms) }
+  deps.fetch = async (url) => { urls.push(url); return healthy() }
+  assert.equal(await serverHealthy(18799, deps), true)
+  assert.deepEqual(urls, ['http://127.0.0.1:18799/api/health'])
+  deps.fetch = async () => {
+    queueMicrotask(() => { for (const fn of timers) fn() })
+    return new Promise(() => {})
+  }
+  assert.equal(await serverHealthy(18799, deps), false)
+  assert.equal(timers.size, 0)
 })

@@ -10,6 +10,7 @@ test('status answers starting immediately and running after the fake attempt set
   let calls = 0
   const attempt = new Promise<ServerResult>((resolve) => { settle = resolve })
   const worker = await mountWorker({ default: (orca) => register(orca, {
+    checkHealth: async () => true, now: () => 0,
     ensureServer: () => {
       calls++
       return attempt
@@ -17,9 +18,6 @@ test('status answers starting immediately and running after the fake attempt set
     openChat: async () => ({ message: 'Opened' }),
     readThread: async () => ({ messages: [], hasMore: false }),
     sendMessage: async () => ({ sendId: 'fake-send-id-000000' }),
-    listModels: async () => [],
-    createBot: async () => { throw new Error('Unused') },
-    setModel: async () => {},
     addMausBot: async () => {},
     listBots: async () => [],
     stopServer: async () => ({ stopped: true, message: 'Stopped' })
@@ -45,6 +43,7 @@ test('status answers starting immediately and running after the fake attempt set
 test('worker preserves failure until explicit Retry', async () => {
   let calls = 0
   const worker = await mountWorker({ default: (orca) => register(orca, {
+    checkHealth: async () => true, now: () => 0,
     ensureServer: async () => {
       calls++
       throw new ServerError('needs_node', 'Install Node.js 24 or newer, then press Retry.')
@@ -52,9 +51,6 @@ test('worker preserves failure until explicit Retry', async () => {
     openChat: async () => ({ message: 'Opened' }),
     readThread: async () => ({ messages: [], hasMore: false }),
     sendMessage: async () => ({ sendId: 'fake-send-id-000000' }),
-    listModels: async () => [],
-    createBot: async () => { throw new Error('Unused') },
-    setModel: async () => {},
     addMausBot: async () => {},
     listBots: async () => [],
     stopServer: async () => ({ stopped: false, message: 'No server' })
@@ -86,6 +82,7 @@ test('version messages support suffixed and unknown versions', () => {
 test('chat and roster handlers refuse before running and validate bot IDs', async () => {
   const calls: unknown[] = []
   const worker = await mountWorker({ default: (orca) => register(orca, {
+    checkHealth: async () => true, now: () => 0,
     ensureServer: async () => ({ port: 18799, version: testedVersion, started: true, startedByPlugin: true }),
     stopServer: async () => ({ stopped: true, message: 'Stopped' }),
     openChat: async (input) => {
@@ -94,9 +91,6 @@ test('chat and roster handlers refuse before running and validate bot IDs', asyn
     },
     readThread: async () => ({ messages: [], hasMore: false }),
     sendMessage: async () => ({ sendId: 'fake-send-id-000000' }),
-    listModels: async () => [],
-    createBot: async () => { throw new Error('Unused') },
-    setModel: async () => {},
     addMausBot: async () => {},
     listBots: async (input) => {
       calls.push(input)
@@ -104,7 +98,7 @@ test('chat and roster handlers refuse before running and validate bot IDs', asyn
     }
   }) }, { host: mockHost() })
   try {
-    for (const name of ['chat.open', 'bots.list', 'models.list', 'bots.create', 'bots.model', 'bots.addMausBot']) {
+    for (const name of ['chat.open', 'bots.list', 'bots.addMausBot']) {
       await assert.rejects(worker.request(name, {}), /OpenMausBot is not running yet/)
     }
     assert.equal(calls.length, 0)
@@ -134,6 +128,7 @@ test('bot chat resolves its thread from the last worker roster, never panel inpu
   let failRefresh = false
   let activeTaskId: string | undefined = 'server-thread'
   const worker = await mountWorker({ default: (orca) => register(orca, {
+    checkHealth: async () => true, now: () => 0,
     ensureServer: async () => ({ port: 18799, version: testedVersion, started: false, startedByPlugin: true }),
     stopServer: async () => ({ stopped: true, message: 'Stopped' }),
     openChat: async (input) => {
@@ -142,9 +137,6 @@ test('bot chat resolves its thread from the last worker roster, never panel inpu
     },
     readThread: async () => ({ messages: [], hasMore: false }),
     sendMessage: async () => ({ sendId: 'fake-send-id-000000' }),
-    listModels: async () => [],
-    createBot: async () => { throw new Error('Unused') },
-    setModel: async () => {},
     addMausBot: async () => {},
     listBots: async () => {
       if (failRefresh) throw new Error('Offline')
@@ -173,56 +165,14 @@ test('bot chat resolves its thread from the last worker roster, never panel inpu
   }
 })
 
-test('create is coalesced by refusal, returns a receipt, and later opens its thread even if roster refresh fails', async () => {
-  const id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
-  let resolveCreate!: (value: { id: string; activeTaskId: string }) => void
-  const creation = new Promise<{ id: string; activeTaskId: string }>((resolve) => { resolveCreate = resolve })
-  const calls: unknown[] = []
-  const worker = await mountWorker({ default: (orca) => register(orca, {
-    ensureServer: async () => ({ port: 18799, version: testedVersion, started: true, startedByPlugin: true }),
-    stopServer: async () => ({ stopped: false, message: '' }),
-    openChat: async (input) => {
-      calls.push(input)
-      return { message: '' }
-    },
-    listBots: async () => { throw new Error('offline') },
-    readThread: async () => ({ messages: [], hasMore: false }),
-    sendMessage: async () => ({ sendId: 'fake-send-id-000000' }),
-    listModels: async () => [],
-    createBot: (input) => {
-      calls.push(input)
-      return creation
-    },
-    setModel: async (input) => { calls.push(input) },
-    addMausBot: async (input) => { calls.push(input) }
-  }) }, { host: mockHost() })
-  try {
-    await worker.request('status', {})
-    await new Promise<void>((resolve) => setImmediate(resolve))
-    const first = worker.request('bots.create', { name: 'Helper', model: 'claude/sonnet' })
-    await new Promise<void>((resolve) => setImmediate(resolve))
-    await assert.rejects(worker.request('bots.create', { name: 'Helper', model: 'claude/sonnet' }), /already being created/)
-    resolveCreate({ id, activeTaskId: 'new-thread' })
-    assert.deepEqual(await first, { id, activeTaskId: 'new-thread' })
-    await assert.rejects(worker.request('bots.list', {}), /offline/)
-    await worker.request('chat.open', { botId: id })
-    assert.deepEqual(calls, [{ port: 18799, name: 'Helper', model: 'claude/sonnet' }, { port: 18799, startedByPlugin: true, botId: id, activeTaskId: 'new-thread' }])
-    await worker.request('bots.model', { botId: id, model: 'claude/sonnet' })
-    await worker.request('bots.addMausBot', { botId: id })
-    assert.deepEqual(calls.slice(2), [{ port: 18799, botId: id, model: 'claude/sonnet' }, { port: 18799, botId: id }])
-  } finally {
-    await worker.deactivate()
-  }
-})
-
 test('thread and send require a roster bot, with fresh worker-generated send IDs', async () => {
   const botId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
   const calls: any[] = []
   const worker = await mountWorker({ default: (orca) => register(orca, {
+    checkHealth: async () => true, now: () => 0,
     ensureServer: async () => ({ port: 18799, version: testedVersion, started: false, startedByPlugin: false }),
     stopServer: async () => ({ stopped: false, message: '' }),
-    openChat: async () => ({ message: '' }), listModels: async () => [],
-    createBot: async () => { throw new Error('unused') }, setModel: async () => {}, addMausBot: async () => {},
+    openChat: async () => ({ message: '' }), addMausBot: async () => {},
     listBots: async () => [{ id: botId, name: 'Bot', title: '', main: false, state: 'idle', unread: false, modelLabel: '' }],
     readThread: async (input) => { calls.push(input); return { messages: [], hasMore: false } },
     sendMessage: async (input) => { calls.push(input); return { sendId: input.sendId } }
@@ -243,5 +193,32 @@ test('thread and send require a roster bot, with fresh worker-generated send IDs
     assert.match(calls[1].sendId, /^[a-zA-Z0-9_-]{16,80}$/)
     assert.notEqual(calls[1].sendId, 'untrusted-panel-value')
     assert.notEqual(calls[1].sendId, calls[2].sendId)
+  } finally { await worker.deactivate() }
+})
+
+test('status rechecks known health at most every two seconds and restarts discovery when gone', async () => {
+  let now = 0, attempts = 0, checks = 0
+  let healthy = true
+  const worker = await mountWorker({ default: (orca) => register(orca, {
+    now: () => now,
+    checkHealth: async (port) => { assert.equal(port, 18799); checks++; return healthy },
+    ensureServer: async () => { attempts++; if (attempts > 1) return new Promise(() => {}); return { port: 18799, version: testedVersion, started: false, startedByPlugin: false } },
+    stopServer: async () => ({ stopped: false, message: '' }),
+    openChat: async () => ({ message: '' }),
+    listBots: async () => [], addMausBot: async () => {},
+    readThread: async () => ({ messages: [], hasMore: false }),
+    sendMessage: async () => ({ sendId: 'fake-send-id-000000' })
+  }) }, { host: mockHost() })
+  try {
+    assert.equal((await worker.request('status', {}) as any).state, 'starting')
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    assert.equal((await worker.request('status', {}) as any).state, 'running')
+    await Promise.all([worker.request('status', {}), worker.request('status', {})])
+    assert.equal(checks, 1)
+    healthy = false; now = 2000
+    assert.equal((await worker.request('status', {}) as any).state, 'starting')
+    assert.equal(checks, 2)
+    assert.equal(attempts, 2)
+    await assert.rejects(worker.request('bots.list', {}), /not running yet/)
   } finally { await worker.deactivate() }
 })
