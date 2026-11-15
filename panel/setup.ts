@@ -1,4 +1,4 @@
-import type { Setup, SetupAnswer } from '../src/protocol.ts'
+import type { Setup, SetupAnswer } from '../worker/protocol.ts'
 
 export function agentNames(agents: Setup['agents']): string {
   return [agents.claude ? 'Claude' : '', agents.codex ? 'Codex' : ''].filter(Boolean).join(' and ')
