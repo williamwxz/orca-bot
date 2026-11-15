@@ -8,13 +8,22 @@
 </head>
 <body>
   <main>
-    <header><div id="list-header"><h1 id="list-title">Bot Deck</h1><button id="open-page" type="button" disabled>Open OpenMausBot</button></div><p id="message" role="status">Starting…</p></header>
-    <section id="setup" aria-label="Set up Bot Deck" hidden>
-      <h2>Set up Bot Deck</h2>
-      <label><input id="share-tools" type="checkbox" checked /> <strong>Bots can use my tools</strong> — Claude bots get your Claude connectors, MCP servers, skills and instructions. Codex bots always use your Codex setup.</label>
-      <label id="link-agents-label"><input id="link-agents" type="checkbox" checked /> <strong>My Orca agents can talk to the bots</strong> — Adds Bot Deck's tools to <span id="agent-names">Claude and Codex</span>, so an agent can message a bot or read its replies.</label>
-      <button id="setup-allow" type="button">Allow</button>
-      <button id="setup-skip" type="button">Not now</button>
+    <header><div id="list-header"><h1 id="list-title">Bot Deck</h1><button id="open-page" type="button" disabled>Jump to Bot Dashboard</button></div><p id="message" role="status">Starting…</p></header>
+    <section id="setup" aria-labelledby="setup-title" hidden>
+      <h2 id="setup-title">Set up Bot Deck</h2>
+      <p class="setup-lead">Choose what to allow. You can change this later in Orca's Settings.</p>
+      <label class="setup-option">
+        <span class="setup-copy"><strong>Bots can use my tools</strong><small>Claude bots get your Claude connectors, MCP servers, skills and instructions. Codex bots always use your Codex setup.</small></span>
+        <input id="share-tools" class="switch" type="checkbox" role="switch" checked />
+      </label>
+      <label class="setup-option" id="link-agents-label">
+        <span class="setup-copy"><strong>My Orca agents can talk to the bots</strong><small>Adds Bot Deck's tools to <span id="agent-names">Claude and Codex</span>, so an agent can message a bot or read its replies.</small></span>
+        <input id="link-agents" class="switch" type="checkbox" role="switch" checked />
+      </label>
+      <div class="setup-actions">
+        <button id="setup-skip" type="button">Not now</button>
+        <button id="setup-allow" type="button">Allow</button>
+      </div>
       <p id="setup-message" role="status"></p>
     </section>
     <section id="running" aria-label="Chat and bots" hidden>
