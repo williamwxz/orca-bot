@@ -1,3 +1,4 @@
+import { createSetup, agentNames } from './setup.ts'
 import { createChatView } from './chat-view.ts'
 import type { FrameApi } from './chat-view.ts'
 import type { Bot } from '../shared/roster.ts'
@@ -11,6 +12,30 @@ const running = element<HTMLElement>('running')
 const roster = element<HTMLElement>('roster')
 const refreshNote = element<HTMLElement>('refresh-note')
 const result = element<HTMLElement>('result')
+const setup = createSetup((answer) => frame.plugin.request('setup.answer', answer))
+const shareTools = element<HTMLInputElement>('share-tools')
+const linkAgents = element<HTMLInputElement>('link-agents')
+function renderSetup(): void {
+  const state = setup.state
+  element('setup').hidden = element('list-header').hidden || !state.loaded || state.answered
+  element('link-agents-label').hidden = !agentNames(state.agents)
+  element('agent-names').textContent = agentNames(state.agents)
+  element('setup-message').textContent = state.message
+  for (const id of ['setup-allow', 'setup-skip']) element<HTMLButtonElement>(id).disabled = state.busy
+  shareTools.disabled = linkAgents.disabled = state.busy
+}
+async function answerSetup(allow: boolean): Promise<void> {
+  setup.state.shareTools = shareTools.checked
+  setup.state.linkAgents = linkAgents.checked
+  const applying = setup.answer(allow)
+  renderSetup()
+  await applying
+  renderSetup()
+  await refreshAfterChange()
+}
+element('setup-allow').addEventListener('click', () => void answerSetup(true))
+element('setup-skip').addEventListener('click', () => void answerSetup(false))
+element('open-page').addEventListener('click', () => void open())
 let timer: ReturnType<typeof setTimeout> | undefined
 let refreshPending: Promise<void> | undefined
 let opening = false
@@ -21,11 +46,12 @@ const changing = new Set<string>()
 const readBots = new Set<string>()
 const previews = new Map<string, string>()
 const rosterView = element<HTMLElement>('roster-view')
-const chatView = createChatView(element('bot-view'), frame, makeAvatar, (id) => void open(id), () => { rosterView.hidden = false; element('list-title').hidden = false; renderBots() }, (id, preview) => { if (preview) previews.set(id, preview); else previews.delete(id) })
+const chatView = createChatView(element('bot-view'), frame, makeAvatar, (id) => void open(id), () => { rosterView.hidden = false; element('list-header').hidden = false; renderSetup(); renderBots() }, (id, preview) => { if (preview) previews.set(id, preview); else previews.delete(id) })
 function showBot(bot: Bot): void {
   readBots.add(bot.id)
   rosterView.hidden = true
-  element('list-title').hidden = true
+  element('list-header').hidden = true
+  renderSetup()
   chatView.open(bot)
   renderBots()
 }
@@ -56,6 +82,7 @@ function icon(kind: keyof typeof icons): SVGElement {
 async function open(botId?: string): Promise<void> {
   if (opening) return
   opening = true
+  element<HTMLButtonElement>('open-page').disabled = true
   selected = botId
   renderBots()
   result.textContent = 'Opening…'
@@ -65,6 +92,7 @@ async function open(botId?: string): Promise<void> {
     result.textContent = error instanceof Error ? error.message : 'Could not open chat.'
   } finally {
     opening = false
+    element<HTMLButtonElement>('open-page').disabled = false
     renderBots()
   }
 }
@@ -175,7 +203,9 @@ async function refreshNow(explicitRetry: boolean): Promise<void> {
   retry.disabled = true
   let delay = 5000
   try {
+    try { setup.load(await frame.plugin.request('setup.get', {})); renderSetup() } catch { /* Retry with the next refresh; bots still load. */ }
     const status = await frame.plugin.request('status', { retry: explicitRetry })
+    element<HTMLButtonElement>('open-page').disabled = opening || status.state !== 'running'
     message.textContent = status.message
     message.hidden = !status.message
     running.hidden = status.state !== 'running'

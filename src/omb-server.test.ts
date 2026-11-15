@@ -156,9 +156,10 @@ test('startServer detaches, truncates log, saves launcher and child pids and wai
   assert.deepEqual(calls[0].args, ['serve', '--port', '8799', '--data-dir', '/fake/.bot-deck/data'])
   assert.equal(calls[0].file, '/fake/bin/omb')
   assert.equal((calls[0].options as { detached: boolean }).detached, true)
+  assert.equal((calls[0].options as any).env.OMB_CLAUDE_INHERIT_USER_CONFIG, undefined)
   assert.deepEqual((calls[0].options as { stdio: unknown }).stdio, ['ignore', 7, 7])
   assert.equal(files.get('/fake/.bot-deck/server.log'), '')
-  assert.deepEqual(JSON.parse(files.get('/fake/.bot-deck/server.pid')!), { launcherPid: 42, serverPid: 43, port: 8799, claudeHome: false, inherit: true, env: 2 })
+  assert.deepEqual(JSON.parse(files.get('/fake/.bot-deck/server.pid')!), { launcherPid: 42, serverPid: 43, port: 8799, claudeHome: false, inherit: false, env: 2 })
   assert.equal(files.get('unref'), 'yes')
   assert.equal(files.get('closed'), '7')
 })
@@ -377,7 +378,7 @@ test('server environment and pid flags cover home, sharing and explicit config c
     assert.deepEqual(JSON.parse(files.get('/fake/.bot-deck/server.pid')!), { launcherPid: 42, serverPid: 43, port: 8799, claudeHome: found || preset, inherit: share, env: 2 })
     assert.equal((await claudeSetupStatus(8799, share, deps)).restart, false)
     assert.equal((await claudeSetupStatus(8799, !share, deps)).restart, true)
-    assert.equal((await claudeSetupStatus(8799, share, deps)).message !== '', found)
+    assert.equal((await claudeSetupStatus(8799, share, deps)).message, '')
   }
 })
 
@@ -442,5 +443,5 @@ test('environment version migrates owned records once even when Claude flags mat
   const record = JSON.parse(files.get('/fake/.bot-deck/server.pid')!)
   assert.equal(record.env, 2)
   assert.doesNotMatch(JSON.stringify(record), /fake-user|fake\/shell|USER|LOGNAME|SHELL|LANG/)
-  assert.equal((await claudeSetupStatus(8799, true, deps)).restart, false)
+  assert.equal((await claudeSetupStatus(8799, false, deps)).restart, false)
 })
