@@ -31,10 +31,11 @@ function phrase(phrases: string[], random: () => number): string {
   return phrases[index]
 }
 export function statusLine(live: GrokBotAgentLiveState | undefined, now: number, random = Math.random): StatusLine {
-  const updated = Number(live?.updatedAtMs)
+  const timestamp = live?.updatedAtMs
+  const updated = typeof timestamp === 'string' && !timestamp.trim() ? NaN : Number(timestamp)
   const stale = Number(live?.staleAfterMs)
   if (!live || !(live.isRunning === true || live.hasRunningSubagents === true) ||
-      !Number.isFinite(updated) || now - updated > (stale > 0 ? stale : 90_000)) {
+      (Number.isFinite(updated) && now - updated > (stale > 0 ? stale : 90_000) + 120_000)) {
     return { state: 'idle', text: '' }
   }
   const activity = live.activity

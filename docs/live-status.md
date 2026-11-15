@@ -564,3 +564,9 @@ The worker keeps this state per bot and clears idle results. Status failures
 return idle without disrupting chat. Panel wiring is a separate task.
 The endpoint is still untested against the real server; coverage uses fake fetch
 and fake desktop sessions only.
+
+Freshness intentionally differs from the app: Bot Deck adds a two-minute clock
+allowance to positive `staleAfterMs` (or the 90-second default), and treats
+missing, invalid, or future `updatedAtMs` as fresh while running. Poll responses
+have just arrived, but their server timestamps and the computer's clock can
+differ; the allowance avoids hiding current work because of that difference.

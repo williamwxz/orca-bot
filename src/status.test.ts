@@ -6,23 +6,23 @@ const idle = { state: 'idle', text: '' }
 function tool(detail: string, name = 'SetStatus') {
   return { ...live, activity: { kind: 'tool', tool: name, detail } }
 }
-test('status is idle for absent, stopped, invalid-time and stale records', () => {
-  for (const record of [undefined, { ...live, isRunning: false }, { ...live, updatedAtMs: 'bad' }]) {
+test('status is idle for absent, stopped and stale records', () => {
+  for (const record of [undefined, { ...live, isRunning: false }]) {
     assert.deepEqual(statusLine(record, 1000), idle)
   }
-  assert.deepEqual(statusLine(live, 1101), idle)
-  assert.equal(statusLine(live, 1100).state, 'working')
+  assert.deepEqual(statusLine(live, 121_101), idle)
+  assert.equal(statusLine(live, 121_100).state, 'working')
   for (const staleAfterMs of [0, -1, '0', undefined]) {
-    assert.equal(statusLine({ ...live, staleAfterMs }, 91_000).state, 'working')
-    assert.deepEqual(statusLine({ ...live, staleAfterMs }, 91_001), idle)
+    assert.equal(statusLine({ ...live, staleAfterMs }, 211_000).state, 'working')
+    assert.deepEqual(statusLine({ ...live, staleAfterMs }, 211_001), idle)
   }
   assert.equal(statusLine({ ...live, isRunning: false, hasRunningSubagents: true }, 1000).state, 'working')
 })
 test('timestamps accept decimal strings and numbers', () => {
   for (const updatedAtMs of [1000, '1000']) {
     for (const staleAfterMs of [100, '100']) {
-      assert.equal(statusLine({ ...live, updatedAtMs, staleAfterMs }, 1100).state, 'working')
-      assert.deepEqual(statusLine({ ...live, updatedAtMs, staleAfterMs }, 1101), idle)
+      assert.equal(statusLine({ ...live, updatedAtMs, staleAfterMs }, 121_100).state, 'working')
+      assert.deepEqual(statusLine({ ...live, updatedAtMs, staleAfterMs }, 121_101), idle)
     }
   }
 })
@@ -59,5 +59,16 @@ test('a phrase stays stable across polls, changes with activity, and resets on i
   assert.equal(read(tool('private', 'Other'), 1001).text, 'Making progress')
   assert.deepEqual(read(undefined, 1001), idle)
   assert.equal(read(live, 1001).text, 'Working on it')
-  assert.deepEqual(read(live, 1101), idle)
+  assert.deepEqual(read(live, 121_101), idle)
+})
+
+test('polled status tolerates clock differences and missing or invalid timestamps', () => {
+  const now = 1_000_000
+  const polled = { isRunning: true, updatedAtMs: now, staleAfterMs: 90_000 }
+  assert.equal(statusLine(polled, now + 180_000).state, 'working')
+  assert.deepEqual(statusLine(polled, now + 600_000), idle)
+  for (const updatedAtMs of [undefined, 'bad', '', '  ', NaN, Infinity, now + 600_000, String(now + 600_000)]) {
+    assert.equal(statusLine({ ...polled, updatedAtMs }, now).state, 'working')
+  }
+  assert.equal(statusLine({ isRunning: true }, now).state, 'working')
 })

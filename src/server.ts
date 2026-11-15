@@ -1,8 +1,5 @@
 import type { GrokBotAgentLiveState } from '../shared/status.ts'
-import { backendHeaders, redact, request, READ_METHODS, type Account, type Dependencies } from './transport.ts'
-
-// Register this unary read with the shared transport's response handling.
-READ_METHODS.add('ListGrokBotAgentStatuses')
+import { backendHeaders, redact, request, type Account, type Dependencies } from './transport.ts'
 
 export type ServerBot = { agentId: string; id: string; harness: string }
 export type ServerMessage = { agentId: string; text: string; messageId: string }
