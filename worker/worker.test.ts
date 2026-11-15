@@ -462,3 +462,120 @@ test('tools handlers coalesce imports, refuse unowned servers, and sanitize fail
     } finally { await worker.deactivate() }
   }
 })
+
+const flushRepair = () => new Promise<void>(resolve => setImmediate(resolve))
+
+test('background repair uses owned health checks, throttles 30s and silently backs off failures 60s', async () => {
+  for (const owned of [false, true]) {
+    let now = 0, calls = 0, fail = false
+    const deps = {
+      ...setupDeps(owned), now: () => now,
+      ensureServer: async () => ({ port: 8799, version: testedVersion, started: false, startedByPlugin: owned }),
+      repairChat: async (input: { port: number; startedByPlugin: boolean }) => {
+        assert.deepEqual(input, { port: 8799, startedByPlugin: true })
+        calls++
+        if (fail) throw new Error('http://127.0.0.1:8799/pair#private-output')
+        return true
+      }
+    }
+    const worker = await mountWorker({ default: orca => register(orca, deps) }, { host: mockHost() })
+    try {
+      await worker.request('status', {}); await flushRepair()
+      for (now = 0; now < 30000; now += 2000) {
+        assert.equal((await worker.request('status', {}) as any).message, '')
+        await flushRepair()
+        assert.equal(calls, owned ? 1 : 0)
+      }
+      fail = true
+      await worker.request('status', {}); await flushRepair()
+      assert.equal(calls, owned ? 2 : 0)
+      for (now = 32000; now < 90000; now += 2000) {
+        assert.equal((await worker.request('status', {}) as any).message, '')
+        await flushRepair()
+        assert.equal(calls, owned ? 2 : 0)
+      }
+      fail = false
+      await worker.request('status', {}); await flushRepair()
+      assert.equal(calls, owned ? 3 : 0)
+    } finally { await worker.deactivate() }
+  }
+})
+
+test('background repair and explicit opens share the guard in both directions', async () => {
+  let now = 0, repairs = 0, opens = 0
+  let release!: () => void
+  let gate = new Promise<void>(resolve => { release = resolve })
+  const deps = {
+    ...setupDeps(), now: () => now,
+    ensureServer: async () => ({ port: 8799, version: testedVersion, started: false, startedByPlugin: true }),
+    repairChat: async () => { repairs++; await gate; return true },
+    openChat: async () => { opens++; await gate; return { message: 'Opened' } }
+  }
+  const worker = await mountWorker({ default: orca => register(orca, deps) }, { host: mockHost() })
+  try {
+    await worker.request('status', {}); await flushRepair()
+    await worker.request('status', {}); await flushRepair()
+    assert.equal(repairs, 1)
+    const click = worker.request('chat.open', {})
+    await flushRepair()
+    assert.equal(opens, 0)
+    now = 30000
+    await worker.request('status', {}); await flushRepair()
+    assert.equal(repairs, 1)
+    release()
+    assert.deepEqual(await click, { message: '' })
+    await flushRepair()
+    gate = new Promise<void>(resolve => { release = resolve })
+    const opening = worker.request('chat.open', {})
+    await flushRepair()
+    assert.equal(opens, 1)
+    now = 32000
+    await worker.request('status', {}); await flushRepair()
+    assert.equal(repairs, 1)
+    release()
+    assert.deepEqual(await opening, { message: 'Opened' })
+    now = 34000
+    await worker.request('status', {}); await flushRepair()
+    assert.equal(repairs, 2)
+  } finally { release(); await worker.deactivate() }
+})
+
+test('own setup restart checks again immediately despite the 30s throttle', async () => {
+  let now = 0, repairs = 0, starts = 0, mismatch = false
+  const deps = {
+    ...setupDeps(), now: () => now,
+    ensureServer: async () => { starts++; mismatch = false; return { port: 8799, version: testedVersion, started: starts > 1, startedByPlugin: true } },
+    claudeSetupStatus: async () => ({ restart: mismatch, message: '' }),
+    rosterBusy: async () => false,
+    repairChat: async () => { repairs++; return true }
+  }
+  const worker = await mountWorker({ default: orca => register(orca, deps) }, { host: mockHost() })
+  try {
+    await worker.request('status', {}); await flushRepair()
+    await worker.request('status', {}); await flushRepair()
+    assert.equal(repairs, 1)
+    mismatch = true; now = 2000
+    await worker.request('status', {}); await flushRepair()
+    assert.equal(starts, 2)
+    assert.equal(repairs, 2)
+  } finally { await worker.deactivate() }
+})
+
+test('health recovery checks immediately after starting our replacement server', async () => {
+  let now = 0, repairs = 0, starts = 0, healthy = true
+  const deps = {
+    ...setupDeps(), now: () => now, checkHealth: async () => healthy,
+    ensureServer: async () => { starts++; healthy = true; return { port: 8799, version: testedVersion, started: starts > 1, startedByPlugin: true } },
+    repairChat: async () => { repairs++; return true }
+  }
+  const worker = await mountWorker({ default: orca => register(orca, deps) }, { host: mockHost() })
+  try {
+    await worker.request('status', {}); await flushRepair()
+    await worker.request('status', {}); await flushRepair()
+    assert.equal(repairs, 1)
+    healthy = false; now = 2000
+    await worker.request('status', {}); await flushRepair()
+    assert.equal(starts, 2)
+    assert.equal(repairs, 2)
+  } finally { await worker.deactivate() }
+})

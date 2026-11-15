@@ -26,10 +26,8 @@ function resultOf(text: string): Record<string, unknown> {
   return response.result
 }
 
-export async function openChat(input: OpenInput, deps: CliDeps = defaultCliDeps()): Promise<OpenResult> {
-  if (input.botId !== undefined && !validBotId(input.botId)) throw new Error('Invalid bot ID.')
+function browser(deps: CliDeps) {
   const bin = orcaBinary(deps)
-  const origin = `http://127.0.0.1:${input.port}`
   const run = async (args: string[]) => resultOf(await deps.execFile(bin, args, cliOptions(deps, 60000)))
   const snapshot = async (page: string) => deps.execFile(bin, ['snapshot', '--page', page], cliOptions(deps))
   const defaultAnalyticsOff = async (page: string): Promise<boolean> => {
@@ -41,20 +39,32 @@ export async function openChat(input: OpenInput, deps: CliDeps = defaultCliDeps(
     if (typeof stored.value !== 'string') throw new Error('Invalid storage response')
     return false
   }
+  return { run, snapshot, defaultAnalyticsOff }
+}
+
+async function existingTab(origin: string, run: ReturnType<typeof browser>['run']) {
+  const listed = await run(['tab', 'list', '--json'])
+  if (!Array.isArray(listed.tabs)) throw new Error('Invalid tab list')
+  const tab = listed.tabs.find((item: { url?: unknown; browserPageId?: unknown }) => {
+    if (typeof item?.url !== 'string' || typeof item.browserPageId !== 'string') return false
+    try {
+      return new URL(item.url).origin === origin
+    } catch {
+      return false
+    }
+  }) as { browserPageId: string; url: string } | undefined
+  return tab
+}
+
+export async function openChat(input: OpenInput, deps: CliDeps = defaultCliDeps()): Promise<OpenResult> {
+  if (input.botId !== undefined && !validBotId(input.botId)) throw new Error('Invalid bot ID.')
+  const { run, snapshot, defaultAnalyticsOff } = browser(deps)
+  const origin = `http://127.0.0.1:${input.port}`
   let page: string
   let wanted = `${origin}/`
   if (input.botId && input.activeTaskId) wanted += `?${new URLSearchParams({ thread: input.activeTaskId, bot: input.botId })}`
   try {
-    const listed = await run(['tab', 'list', '--json'])
-    if (!Array.isArray(listed.tabs)) throw new Error('Invalid tab list')
-    const tab = listed.tabs.find((item: { url?: unknown; browserPageId?: unknown }) => {
-      if (typeof item?.url !== 'string' || typeof item.browserPageId !== 'string') return false
-      try {
-        return new URL(item.url).origin === origin
-      } catch {
-        return false
-      }
-    }) as { browserPageId: string; url: string } | undefined
+    const tab = await existingTab(origin, run)
     if (tab) {
       page = tab.browserPageId
       if (!input.botId && !new URL(tab.url).pathname.startsWith('/pair')) wanted = tab.url
@@ -85,8 +95,14 @@ export async function openChat(input: OpenInput, deps: CliDeps = defaultCliDeps(
   } catch {
     throw new Error('Could not open chat. Check Orca and OpenMausBot, then try again.')
   }
+  return { message: await pairTab(input.port, page, wanted, deps) ? '' : 'Press Connect in the browser tab to finish.' }
+}
+
+async function pairTab(port: number, page: string, wanted: string, deps: CliDeps): Promise<boolean> {
+  const origin = `http://127.0.0.1:${port}`
   try {
-    const output = await deps.execFile(ombBinary(deps), ['pair', '--label', 'Orca', '--port', String(input.port), '--data-dir', join(deps.home, '.orca-bot/data')], cliOptions(deps))
+    const { run, snapshot } = browser(deps)
+    const output = await deps.execFile(ombBinary(deps), ['pair', '--label', 'Orca', '--port', String(port), '--data-dir', join(deps.home, '.orca-bot/data')], cliOptions(deps))
     const links = output.match(/http:\/\/127\.0\.0\.1:\d+\/pair#[^\s\x1b]+/g) ?? []
     const link = links.find((value) => new URL(value).origin === origin)
     if (!link) throw new Error('Missing pairing link')
@@ -105,11 +121,27 @@ export async function openChat(input: OpenInput, deps: CliDeps = defaultCliDeps(
       if (!pairingScreen(await snapshot(page))) {
         await run(['goto', '--url', wanted, '--page', page, '--json'])
         if (pairingScreen(await snapshot(page))) throw new Error('Session did not persist')
-        return { message: '' }
+        return true
       }
     }
   } catch {
     // Pairing commands carry credentials; no error, cause, URL or output crosses this boundary.
   }
-  return { message: 'Press Connect in the browser tab to finish.' }
+  return false
+}
+
+// Only a boolean leaves this boundary: command output and pairing credentials stay private.
+export async function repairChat(input: OpenInput, deps: CliDeps = defaultCliDeps()): Promise<boolean> {
+  if (!input.startedByPlugin) return true
+  try {
+    const origin = `http://127.0.0.1:${input.port}`
+    const { run, snapshot, defaultAnalyticsOff } = browser(deps)
+    const tab = await existingTab(origin, run)
+    if (!tab || !pairingScreen(await snapshot(tab.browserPageId))) return true
+    const page = tab.browserPageId
+    const wanted = new URL(tab.url).pathname.startsWith('/pair') ? `${origin}/` : tab.url
+    // As on an explicit existing-tab open, apply the default before any app navigation.
+    if (await defaultAnalyticsOff(page)) await run(['goto', '--url', wanted, '--page', page, '--json'])
+    return await pairTab(input.port, page, wanted, deps)
+  } catch { return false }
 }
