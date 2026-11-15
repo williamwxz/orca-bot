@@ -24,7 +24,7 @@ function requireText(value: unknown, label: string, max: number): string {
   return value
 }
 
-/** The panel and terminal share the same guarded connection and client. */
+/** Builds the guarded connection and the client the panel's handlers use. */
 export function createClient(deps: ConnectionDeps = {}) {
   const connection = createConnection(deps)
   const client = createGatewayClient({
