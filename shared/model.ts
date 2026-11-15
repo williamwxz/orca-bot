@@ -8,6 +8,7 @@ export type Bot = {
   avatarColor: string
   serverRun: boolean
   hidden: boolean
+  main: boolean
 }
 
 export type Entry = {
@@ -46,12 +47,68 @@ function contentText(value: unknown): string {
   return str(obj(value).text) || str(obj(value).content)
 }
 
-const FALLBACK_COLORS = ['teal', 'blue', 'violet', 'pink', 'red', 'orange', 'yellow']
+// Desktop bundle: Dn (FNV-1a), Nn/Pn (shape mixer), kn/An/Mn (colour PRNG).
+const DEFAULT_SHAPES = ['blob', 'pebble', 'squircle', 'tablet', 'wedge', 'hex', 'cloud', 'teardrop']
+const DEFAULT_COLORS = ['brown', 'red', 'orange', 'yellow', 'green', 'cyan', 'blue', 'violet', 'magenta', 'gray']
 
-function hash(text: string): number {
-  let value = 0
-  for (const char of text) value = (value * 31 + char.charCodeAt(0)) >>> 0
-  return value
+function avatarHash(id: string): number {
+  let value = 2166136261
+  for (let i = 0; i < id.length; i++) value = Math.imul(value ^ id.charCodeAt(i), 16777619)
+  return value >>> 0
+}
+
+export function defaultAvatar(id: string): { shape: string; color: string } {
+  const seed = avatarHash(id)
+  let mixed = Math.imul(seed ^ seed >>> 16, 73244475)
+  mixed = Math.imul(mixed ^ mixed >>> 13, 3266489909)
+  const shape = DEFAULT_SHAPES[((mixed ^ mixed >>> 16) >>> 0) % DEFAULT_SHAPES.length]
+  // The desktop's two version-1 XOR salts cancel before the first PRNG draw.
+  const step = seed + 1831565813 | 0
+  let random = Math.imul(step ^ step >>> 15, 1 | step)
+  random = random + Math.imul(random ^ random >>> 7, 61 | random) ^ random
+  const unit = ((random ^ random >>> 14) >>> 0) / 4294967296
+  return { shape, color: DEFAULT_COLORS[Math.floor(unit * DEFAULT_COLORS.length)] }
+}
+
+/** The worker marks only the runtime-settings ID; names and roster roles are irrelevant. */
+export function mainBot(bots: Bot[]): Bot | null {
+  return bots.find(bot => bot.main) ?? null
+}
+
+/** Search applies to the header too; the main bot never repeats in ordinary rows. */
+export function sidebarBots(bots: Bot[], query: string): { main: Bot | null; visible: Bot[]; hidden: Bot[] } {
+  const matches = filterBots(bots, query)
+  const main = mainBot(bots)
+  return {
+    main: main && matches.includes(main) ? main : null,
+    visible: matches.filter(bot => bot !== main && !bot.hidden),
+    hidden: matches.filter(bot => bot !== main && bot.hidden)
+  }
+}
+
+export function filterBots(bots: Bot[], query: string): Bot[] {
+  const term = query.trim().toLowerCase()
+  return bots.filter(bot => bot.name.toLowerCase().includes(term))
+}
+
+// Original palette approximations; neutral UI surfaces still use Orca's theme.
+export const AVATAR_COLORS: Record<string, string> = {
+  black: '#17181a', brown: '#91603b', red: '#e92340', orange: '#f56b0b',
+  yellow: '#ffc247', green: '#08ba70', cyan: '#0bb5a3', blue: '#157bdc',
+  violet: '#8850e9', magenta: '#e82b88', gray: '#737780',
+  teal: '#159b8d', pink: '#e82b88', purple: '#8850e9'
+}
+export function avatarHue(color: string): string {
+  return Object.hasOwn(AVATAR_COLORS, color) ? AVATAR_COLORS[color] : AVATAR_COLORS.gray
+}
+
+/** Choose the higher-contrast foreground using WCAG relative luminance. */
+export function readableAvatarText(color: string): string {
+  const hex = avatarHue(color)
+  const channels = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255)
+    .map(c => c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4)
+  const luminance = channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722
+  return (luminance + 0.05) / 0.05 > 1.05 / (luminance + 0.05) ? '#000000' : '#ffffff'
 }
 
 export function toBot(raw: unknown): Bot {
@@ -60,10 +117,10 @@ export function toBot(raw: unknown): Bot {
     id: str(r.id) || str(r.agentId),
     name: str(r.name) || 'Untitled bot',
     instructions: str(r.description),
-    avatarShape: str(r.avatarShape) || 'square',
-    // Grok Bot leaves the colour unset for many bots: pick a stable one from the id instead.
-    avatarColor: str(r.avatarColor) || FALLBACK_COLORS[hash(str(r.id) || str(r.agentId)) % FALLBACK_COLORS.length],
+    avatarShape: str(r.avatarShape) || defaultAvatar(str(r.id) || str(r.agentId)).shape,
+    avatarColor: str(r.avatarColor) || defaultAvatar(str(r.id) || str(r.agentId)).color,
     serverRun: r.harness === 'temporal',
+    main: r.main === true,
     hidden: Boolean(r.isHiddenFromSidebar ?? r.hiddenFromSidebar)
   }
 }

@@ -39,7 +39,7 @@ export function redact(text: string, secrets: string[]) {
 const TIMEOUT_MS = 30_000
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 const APP_VERSION_PATTERN = /^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?$/
-export const READ_METHODS = new Set(['EnsureSandBox', 'ListGrokBotAgents', 'listAgents', 'getAgentTranscriptTail'])
+export const READ_METHODS = new Set(['EnsureSandBox', 'ListGrokBotAgents', 'GetGrokBotUserRuntimeSettings', 'listAgents', 'getAgentTranscriptTail'])
 
 async function readCapped(response: Response): Promise<string> {
   const reader = response.body?.getReader()

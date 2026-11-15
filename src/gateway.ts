@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { listServerBots, sendServerMessage, deleteServerBot } from './server.ts'
+import { getMainBotId, listServerBots, sendServerMessage, deleteServerBot } from './server.ts'
 import { toBot, toEntry } from '../shared/model.ts'
 import {
   assertAllowedCredentialUrl, normalizeHeaders, backendHeaders, request, READ_METHODS,
@@ -143,14 +143,27 @@ export function createGatewayClient(options: ClientOptions) {
     async listBots() {
       const rows = await agents()
       let serverHarnesses = new Map<string, string>()
-      if (rows.some(row => row.harness == null) && options.getAccount) {
+      let mainAgentId: string | undefined
+      if (options.getAccount) {
         try {
           const { account, appVersion } = await serverAccount()
-          const serverRows = await listServerBots(account, appVersion, options)
-          serverHarnesses = new Map(serverRows.map(row => [row.agentId, row.harness]))
-        } catch { /* Roster enrichment must not make gateway bots unavailable. */ }
+          // Independent optional reads: neither failure can discard the gateway roster.
+          const [mainResult, rosterResult] = await Promise.allSettled([
+            getMainBotId(account, appVersion, options),
+            rows.some(row => row.harness == null)
+              ? listServerBots(account, appVersion, options) : Promise.resolve([])
+          ])
+          if (mainResult.status === 'fulfilled') mainAgentId = mainResult.value
+          if (rosterResult.status === 'fulfilled') {
+            serverHarnesses = new Map(rosterResult.value.map(row => [row.agentId, row.harness]))
+          }
+        } catch { /* Account access is optional for these decorations too. */ }
       }
-      const enriched = rows.map(row => ({ ...row, harness: row.harness ?? serverHarnesses.get(rowId(row)) }))
+      const enriched = rows.map(row => ({
+        ...row,
+        main: mainAgentId !== undefined && rowId(row) === mainAgentId,
+        harness: row.harness ?? serverHarnesses.get(rowId(row))
+      }))
       harnesses = new Map(enriched.map(row => [rowId(row), row.harness]))
       return enriched.map(toBot)
     },

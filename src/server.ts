@@ -19,7 +19,7 @@ const UNKNOWN_CONNECT_CODES = new Set([
 ])
 function mapBackendError(error: unknown, method: string) {
   const e = error as any
-  const read = method === 'ListGrokBotAgents'
+  const read = method === 'ListGrokBotAgents' || method === 'GetGrokBotUserRuntimeSettings'
   if (e.connectCode === 'unimplemented') {
     throw failure('unsupported_version', 'This version of Grok Bot is not supported yet')
   }
@@ -62,6 +62,13 @@ export async function listServerBots(account: Account, appVersion: string | unde
     harness: row.harness
   }))
 }
+/** Desktop oIt: ordinary reads send {}, then eIt reads response.settings.mainAgentId. */
+export async function getMainBotId(account: Account, appVersion: string | undefined, deps: Dependencies): Promise<string | undefined> {
+  const result = await call(account, appVersion, 'GetGrokBotUserRuntimeSettings', {}, deps)
+  const id = result?.settings?.mainAgentId
+  return typeof id === 'string' && id.length > 0 ? id : undefined
+}
+
 // Accept the enum's short names and protobuf-JSON prefixed names; unknown values stay unknown.
 const ACCEPTED = new Set<unknown>([
   1, 2, 3, 'ACCEPTED_BOX', 'ACCEPTED_TEMPORAL', 'DUPLICATE',

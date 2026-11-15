@@ -39,6 +39,29 @@ backend API. Conversation reads still use the gateway. Routines cannot be
 listed, paused or edited directly (ask the bot in chat). Forms and attachments
 open in the Grok Bot app. The bot's computer view is not shown.
 
+## Panel appearance
+
+The sidebar has round search/new controls, shape avatars, name/preview rows and a
+Hidden Bots group. Search filters names locally, including hidden matches;
+Escape or clearing the field closes it. Messages use the bot's colour with a
+contrast-checked foreground, and the send button sits inside the composer.
+Neutral surfaces follow Orca's light/dark theme.
+
+Avatar shapes are original SVG drawings. Empty shape/colour values use the
+desktop's ID defaults: UTF-16 FNV-1a, an integer mixer into eight shapes, and
+the first Mulberry32 draw into ten colours. Bundle search anchors:
+`function Dn(e)`, `function Nn(e)`, `function Pn(e)`, `function Mn(e)` in
+`index.eager-common-DcDxc78C.js`; `function Pk(e)` / `function Fk(e)` in
+`index.eager-app-Cji2jV06.js`. Unknown shape names draw a rounded square.
+
+The main bot appears once as a centered, selectable header, identified by
+`settings.mainAgentId` from `GetGrokBotUserRuntimeSettings` (ordinary request
+`{}`). Each list reads that setting alongside any needed roster enrichment;
+lookup failures leave all bots available in ordinary rows. Search also filters
+the header. Names and roster roles are never used to guess the main bot.
+Bundle anchors: `function oIt(e)` calls the RPC and passes `a.settings` to
+`function eIt(e)`; `function Kp()` supplies that ID to the desktop sidebar.
+
 ## Layout
 
 - `panel/`: the sidebar UI (HTML, CSS, TypeScript; Orca transpiles it, no build step)

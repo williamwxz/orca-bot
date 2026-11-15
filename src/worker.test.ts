@@ -2,7 +2,7 @@
 // keychain or reaches a real Grok Bot account. Always go through mount() below: it is the
 // only place that builds a worker, and it never uses the real defaults.
 import { assert, mockHost, mountWorker, test } from 'orca/testing'
-import { removeRoutineMessage, routinesFrom, scheduleMessage, toEntry, waitingState } from '../shared/model.ts'
+import { AVATAR_COLORS, avatarHue, defaultAvatar, filterBots, mainBot, sidebarBots, readableAvatarText, toBot, removeRoutineMessage, routinesFrom, scheduleMessage, toEntry, waitingState } from '../shared/model.ts'
 import type { DesktopSession } from './session.ts'
 import { register } from './worker.ts'
 
@@ -47,6 +47,7 @@ function fakeFetch(answer?: (call: Call) => Response | undefined) {
         ]
       })
     }
+    if (call.url.endsWith('/GetGrokBotUserRuntimeSettings')) return json({ settings: {} })
     if (call.url.endsWith('/ListGrokBotAgents')) return json({ agents: [] })
     if (call.url.endsWith('/SendGrokBotUserMessage')) return json({ delivery: 2 })
     if (call.url.endsWith('/DeleteGrokBotAgent')) return json({})
@@ -70,7 +71,7 @@ async function mount(
   )
   const writes = () =>
     network.calls
-      .filter((call) => !call.url.endsWith('/api/listAgents'))
+      .filter((call) => !call.url.endsWith('/api/listAgents') && !call.url.endsWith('/GetGrokBotUserRuntimeSettings'))
       .map((call) => [call.url.replace(`${GATEWAY}/api/`, ''), call.body])
   return { worker, calls: network.calls, writes }
 }
@@ -83,9 +84,10 @@ test('lists bots and reads a thread in the shapes the panel draws', async () => 
       id: BOT,
       name: 'Researcher',
       instructions: 'Find things',
-      avatarShape: 'square',
+      avatarShape: 'tablet',
       avatarColor: 'green',
       serverRun: false,
+      main: false,
       hidden: false
     }
   ])
@@ -208,7 +210,7 @@ test('asks for a fresh route when the app has none cached, and when the cloud co
   assert.equal(bots.length, 1)
   assert.deepEqual(
     calls.map((call) => call.url.split('/').pop()),
-    ['EnsureSandBox', 'listAgents', 'EnsureSandBox', 'listAgents']
+    ['EnsureSandBox', 'listAgents', 'EnsureSandBox', 'listAgents', 'GetGrokBotUserRuntimeSettings']
   )
   await worker.deactivate()
 })
@@ -370,7 +372,7 @@ test('a slow load that Refresh has replaced cannot install its route', async () 
   await staleOutcome
   await worker.request('bots.list')
   assert.ok(calls.length > 0)
-  assert.ok(calls.every((call) => call.url.startsWith(GATEWAY)))
+  assert.ok(calls.every((call) => call.url.startsWith(GATEWAY) || call.url.endsWith('/GetGrokBotUserRuntimeSettings')))
   await worker.deactivate()
 })
 
@@ -389,12 +391,12 @@ test('temporal bots send and delete through the backend without gateway writes',
   await worker.deactivate()
 })
 
-test('box bots never use the backend', async () => {
+test('box bot writes stay on the gateway while main identity is read from backend', async () => {
   const { worker, calls } = await mount()
   await worker.request('bots.list')
   await worker.request('message.send', { id: BOT, text: 'Hello' })
   await worker.request('bots.delete', { id: BOT })
-  assert.ok(calls.every(call => call.url.startsWith(GATEWAY)))
+  assert.ok(calls.every(call => call.url.startsWith(GATEWAY) || call.url.endsWith('/GetGrokBotUserRuntimeSettings')))
   await worker.deactivate()
 })
 
@@ -403,7 +405,7 @@ test('refused gateway deletion falls over to the backend exactly once', async ()
     answer: call => call.url.endsWith('/api/deleteAgent') ? json({ refusedAgentIds: [BOT] }) : undefined
   })
   await worker.request('bots.delete', { id: BOT })
-  assert.deepEqual(calls.map(call => call.url.split('/').pop()), ['deleteAgent', 'DeleteGrokBotAgent', 'listAgents'])
+  assert.deepEqual(calls.map(call => call.url.split('/').pop()), ['deleteAgent', 'DeleteGrokBotAgent', 'listAgents', 'GetGrokBotUserRuntimeSettings'])
   assert.deepEqual(calls[1].body, { id: BOT })
   await worker.deactivate()
 })
@@ -423,7 +425,7 @@ test('missing harness is enriched once by runtime id without adding server-only 
   assert.equal(bots.length, 1)
   assert.equal(bots[0].serverRun, true)
   await worker.request('message.send', { id: BOT, text: 'Hello' })
-  assert.deepEqual(calls.map(call => call.url.split('/').pop()), ['listAgents', 'ListGrokBotAgents', 'SendGrokBotUserMessage'])
+  assert.deepEqual(calls.map(call => call.url.split('/').pop()), ['listAgents', 'GetGrokBotUserRuntimeSettings', 'ListGrokBotAgents', 'SendGrokBotUserMessage'])
   await worker.deactivate()
 })
 
@@ -462,7 +464,7 @@ test('every list replaces remembered harnesses', async () => {
   await worker.request('bots.list')
   await worker.request('message.send', { id: BOT, text: 'Hello' })
   assert.ok(calls.at(-1)?.url.endsWith('/api/sendPrompt'))
-  assert.ok(calls.every(call => call.url.startsWith(GATEWAY)))
+  assert.ok(calls.every(call => call.url.startsWith(GATEWAY) || call.url.endsWith('/GetGrokBotUserRuntimeSettings')))
   await worker.deactivate()
 })
 
@@ -477,4 +479,61 @@ test('a backend rejection after gateway fallback never triggers another attempt'
   await assert.rejects(worker.request('message.send', { id: BOT, text: 'Hello' }), /outcome is unknown/)
   assert.deepEqual(calls.map(call => call.url.split('/').pop()), ['sendPrompt', 'SendGrokBotUserMessage'])
   await worker.deactivate()
+})
+
+
+test('avatar defaults match desktop FNV/mixer/PRNG vectors including UTF-16 ids', () => {
+  for (const [id, shape, color] of [
+    ['', 'hex', 'blue'], ['a', 'wedge', 'blue'],
+    ['example-bot', 'blob', 'magenta'], [BOT, 'tablet', 'red'], ['😀', 'blob', 'gray']
+  ]) assert.deepEqual(defaultAvatar(id), { shape, color })
+  const missing = toBot({ agentId: BOT })
+  assert.equal(missing.avatarShape, 'tablet')
+  assert.equal(missing.avatarColor, 'red')
+  const stored = toBot({ id: BOT, avatarShape: 'heart', avatarColor: 'cyan' })
+  assert.equal(stored.avatarShape, 'heart')
+  assert.equal(stored.avatarColor, 'cyan')
+})
+
+test('main selection requires the runtime-settings id, never a name or guessed role', () => {
+  const bots = [toBot({ id: 'a', name: 'Grok Bot', role: 'main', origin: 'system' }),
+    toBot({ id: 'b', name: 'Renamed main bot' })]
+  assert.equal(mainBot(bots), null)
+  bots[1].main = true
+  assert.equal(mainBot(bots), bots[1])
+})
+
+test('name filtering is case-insensitive and includes hidden matching bots', () => {
+  const bots = [toBot({ id: 'a', name: 'Researcher' }),
+    toBot({ id: 'b', name: 'Hidden RESEARCH', isHiddenFromSidebar: true }),
+    toBot({ id: 'c', name: 'Writer' })]
+  assert.deepEqual(filterBots(bots, '  research  ').map(bot => bot.id), ['a', 'b'])
+  assert.deepEqual(filterBots(bots, ''), bots)
+  assert.deepEqual(filterBots(bots, 'absent'), [])
+})
+
+test('all avatar bubble hues have at least 4.5:1 text contrast', () => {
+  for (const color of [...Object.keys(AVATAR_COLORS), 'unknown']) {
+    const hex = avatarHue(color)
+    const c = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255)
+      .map(v => v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4)
+    const l = c[0] * 0.2126 + c[1] * 0.7152 + c[2] * 0.0722
+    const contrast = readableAvatarText(color) === '#ffffff' ? 1.05 / (l + 0.05) : (l + 0.05) / 0.05
+    assert.ok(contrast >= 4.5, color)
+  }
+  assert.equal(readableAvatarText('yellow'), '#000000')
+  assert.equal(readableAvatarText('black'), '#ffffff')
+})
+
+
+test('sidebar separates a renamed main bot and searches its header without duplication', () => {
+  const main = toBot({ id: 'a', name: 'Renamed assistant', main: true, isHiddenFromSidebar: true })
+  const other = toBot({ id: 'b', name: 'Grok Bot' })
+  const hidden = toBot({ id: 'c', name: 'Hidden Assistant', isHiddenFromSidebar: true })
+  const bots = [main, other, hidden]
+  assert.deepEqual(sidebarBots(bots, ''), { main, visible: [other], hidden: [hidden] })
+  assert.deepEqual(sidebarBots(bots, 'ASSISTANT'), { main, visible: [], hidden: [hidden] })
+  assert.deepEqual(sidebarBots(bots, 'Grok'), { main: null, visible: [other], hidden: [] })
+  assert.deepEqual(sidebarBots(bots, 'absent'), { main: null, visible: [], hidden: [] })
+  assert.deepEqual(sidebarBots([other, hidden], ''), { main: null, visible: [other], hidden: [hidden] })
 })

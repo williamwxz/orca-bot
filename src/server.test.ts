@@ -1,5 +1,5 @@
 import { assert, test } from 'orca/testing'
-import { deleteServerBot, listServerBots, sendServerMessage } from './server.ts'
+import { getMainBotId, deleteServerBot, listServerBots, sendServerMessage } from './server.ts'
 import { request } from './gateway.ts'
 
 const account = { key: 'fixture-account', accessToken: 'fixture-access-token', teamId: '42' }
@@ -119,4 +119,55 @@ test('backend send deadline and 5xx are unknown with one request and no replay',
     await assert.rejects(sendServerMessage(account, undefined, input, f), (e: any) => e.code === 'outcome_unknown')
     assert.equal(f.calls.length, 1)
   }
+})
+
+
+test('main bot settings use the exact Connect URL, headers and empty read request', async () => {
+  const f = fake({ settings: { mainAgentId: 'fixture-main-id' } })
+  assert.equal(await getMainBotId(account, '1.2.3', f), 'fixture-main-id')
+  assert.equal(f.calls.length, 1)
+  check(f.calls[0], 'GetGrokBotUserRuntimeSettings', {})
+})
+
+test('missing, empty and non-string main ids are absent, including wrong response nesting', async () => {
+  for (const response of [{}, { settings: {} }, { settings: null },
+    { settings: { mainAgentId: '' } }, { settings: { mainAgentId: 42 } },
+    { mainAgentId: 'wrong-level' }]) {
+    assert.equal(await getMainBotId(account, undefined, fake(response)), undefined)
+  }
+})
+
+test('main bot settings errors are read failures and never ambiguous mutations', async () => {
+  for (const [code, status, expected] of [
+    ['unimplemented', 501, 'unsupported_version'], ['unauthenticated', 401, 'not_signed_in'],
+    ['permission_denied', 403, 'not_signed_in']
+  ] as const) {
+    const f = fake({ code }, status)
+    await assert.rejects(getMainBotId(account, undefined, f), (e: any) => e.code === expected)
+    assert.equal(f.calls.length, 1)
+  }
+})
+
+
+test('main settings malformed success bodies reject as reads', async () => {
+  const fetch = (async () => new Response('{not-json')) as typeof globalThis.fetch
+  await assert.rejects(getMainBotId(account, undefined, { fetch }),
+    (e: any) => e.code === 'unsupported_version')
+})
+
+test('main settings stalled success bodies retain read timeout semantics', async () => {
+  let expire: () => void = () => {}
+  let bodyStarted: () => void = () => {}
+  const reading = new Promise<void>(resolve => { bodyStarted = resolve })
+  const fetch = (async () => new Response(new ReadableStream({
+    pull() { bodyStarted() }
+  }))) as typeof globalThis.fetch
+  const pending = getMainBotId(account, undefined, {
+    fetch,
+    setTimeout: ((fn: () => void) => { expire = fn; return 1 }) as any,
+    clearTimeout: (() => {}) as any
+  })
+  await reading
+  expire()
+  await assert.rejects(pending, (e: any) => e.code === 'timeout')
 })

@@ -1,5 +1,8 @@
 // The panel. It holds no Grok Bot logic: every action is a request to the plugin's worker.
 import {
+  avatarHue,
+  readableAvatarText,
+  sidebarBots,
   removeRoutineMessage,
   routinesFrom,
   scheduleMessage,
@@ -41,6 +44,7 @@ const state = {
   pending: [] as string[],
   previews: new Map<string, string>(),
   showHidden: false,
+  query: '',
   infoOpen: false,
   threadError: '',
   waiting: new Map<string, { newestTsAtSend: number; startedAt: number }>(),
@@ -67,11 +71,53 @@ function errorText(error: unknown): string {
   return e?.message || e?.code || String(error)
 }
 
+// Hand-drawn silhouettes, not extracted desktop assets. All share a 48-unit canvas.
+const SHAPES: Record<string, string> = {
+  blob: 'M8 12Q15 2 30 6Q44 10 43 27Q40 44 23 43Q4 41 5 25Z',
+  pebble: 'M7 18Q13 4 29 7Q45 10 42 28Q37 45 18 41Q2 36 7 18Z',
+  bean: 'M10 9Q26 0 38 13Q48 24 37 39Q27 48 22 35Q21 26 12 27Q0 24 10 9Z',
+  egg: 'M24 4C34 4 43 25 40 34C36 48 10 47 7 33C5 22 16 4 24 4Z',
+  squircle: 'M24 4Q43 4 43 24Q43 44 24 44Q4 44 4 24Q4 4 24 4Z',
+  tablet: 'M12 5H36Q42 5 42 12V36Q42 43 35 43H12Q6 43 6 36V12Q6 5 12 5Z',
+  capsule: 'M20 4H28Q40 4 40 17V31Q40 44 28 44H20Q8 44 8 31V17Q8 4 20 4Z',
+  cylinder: 'M7 12C7 2 41 2 41 12V36C41 46 7 46 7 36Z',
+  hex: 'M14 4L36 8L45 26L33 43L12 39L3 21Z',
+  gem: 'M14 5H34L45 20L24 44L3 20Z',
+  crystal: 'M22 3L39 12L44 31L24 45L6 33L8 13Z',
+  wedge: 'M9 7Q11 2 17 6L42 25Q49 32 39 37L12 44Q5 45 6 36Z',
+  shield: 'M6 7Q24 2 42 7V24Q40 36 24 45Q8 36 6 24Z',
+  dome: 'M5 39V24C5 0 43 0 43 24V39Q43 43 38 43H10Q5 43 5 39Z',
+  arch: 'M8 43V22C8 0 40 0 40 22V43H29V24Q24 15 19 24V43Z',
+  cloud: 'M11 39C0 37 0 22 10 19C7 4 27 1 32 13C46 9 50 31 39 36Q25 45 11 39Z',
+  teardrop: 'M24 3C29 12 44 22 42 32C39 49 9 48 6 32C4 22 19 10 24 3Z',
+  leaf: 'M43 5C43 30 33 45 15 42C-2 37 3 16 17 10Q29 5 43 5Z',
+  heart: 'M24 14C9 -6 -5 18 10 31L24 44L38 31C53 18 39 -6 24 14Z',
+  square: 'M10 5H38Q43 5 43 10V38Q43 43 38 43H10Q5 43 5 38V10Q5 5 10 5Z',
+  sparkle: 'M24 2Q31 17 46 24Q31 31 24 46Q17 31 2 24Q17 17 24 2Z'
+}
 function avatar(bot: Bot, size = ''): HTMLElement {
-  const node = el('span', { class: `avatar ${size}` }, bot.name.trim().charAt(0).toUpperCase() || '?')
-  node.dataset.shape = bot.avatarShape
-  node.dataset.color = bot.avatarColor
+  const node = el('span', { class: `avatar ${size}` })
+  node.style.color = avatarHue(bot.avatarColor)
   node.setAttribute('aria-hidden', 'true')
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+  svg.setAttribute('viewBox', '0 0 48 48')
+  svg.setAttribute('focusable', 'false')
+  const shape = document.createElementNS(svg.namespaceURI, 'path')
+  shape.setAttribute('d', Object.hasOwn(SHAPES, bot.avatarShape) ? SHAPES[bot.avatarShape] : SHAPES.square)
+  shape.setAttribute('fill', 'currentColor')
+  svg.append(shape)
+  for (const x of [19, 29]) {
+    const eye = document.createElementNS(svg.namespaceURI, 'rect')
+    eye.setAttribute('x', String(x))
+    eye.setAttribute('y', '17')
+    eye.setAttribute('width', '5')
+    eye.setAttribute('height', '10')
+    eye.setAttribute('rx', '2.5')
+    eye.setAttribute('fill', '#fff8ed')
+    eye.setAttribute('transform', `rotate(-22 ${x + 2.5} 22)`)
+    svg.append(eye)
+  }
+  node.append(svg)
   return node
 }
 
@@ -103,14 +149,19 @@ function renderBots(): void {
       )
     )
     button.dataset.listKey = bot.id
-    button.setAttribute('role', 'option')
-    button.setAttribute('aria-selected', String(bot.id === state.selected))
+    button.setAttribute('aria-pressed', String(bot.id === state.selected))
     button.onclick = () => select(bot.id)
     return button
   }
-  const visible = state.bots.filter((bot) => !bot.hidden)
-  const hidden = state.bots.filter((bot) => bot.hidden)
+  const { main, visible, hidden } = sidebarBots(state.bots, state.query)
+  if (main) {
+    const header = row(main)
+    header.classList.add('main-bot')
+    header.replaceChildren(avatar(main, 'large'), el('span', { class: 'name' }, main.name))
+    botsEl.append(header)
+  }
   botsEl.append(...visible.map(row))
+  if (state.query && !main && !visible.length && !hidden.length) botsEl.append(el('p', { class: 'note' }, 'No matching bots.'))
   if (!state.bots.length) {
     botsEl.append(el('p', { class: 'note' }, 'No bots yet. Press + to create one.'))
   }
@@ -122,13 +173,13 @@ function renderBots(): void {
       el('span', {}, String(hidden.length))
     )
     toggle.dataset.listKey = 'hidden-toggle'
-    toggle.setAttribute('aria-expanded', String(state.showHidden))
+    toggle.setAttribute('aria-expanded', String(state.showHidden || Boolean(state.query)))
     toggle.onclick = () => {
       state.showHidden = !state.showHidden
       renderBots()
     }
     botsEl.append(toggle)
-    if (state.showHidden) botsEl.append(...hidden.map(row))
+    if (state.showHidden || state.query) botsEl.append(...hidden.map(row))
   }
   if (focusKey) {
     const replacement = [...botsEl.querySelectorAll<HTMLElement>('[data-list-key]')]
@@ -247,6 +298,8 @@ function renderHeader(): void {
   const bot = current()
   $('chat-avatar').replaceChildren(...(bot ? [avatar(bot, 'small')] : []))
   $('chat-title').textContent = bot?.name ?? ''
+  $('chat').style.setProperty('--bot-hue', avatarHue(bot?.avatarColor ?? 'gray'))
+  $('chat').style.setProperty('--bot-ink', readableAvatarText(bot?.avatarColor ?? 'gray'))
   input.placeholder = bot ? `Message ${bot.name}` : 'Message'
   input.disabled = !bot
   $<HTMLButtonElement>('send').disabled = !bot
@@ -715,6 +768,32 @@ async function start(): Promise<void> {
     showSetup(errorText(error))
   } finally {
     starting = false
+  }
+}
+const search = $<HTMLInputElement>('bot-search')
+function closeSearch(): void {
+  search.value = ''
+  state.query = ''
+  $('search-field').hidden = true
+  $('search-bots').setAttribute('aria-expanded', 'false')
+  renderBots()
+  $('search-bots').focus()
+}
+$('search-bots').onclick = () => {
+  if (!$('search-field').hidden) return closeSearch()
+  $('search-field').hidden = false
+  $('search-bots').setAttribute('aria-expanded', 'true')
+  search.focus()
+}
+search.oninput = () => {
+  if (!search.value) return closeSearch()
+  state.query = search.value
+  renderBots()
+}
+search.onkeydown = event => {
+  if (event.key === 'Escape' && !event.isComposing) {
+    event.preventDefault()
+    closeSearch()
   }
 }
 $('new-bot').onclick = newBotDialog

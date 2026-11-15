@@ -329,6 +329,7 @@ test('routed backend timeout remains unknown and sends exactly once', async () =
     fetch: (async (url: any) => {
       calls.push(String(url))
       if (String(url).endsWith('/listAgents')) return new Response(JSON.stringify({ agents: [{ id: 'example-bot', harness: 'temporal' }] }))
+      if (String(url).endsWith('/GetGrokBotUserRuntimeSettings')) return new Response('{}')
       return new Promise(() => {})
     }) as typeof globalThis.fetch,
     setTimeout: ((fn: () => void) => { expire = fn; return 1 }) as any,
@@ -362,4 +363,102 @@ test('reset supersedes a pending account load without retaining its credentials'
   await rejected
   assert.equal(current.account.key, 'fixture-new')
   assert.equal((await connection.getAccount()).account.key, 'fixture-new')
+})
+
+function mainFixture(answer: (method: string) => unknown | Promise<unknown>, getAccount = () => ({ account: { key: 'fixture-account', accessToken: 'fixture-token' } })) {
+  const calls: string[] = []
+  const fetch = (async (url: any) => {
+    const method = String(url).split('/').pop()!
+    calls.push(method)
+    const value = await answer(method)
+    return value instanceof Response ? value : new Response(JSON.stringify(value))
+  }) as typeof globalThis.fetch
+  return {
+    calls,
+    client: createGatewayClient({ fetch, getRoute: () => route, refreshRoute: () => route, getAccount })
+  }
+}
+
+test('runtime settings mark only the matching listed bot, with one lookup per list', async () => {
+  let id = 'renamed'
+  const f = mainFixture(method => method === 'listAgents'
+    ? { agents: [{ id: 'renamed', name: 'Assistant', harness: 'box' }, { id: 'other', name: 'Grok Bot', harness: 'box', main: true }] }
+    : { settings: { mainAgentId: id } })
+  assert.deepEqual((await f.client.listBots()).map(bot => [bot.id, bot.main]), [['renamed', true], ['other', false]])
+  id = 'not-in-roster'
+  assert.ok((await f.client.listBots()).every(bot => !bot.main))
+  assert.deepEqual(f.calls, ['listAgents', 'GetGrokBotUserRuntimeSettings', 'listAgents', 'GetGrokBotUserRuntimeSettings'])
+})
+
+test('main settings network, feature and authentication failures leave the list usable', async () => {
+  for (const failure of ['network', 'unimplemented', 'unauthenticated', 'permission_denied', 'feature-off']) {
+    const f = mainFixture(method => {
+      if (method === 'listAgents') return { agents: [{ id: 'example-bot', harness: 'box', main: true }] }
+      if (failure === 'network') throw new Error('fixture network down')
+      if (failure === 'feature-off') return { settings: {} }
+      return new Response(JSON.stringify({ code: failure }), { status: failure === 'unimplemented' ? 501 : 403 })
+    })
+    const bots = await f.client.listBots()
+    assert.equal(bots.length, 1)
+    assert.equal(bots[0].main, false)
+    assert.equal(f.calls.length, 2)
+  }
+})
+
+test('optional account failure leaves main unset without backend requests', async () => {
+  const f = mainFixture(() => ({ agents: [{ id: 'example-bot' }] }), () => { throw new Error('fixture signed out') })
+  assert.equal((await f.client.listBots())[0].main, false)
+  assert.deepEqual(f.calls, ['listAgents'])
+})
+
+test('main settings and roster enrichment start in parallel and settle independently', async () => {
+  let releaseMain: (value: unknown) => void = () => {}
+  const mainPending = new Promise(resolve => { releaseMain = resolve })
+  let rosterStarted: () => void = () => {}
+  const rosterReady = new Promise<void>(resolve => { rosterStarted = resolve })
+  const f = mainFixture(method => {
+    if (method === 'listAgents') return { agents: [{ id: 'example-bot' }] }
+    if (method === 'GetGrokBotUserRuntimeSettings') return mainPending
+    rosterStarted()
+    return { agents: [{ agentId: 'example-bot', id: 'server-record', harness: 'temporal' }] }
+  })
+  const list = f.client.listBots()
+  await rosterReady // This cannot resolve if roster enrichment waits for main settings.
+  releaseMain({ settings: { mainAgentId: 'example-bot' } })
+  const bots = await list
+  assert.equal(bots[0].main, true)
+  assert.equal(bots[0].serverRun, true)
+  assert.deepEqual(f.calls, ['listAgents', 'GetGrokBotUserRuntimeSettings', 'ListGrokBotAgents'])
+
+  const rosterFailure = mainFixture(method => {
+    if (method === 'listAgents') return { agents: [{ id: 'example-bot' }] }
+    if (method === 'ListGrokBotAgents') throw new Error('fixture roster unavailable')
+    return { settings: { mainAgentId: 'example-bot' } }
+  })
+  assert.equal((await rosterFailure.client.listBots())[0].main, true)
+})
+
+test('a main settings deadline returns the roster without failing or replaying', async () => {
+  let expire: (() => void) | undefined
+  const calls: string[] = []
+  const client = createGatewayClient({
+    getRoute: () => route, refreshRoute: () => route,
+    getAccount: () => ({ account: { key: 'fixture-account', accessToken: 'fixture-token' } }),
+    fetch: (async (url: any) => {
+      const method = String(url).split('/').pop()!
+      calls.push(method)
+      if (method === 'listAgents') return new Response(JSON.stringify({ agents: [{ id: 'example-bot', harness: 'box' }] }))
+      return new Promise(() => {})
+    }) as typeof globalThis.fetch,
+    setTimeout: ((fn: () => void) => { expire = fn; return 1 }) as any,
+    clearTimeout: (() => {}) as any
+  })
+  const pending = client.listBots()
+  // Drain the finite promise chain until the optional request has installed its deadline.
+  while (!calls.includes('GetGrokBotUserRuntimeSettings')) await Promise.resolve()
+  expire!()
+  const bots = await pending
+  assert.equal(bots.length, 1)
+  assert.equal(bots[0].main, false)
+  assert.deepEqual(calls, ['listAgents', 'GetGrokBotUserRuntimeSettings'])
 })
