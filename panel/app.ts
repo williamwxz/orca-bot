@@ -1,9 +1,6 @@
 import { createChatView } from './chat-view.ts'
 import type { FrameApi } from './chat-view.ts'
-import { stateLabel } from '../shared/roster.ts'
 import type { Bot } from '../shared/roster.ts'
-import { availableModels, defaultModel } from '../shared/models.ts'
-import type { ModelGroup } from '../shared/models.ts'
 import { avatarSvg } from '../shared/appearance.ts'
 
 const frame = (globalThis as unknown as { orca: FrameApi }).orca
@@ -14,27 +11,20 @@ const running = element<HTMLElement>('running')
 const roster = element<HTMLElement>('roster')
 const refreshNote = element<HTMLElement>('refresh-note')
 const result = element<HTMLElement>('result')
-const dialog = element<HTMLDialogElement>('create-dialog')
-const form = element<HTMLFormElement>('create-form')
-const nameInput = element<HTMLInputElement>('bot-name')
-const modelInput = element<HTMLSelectElement>('bot-model')
-const createButton = element<HTMLButtonElement>('create')
-const dialogError = element<HTMLElement>('dialog-error')
 let timer: ReturnType<typeof setTimeout> | undefined
 let refreshPending: Promise<void> | undefined
 let opening = false
-let creating = false
 let selected: string | undefined
-let models: ModelGroup[] = []
 let bots: Bot[] = []
 let rosterKey = ''
 const changing = new Set<string>()
 const readBots = new Set<string>()
 const rosterView = element<HTMLElement>('roster-view')
-const chatView = createChatView(element('bot-view'), frame, makeAvatar, (id) => void open(id), () => { rosterView.hidden = false })
+const chatView = createChatView(element('bot-view'), frame, makeAvatar, (id) => void open(id), () => { rosterView.hidden = false; element('list-title').hidden = false })
 function showBot(bot: Bot): void {
   readBots.add(bot.id)
   rosterView.hidden = true
+  element('list-title').hidden = true
   chatView.open(bot)
   renderBots()
 }
@@ -54,35 +44,13 @@ function makeAvatar(bot: Bot): HTMLElement {
 }
 const icons = {
   plus: '<path d="M8 3v10M3 8h10"/>',
-  chat: '<path d="M3 3h10v8H7l-4 3V3Z"/>',
-  clock: '<circle cx="8" cy="8" r="5.5"/><path d="M8 4.5V8l2.5 1.5"/>',
-  close: '<path d="m4 4 8 8M12 4l-8 8"/>'
+  clock: '<circle cx="8" cy="8" r="5.5"/><path d="M8 4.5V8l2.5 1.5"/>'
 }
 function icon(kind: keyof typeof icons): SVGElement {
   const span = document.createElement('span')
   span.innerHTML = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[kind]}</svg>`
   return span.firstElementChild as SVGElement
 }
-for (const [id, kind] of [['open', 'chat'], ['new-bot', 'plus'], ['create', 'plus'], ['cancel', 'close']] as const) element(id).prepend(icon(kind))
-
-function fillModels(select: HTMLSelectElement, current = defaultModel(models), label = 'Current model'): void {
-  select.replaceChildren()
-  const groups = availableModels(models)
-  if (current && !groups.some((group) => group.options.some((option) => option.value === current))) {
-    const option = new Option(label, current)
-    option.disabled = true
-    select.add(option)
-  }
-  for (const group of groups) {
-    const section = document.createElement('optgroup')
-    section.label = group.label
-    for (const option of group.options) section.append(new Option(option.label, option.value))
-    select.append(section)
-  }
-  if (!groups.length && !current) select.add(new Option('No available models', ''))
-  select.value = current
-}
-
 async function open(botId?: string): Promise<void> {
   if (opening) return
   opening = true
@@ -95,23 +63,6 @@ async function open(botId?: string): Promise<void> {
     result.textContent = error instanceof Error ? error.message : 'Could not open chat.'
   } finally {
     opening = false
-    renderBots()
-  }
-}
-
-async function changeModel(bot: Bot, select: HTMLSelectElement): Promise<void> {
-  if (changing.has(bot.id)) return
-  changing.add(bot.id)
-  select.disabled = true
-  try {
-    const response = await frame.plugin.request('bots.model', { botId: bot.id, model: select.value })
-    result.textContent = response.message
-    await refreshAfterChange()
-  } catch (error) {
-    result.textContent = error instanceof Error ? error.message : 'Could not change model.'
-    select.value = bot.model ?? ''
-  } finally {
-    changing.delete(bot.id)
     renderBots()
   }
 }
@@ -133,7 +84,7 @@ async function addMausBot(bot: Bot): Promise<void> {
 }
 
 function renderBots(): void {
-  const key = JSON.stringify([bots, models, selected, opening, [...changing], [...readBots]])
+  const key = JSON.stringify([bots, selected, opening, [...changing], [...readBots]])
   if (key === rosterKey) return
   rosterKey = key
   const focused = (document.activeElement as HTMLElement)?.dataset.focus
@@ -141,8 +92,13 @@ function renderBots(): void {
   if (!bots.some((bot) => !bot.addable)) {
     const empty = document.createElement('p')
     empty.className = 'empty'
-    empty.textContent = 'Your team starts here. Create a bot to get going.'
+    empty.textContent = 'No bots yet.'
     roster.append(empty)
+    const openButton = document.createElement('button')
+    openButton.type = 'button'; openButton.textContent = 'Open OpenMausBot'
+    openButton.disabled = opening
+    openButton.addEventListener('click', () => void open())
+    roster.append(openButton)
   }
   for (const bot of bots) {
     if (bot.addable) {
@@ -177,21 +133,13 @@ function renderBots(): void {
     }
     chat.addEventListener('click', () => showBot(bot))
     row.addEventListener('click', (event) => {
-      if (!(event.target as Element).closest('button, select, option')) showBot(bot)
+      if (!(event.target as Element).closest('button')) showBot(bot)
     })
-    const model = document.createElement('select')
+    const model = document.createElement('span')
     model.className = 'model'
-    model.dataset.focus = `${bot.id}-model`
-    model.setAttribute('aria-label', `Model for ${bot.name}`)
-    fillModels(model, bot.model, bot.modelLabel)
-    model.disabled = bot.state !== 'idle' || changing.has(bot.id) || !availableModels(models).length
-    model.title = bot.state !== 'idle' ? 'This bot is busy. Wait until it is idle to change its model.' : bot.modelLabel
-    model.addEventListener('change', () => void changeModel(bot, model))
+    model.textContent = bot.modelLabel
     const state = document.createElement('span')
-    state.className = `state ${bot.state}`
-    if (bot.state === 'waiting') state.append(icon('clock'))
-    state.append(document.createTextNode(stateLabel(bot.state)))
-    if (bot.state !== 'idle') state.title = 'Wait until this bot is idle to change its model.'
+    state.className = 'state'
     if (bot.unread && !readBots.has(bot.id)) {
       const unread = document.createElement('span')
       unread.className = 'unread-dot'
@@ -229,11 +177,10 @@ async function refreshNow(explicitRetry: boolean): Promise<void> {
     if (status.state === 'starting') delay = 2000
     if (status.state === 'running') {
       try {
-        const [nextBots, nextModels] = await Promise.all([frame.plugin.request('bots.list', {}), frame.plugin.request('models.list', {})])
+        const nextBots = await frame.plugin.request('bots.list', {})
         for (const bot of nextBots) if (!bot.unread) readBots.delete(bot.id)
         bots = nextBots
         chatView.update(bots)
-        models = nextModels
         renderBots()
         refreshNote.textContent = ''
       } catch {
@@ -250,50 +197,6 @@ async function refreshNow(explicitRetry: boolean): Promise<void> {
   }
 }
 
-element('open').addEventListener('click', () => void open())
-element('new-bot').addEventListener('click', async () => {
-  dialogError.textContent = ''
-  form.reset()
-  createButton.disabled = true
-  dialog.showModal()
-  nameInput.focus()
-  try {
-    models = await frame.plugin.request('models.list', {})
-    fillModels(modelInput)
-    createButton.disabled = !modelInput.value
-    if (!modelInput.value) dialogError.textContent = 'No AI models are available. Set up an AI account in OpenMausBot, then reopen this dialog.'
-  } catch (error) {
-    dialogError.textContent = error instanceof Error ? error.message : 'Could not load models.'
-  }
-})
-element('cancel').addEventListener('click', () => { if (!creating) dialog.close() })
-dialog.addEventListener('cancel', (event) => { if (creating) event.preventDefault() })
-form.addEventListener('submit', async (event) => {
-  event.preventDefault()
-  if (creating || !modelInput.value || !nameInput.value.trim()) return
-  creating = true
-  createButton.disabled = true
-  nameInput.disabled = true
-  modelInput.disabled = true
-  dialogError.textContent = ''
-  let created: { id: string } | undefined
-  try {
-    created = await frame.plugin.request('bots.create', { name: nameInput.value.trim(), model: modelInput.value })
-    dialog.close()
-  } catch (error) {
-    dialogError.textContent = error instanceof Error ? error.message : 'Could not create bot. Check the roster before trying again.'
-  } finally {
-    creating = false
-    createButton.disabled = false
-    nameInput.disabled = false
-    modelInput.disabled = false
-  }
-  if (created) {
-    // A successful creation is final even if opening the browser subsequently fails.
-    await refreshAfterChange()
-    await open(created.id)
-  }
-})
 retry.addEventListener('click', () => void refresh(true))
 document.addEventListener('visibilitychange', () => {
   clearTimeout(timer)

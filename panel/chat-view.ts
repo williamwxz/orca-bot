@@ -1,6 +1,6 @@
 import type { Requests } from '../src/protocol.ts'
 import type { Bot } from '../shared/roster.ts'
-import { collapseActivities, refreshInterval, sendDraft } from '../shared/chat.ts'
+import { collapseActivities, refreshInterval, sendDraft, reconcileAttempts, elapsedTime, displayText } from '../shared/chat.ts'
 import type { Thread, Composer } from '../shared/chat.ts'
 
 export type FrameApi = {
@@ -25,13 +25,18 @@ export function createChatView(root: HTMLElement, frame: FrameApi, avatar: (bot:
   let timer: ReturnType<typeof setTimeout> | undefined
   let reading = false
   let identityKey = ''
+  let clockTimer: ReturnType<typeof setTimeout> | undefined
+  const observedWorking = new Map<string, number>()
+  const finishedWorking = new Set<string>()
+  let loaded = false
+  let workingKey = ''
   let thread: Thread = { messages: [], hasMore: false }
   const drafts = new Map<string, Composer>()
   let state: Composer = { draft: '', attempts: [], sending: false }
   const header = node('div'); header.className = 'thread-header'
   const identity = node('div'); identity.className = 'thread-identity'
-  const full = button('Open full chat', () => { if (bot) open(bot.id) })
-  full.textContent = '↗'; full.title = 'Open full chat'
+  const full = button('Open bot', () => { if (bot) open(bot.id) })
+  full.textContent = '↗ Open bot'; full.title = 'Open bot'
   header.append(button('←', () => { close(); back() }), identity, full)
   header.firstElementChild!.setAttribute('aria-label', 'Back to bots')
   const list = node('div'); list.className = 'messages'; list.setAttribute('aria-label', 'Recent messages')
@@ -42,6 +47,8 @@ export function createChatView(root: HTMLElement, frame: FrameApi, avatar: (bot:
   const input = node('textarea'); input.id = 'quick-message'; input.maxLength = 16000; input.rows = 3
   const send = node('button', 'Send'); send.type = 'submit'
   composer.append(label, input, send)
+  working.hidden = true
+  const workingText = node('span')
   root.append(header, list, note, working, composer)
   const atBottom = () => list.scrollHeight - list.scrollTop - list.clientHeight < 40
   function linkedText(parent: HTMLElement, text: string): void {
@@ -68,23 +75,21 @@ export function createChatView(root: HTMLElement, frame: FrameApi, avatar: (bot:
       identityKey = nextIdentityKey
       identity.replaceChildren(avatar(bot))
       const names = node('div'); names.append(node('strong', bot.name), node('small', bot.modelLabel)); identity.append(names)
-      working.replaceChildren()
-      if (bot.state === 'working') working.append(avatar(bot), node('span', `${bot.name} is working…`))
-      working.hidden = bot.state !== 'working'
     }
+    renderWorking()
     list.replaceChildren()
     if (thread.hasMore) list.append(node('p', 'Earlier messages are in the full chat.'))
     for (const message of collapseActivities(thread.messages)) {
       const item = node('div'); item.className = `chat-message ${message.kind} ${message.role}`
-      if (message.kind === 'text') linkedText(item, message.text)
+      if (message.kind === 'text') linkedText(item, displayText(message.text))
       else item.append(document.createTextNode(message.text))
-      if (message.kind === 'unsupported') item.append(button('Open full chat', () => { if (bot) open(bot.id) }))
+      if (message.kind === 'unsupported') item.append(button('Open bot', () => { if (bot) open(bot.id) }))
       list.append(item)
     }
     for (const attempt of state.attempts) {
       const item = node('div'); item.className = `chat-message text user ${attempt.state}`
-      linkedText(item, attempt.text.length > 4000 ? attempt.text.slice(0, 4000) + '… Open the full chat for the rest.' : attempt.text)
-      item.append(node('small', attempt.error ?? (attempt.state === 'pending' ? 'Sending…' : 'Sent — waiting for refresh')))
+      linkedText(item, displayText(attempt.text))
+      if (attempt.error || attempt.state === 'pending') item.append(node('small', attempt.error ?? 'Sending…'))
       list.append(item)
     }
     if (!thread.messages.length && !state.attempts.length) list.append(node('p', 'No recent messages.'))
@@ -92,9 +97,24 @@ export function createChatView(root: HTMLElement, frame: FrameApi, avatar: (bot:
     if (input.value !== state.draft) input.value = state.draft
     list.scrollTop = bottom ? list.scrollHeight : top
   }
+  function renderWorking(): void {
+    clearTimeout(clockTimer)
+    if (!bot) return
+    if (bot.state === 'working' && !observedWorking.has(bot.id)) observedWorking.set(bot.id, Date.now())
+    const since = state.sendFailed ? undefined : state.wait?.since ?? (bot.state === 'working' && !finishedWorking.has(bot.id) ? observedWorking.get(bot.id) : undefined)
+    working.hidden = since === undefined
+    if (since === undefined) { workingKey = ''; working.replaceChildren(); return }
+    const key = JSON.stringify([bot.id, bot.avatar])
+    if (workingKey !== key) {
+      workingKey = key
+      working.replaceChildren(avatar({ ...bot, state: 'working' }), workingText)
+    }
+    workingText.textContent = `Working · ${elapsedTime(since, Date.now())}`
+    if (!document.hidden) clockTimer = setTimeout(renderWorking, 1000)
+  }
   function schedule(): void {
     clearTimeout(timer)
-    if (bot && !document.hidden) timer = setTimeout(() => void read(), refreshInterval(bot.state, state.sending))
+    if (bot && !document.hidden) timer = setTimeout(() => void read(), refreshInterval(bot.state, state.sending || !!state.wait))
   }
   async function read(): Promise<void> {
     if (!bot || document.hidden || reading) return
@@ -103,19 +123,18 @@ export function createChatView(root: HTMLElement, frame: FrameApi, avatar: (bot:
     try {
       const next = await frame.plugin.request('thread.read', { botId: id, limit: 20 })
       if (token !== generation) return
+      const reply = next.messages.some((entry) => entry.role === 'bot' && entry.kind === 'text' && (
+        state.wait ? !state.wait.baseline.has(entry.id) && entry.at >= state.wait.sentAt - 5000
+          : loaded && !thread.messages.some((old) => old.id === entry.id)
+      ))
+      if (reply) { state.wait = undefined; if (bot?.state === 'working') finishedWorking.add(bot.id) }
       thread = next
-      const matched = new Set<string>()
-      state.attempts = state.attempts.filter((attempt) => {
-        if (attempt.state !== 'sent') return true
-        const text = attempt.text.length > 4000 ? attempt.text.slice(0, 4000) + '… Open the full chat for the rest.' : attempt.text
-        const echo = next.messages.find((entry) => entry.role === 'user' && entry.kind === 'text' && entry.text === text && !attempt.baseline.has(entry.id) && !matched.has(entry.id))
-        if (echo) matched.add(echo.id)
-        return !echo
-      })
+      loaded = true
+      Object.assign(state, reconcileAttempts(state.attempts, next.messages, state.matchedIds))
       note.textContent = ''
       render()
     } catch {
-      if (token === generation) { note.replaceChildren(document.createTextNode('Could not refresh messages. '), button('Open full chat', () => open(id))) }
+      if (token === generation) { note.replaceChildren(document.createTextNode('Could not refresh messages. '), button('Open bot', () => open(id))) }
     } finally {
       if (token === generation) { reading = false; schedule() }
     }
@@ -132,21 +151,27 @@ export function createChatView(root: HTMLElement, frame: FrameApi, avatar: (bot:
   input.addEventListener('keydown', (event) => {
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); composer.requestSubmit() }
   })
-  function close(): void { generation++; bot = undefined; reading = false; clearTimeout(timer); root.hidden = true }
-  document.addEventListener('visibilitychange', () => { clearTimeout(timer); if (!document.hidden) void read() })
-  window.addEventListener('pagehide', () => clearTimeout(timer))
-  window.addEventListener('pageshow', () => void read())
+  function close(): void { generation++; bot = undefined; reading = false; clearTimeout(timer); clearTimeout(clockTimer); root.hidden = true }
+  document.addEventListener('visibilitychange', () => { clearTimeout(timer); clearTimeout(clockTimer); if (!document.hidden) { renderWorking(); void read() } })
+  window.addEventListener('pagehide', () => { clearTimeout(timer); clearTimeout(clockTimer) })
+  window.addEventListener('pageshow', () => { renderWorking(); void read() })
   return {
     open(next: Bot) {
-      close(); bot = next; thread = { messages: [], hasMore: false }
+      close(); bot = next; loaded = false; thread = { messages: [], hasMore: false }
       state = drafts.get(next.id) ?? { draft: '', attempts: [], sending: false }; drafts.set(next.id, state)
       root.hidden = false; note.textContent = 'Loading…'; render(); list.scrollTop = list.scrollHeight; input.focus(); void read()
     },
     update(next: Bot[]) {
+      for (const entry of next) {
+        if (entry.state === 'working') {
+          if (!observedWorking.has(entry.id)) observedWorking.set(entry.id, Date.now())
+        } else { observedWorking.delete(entry.id); finishedWorking.delete(entry.id) }
+      }
       if (!bot) return
       const latest = next.find((item) => item.id === bot!.id && !item.addable)
       if (!latest) { close(); back(); return }
       const changed = latest.state !== bot.state
+      if (changed && latest.state === 'working') state.sendFailed = false
       bot = latest; render(); if (changed) schedule()
     }
   }

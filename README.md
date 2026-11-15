@@ -1,23 +1,16 @@
 # Bot Deck
 
-Open the **Bot Deck** panel and press **Open chat**. OpenMausBot's chat UI opens
-in an Orca browser tab; an existing tab for that server is reused. You can also
-use **Bot Deck: Open chat** in the command palette after the server is ready.
+Open the **Bot Deck** panel to see the bot list. Each row shows its avatar,
+name, Main tag when applicable, model label and unread dot. Click a row to open
+its chat window; use the back arrow to return to the list. **Open bot** opens
+that bot's full chat in an Orca browser tab, reusing the existing server tab.
+When there are no bots, **Open OpenMausBot** opens the browser UI where you can
+create them. **Bot Deck: Open chat** remains available in the command palette.
 
-**New bot** opens a panel dialog: enter a name, choose a model and press **Create**.
-Available models are grouped by engine. Claude is preferred, then Codex, using
-the engine's default model. After creation the roster refreshes and the bot's chat
-opens. If creation cannot be confirmed, check the roster before trying again:
-the command is never retried automatically.
-
-Use the model picker under a bot's name to change its model while it is idle.
-Working and Waiting bots cannot be changed. Each row shows an avatar, model
-label, activity icon and unread dot. Click a bot row to see its recent messages in the panel.
 The roster refreshes every five seconds while visible and retains the last list
 when a refresh fails. Hidden bots stay hidden; **Add MausBot** restores a hidden
 local MausBot using OpenMausBot's own welcome visibility settings.
 
-**Open chat** brings the existing server tab forward and preserves its conversation.
 For a server Bot Deck owns, a pairing screen is completed automatically, including
 when a browser session expires. If that fails, press **Connect** in that browser tab.
 For a server started elsewhere, sign in in the browser yourself; Bot Deck never
@@ -28,7 +21,7 @@ visibility and stored avatars. Small stored images are passed to the panel as da
 URLs; missing or oversized images use a stable generated SVG. Person-owned default
 bots are omitted because the plugin does not know the browser's signed-in identity.
 
-The panel is for a glance and a quick reply: view the last 20 entries as plain text and send a message of up to 16,000 characters. Tool steps are summarized; internal digests are hidden. Earlier history, long messages, approvals, attachments, routines, instruction editing and other rich content belong in **Open full chat**. Working avatars move gently (or show a static Working label with reduced motion).
+The panel is for a glance and a quick reply: view the last 20 entries as plain text and send a message of up to 16,000 characters. Tool steps are summarized; internal digests are hidden. Earlier history, long messages, approvals, attachments, routines, instruction editing and other rich content belong in **Open bot**. Sent messages appear immediately. While awaiting a reply or observing a working bot, a small avatar and **Working · 3s** line count elapsed time, changing to minutes after 60 seconds. Reduced motion keeps the avatar still and the elapsed text visible.
 
 ## How it starts OpenMausBot
 

@@ -115,6 +115,10 @@ async function health(port: number, deps: ServerDeps, timeoutMs = 1500): Promise
   }
 }
 
+export async function serverHealthy(port: number, deps: ServerDeps = defaultServerDeps()): Promise<boolean> {
+  return !!await health(port, deps, 1000)
+}
+
 export async function findServer(deps: ServerDeps = defaultServerDeps()): Promise<Server | undefined> {
   for (const port of ports) {
     const result = await health(port, deps)

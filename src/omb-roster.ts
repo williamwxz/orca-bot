@@ -34,7 +34,7 @@ export async function listBots(input: { port: number }, deps: HttpDeps = default
         state: bot.busy ? 'working' : bot.waitingForTeammates || bot.activity === 'waiting-on-you' ? 'waiting' : 'idle',
         unread: bot.unread === true,
         model: `${selection.instanceId}/${selection.model}`,
-        modelLabel: 'Unknown model',
+        modelLabel: selection.model,
         ...(typeof bot.threadId === 'string' && bot.threadId ? { activeTaskId: bot.threadId } : {}),
         ...(avatar ? { avatar } : {}),
         ...(addable ? { addable: true } : {})

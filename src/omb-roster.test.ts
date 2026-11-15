@@ -37,6 +37,7 @@ test('raw fleet route carries thread, activity states and bounded avatar data', 
   assert.equal(result[0].activeTaskId, 'thread')
   assert.match(result[0].avatar!, /^data:image\/png/)
   assert.equal(result[0].model, 'codex/gpt-6')
+  assert.equal(result[0].modelLabel, 'gpt-6')
   deps.avatar = async () => { throw new Error('missing') }
   assert.equal((await listBots({ port: 18799 }, deps))[0].avatar, undefined)
 })
