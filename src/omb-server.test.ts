@@ -125,7 +125,7 @@ test('ensureInstalled runs npm with exact args and a five minute limit', async (
   const { deps, calls } = fake()
   await ensureInstalled(version, deps)
   assert.equal(calls[0].file, 'npm')
-  assert.deepEqual(calls[0].args, ['install', '--prefix', `/fake/.bot-deck/openmausbot/${version}`, '--no-audit', '--no-fund', `openmausbot@${version}`])
+  assert.deepEqual(calls[0].args, ['install', '--prefix', `/fake/.bot-deck/openmausbot/${version}`, '--no-audit', '--no-fund', '--ignore-scripts', `openmausbot@${version}`])
   assert.equal((calls[0].options as { timeout: number }).timeout, 300000)
 })
 
@@ -289,6 +289,7 @@ test('fresh workers recover pairing ownership only from a matching persisted ser
       sleep: async () => {},
       execFile: async (_file, args) => {
         cliCalls.push(args)
+        if (args[0] === 'storage') return JSON.stringify({ ok: true, result: { value: null } })
         if (args[0] === 'snapshot') return 'button "Connect" [ref=e11]'
         if (args[0] === 'pair') return 'http://127.0.0.1:8799/pair#code=FAKE-ONLY'
         if (args[1] === 'list') return JSON.stringify({ ok: true, result: { tabs: [] } })

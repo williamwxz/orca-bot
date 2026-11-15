@@ -200,7 +200,7 @@ export async function ensureInstalled(version: string, deps: ServerDeps = defaul
   const bin = join(folder, 'node_modules/.bin/openmausbot')
   if (deps.exists(bin)) return bin
   try {
-    await deps.execFile('npm', ['install', '--prefix', folder, '--no-audit', '--no-fund', `openmausbot@${version}`], { env: childEnvironment(deps), timeout: 300000 })
+    await deps.execFile('npm', ['install', '--prefix', folder, '--no-audit', '--no-fund', '--ignore-scripts', `openmausbot@${version}`], { env: childEnvironment(deps), timeout: 300000 })
     if (!deps.exists(bin)) throw new Error('npm finished without installing the OpenMausBot binary.')
     return bin
   } catch (error) {

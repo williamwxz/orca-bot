@@ -16,7 +16,7 @@ export class CliFailure extends Error {
 }
 
 export type CliDeps = {
-  execFile: (file: string, args: string[], options: { env: NodeJS.ProcessEnv; timeout: number }) => Promise<string>
+  execFile: (file: string, args: string[], options: { env: NodeJS.ProcessEnv; timeout: number }, input?: string) => Promise<string>
   exists: (path: string) => boolean
   sleep: (ms: number) => Promise<void>
   userInfo: () => { username: string; shell: string | null }
@@ -28,12 +28,16 @@ export type CliDeps = {
 export function defaultCliDeps(): CliDeps {
   if (process.env.NODE_TEST_CONTEXT) throw new Error('Tests must inject CLI dependencies')
   return {
-    execFile: (file, args, options) => new Promise((resolve, reject) => {
-      execFile(file, args, options, (error, stdout) => {
+    execFile: (file, args, options, input) => new Promise((resolve, reject) => {
+      const child = execFile(file, args, options, (error, stdout) => {
         // Command errors can contain the pairing URL in argv, stdout or stderr.
         if (error) reject(new CliFailure(error.code, stdout))
         else resolve(stdout)
       })
+      if (input !== undefined) {
+        child.stdin?.on('error', () => reject(new CliFailure(undefined, '')))
+        child.stdin?.end(input)
+      }
     }),
     exists: (path) => {
       try {

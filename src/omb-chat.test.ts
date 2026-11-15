@@ -6,17 +6,20 @@ const botId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
 const sendId = 'fake-send-id-000001'
 function fake() {
   const calls: string[][] = []
-  const deps: CliDeps = { userInfo: () => ({ username: 'fake-user', shell: '/fake/shell' }), home: '/fake', env: {}, platform: 'darwin', exists: () => true, sleep: async () => {}, execFile: async (_file, args) => { calls.push(args); return JSON.stringify({ messages: [], hasMore: true }) } }
-  return { deps, calls }
+  const inputs: (string | undefined)[] = []
+  const deps: CliDeps = { userInfo: () => ({ username: 'fake-user', shell: '/fake/shell' }), home: '/fake', env: {}, platform: 'darwin', exists: () => true, sleep: async () => {}, execFile: async (_file, args, _options, input) => { calls.push(args); inputs.push(input); return JSON.stringify({ messages: [], hasMore: true }) } }
+  return { deps, calls, inputs }
 }
 test('read and send use exact arguments and bounded defaults', async () => {
-  const { deps, calls } = fake()
+  const { deps, calls, inputs } = fake()
   assert.equal((await readThread({ port: 8799, botId }, deps)).hasMore, true)
   assert.deepEqual(await sendMessage({ port: 8799, botId, text: 'hello\nworld', sendId }, deps), { sendId })
   assert.deepEqual(calls, [
     ['messages', '--bot', botId, '--limit', '20', '--port', '8799', '--json'],
-    ['send', '--bot', botId, '--text', 'hello\nworld', '--send-id', sendId, '--port', '8799', '--json']
+    ['send', '--bot', botId, '-', '--send-id', sendId, '--port', '8799', '--json']
   ])
+  assert.deepEqual(inputs, [undefined, 'hello\nworld'])
+  assert.equal(calls.flat().includes('hello\nworld'), false)
   await readThread({ port: 18799, botId, limit: 8 }, deps)
   assert.deepEqual(calls[2], ['messages', '--bot', botId, '--limit', '8', '--port', '18799', '--json'])
   assert.match(newSendId(), /^[a-zA-Z0-9_-]{16,80}$/)
