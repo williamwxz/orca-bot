@@ -34,7 +34,7 @@ export async function listBots(input: { port: number }, deps: HttpDeps = default
         state: bot.busy ? 'working' : bot.waitingForTeammates || bot.activity === 'waiting-on-you' ? 'waiting' : 'idle',
         unread: bot.unread === true,
         model: `${selection.instanceId}/${selection.model}`,
-        modelLabel: selection.model,
+        modelLabel: [selection.label, bot.modelLabel].find((label) => typeof label === 'string' && label.trim())?.trim() ?? selection.model.replace(/^[^/]+\//, '').replace(/^gpt(?=-|$)/i, 'GPT'),
         ...(typeof bot.threadId === 'string' && bot.threadId ? { activeTaskId: bot.threadId } : {}),
         ...(avatar ? { avatar } : {}),
         ...(addable ? { addable: true } : {})
@@ -56,4 +56,13 @@ export async function addMausBot(input: { port: number; botId: string }, deps: H
   } catch {
     throw new Error('Could not add MausBot. Try again from OpenMausBot settings.')
   }
+}
+
+// Check all bots, including hidden/person-owned ones, before stopping a server.
+export async function rosterBusy(port: number, deps: HttpDeps = defaultHttpDeps()): Promise<boolean> {
+  try {
+    const value = await deps.request(port, '/api/bots?messages=0') as { bots: Record<string, unknown>[] }
+    if (!Array.isArray(value?.bots)) return true
+    return value.bots.some((bot) => !bot || typeof bot !== 'object' || typeof bot.id !== 'string' || bot.busy || bot.waitingForTeammates || bot.activity === 'waiting-on-you')
+  } catch { return true }
 }

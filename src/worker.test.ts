@@ -222,3 +222,68 @@ test('status rechecks known health at most every two seconds and restarts discov
     await assert.rejects(worker.request('bots.list', {}), /not running yet/)
   } finally { await worker.deactivate() }
 })
+
+test('status restarts owned mismatched setup only after idle, reflects setting changes and exposes notice', async () => {
+  for (const owned of [false, true]) for (const busyInitially of [false, true]) {
+    let now = 0, busy = busyInitially, mismatch = true, starts = 0, stops = 0, inspections = 0
+    let release!: () => void
+    const host = mockHost({ settings: { shareClaudeSetup: true } })
+    let api: any
+    const choices: boolean[] = []
+    const worker = await mountWorker({ default: (orca) => { api = orca; register(orca, {
+      now: () => now, checkHealth: async () => true,
+      ensureServer: async (share) => { starts++; choices.push(share); mismatch = false; return { port: 18799, version: testedVersion, started: starts > 1, startedByPlugin: owned } },
+      claudeSetupStatus: async (_port, share) => { inspections++; return { restart: mismatch, message: share ? 'Claude tools on.' : 'Claude tools off.' } },
+      rosterBusy: async () => busy,
+      stopServer: async () => { stops++; await new Promise<void>((resolve) => { release = resolve }); return { stopped: true, message: '' } },
+      openChat: async () => ({ message: '' }), listBots: async () => [], addMausBot: async () => {},
+      readThread: async () => ({ messages: [], hasMore: false }), sendMessage: async () => ({ sendId: 'fake-send-id-000000' })
+    }) } }, { host })
+    try {
+      await worker.request('status', {})
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      mismatch = true
+      await api.settings.set('shareClaudeSetup', false)
+      let status = await worker.request('status', {}) as any
+      if (!owned || busyInitially) {
+        assert.equal(status.state, 'running'); assert.equal(stops, 0); assert.equal(starts, 1)
+        if (!owned) { assert.equal(inspections, 0); continue }
+        busy = false; now = 2000
+        status = await worker.request('status', {}) as any
+      }
+      assert.equal(status.state, 'starting')
+      assert.equal(status.message, 'Restarting OpenMausBot to apply your Claude setup…')
+      await worker.request('status', {})
+      assert.equal(stops, 1)
+      release()
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      assert.equal((await worker.request('status', {}) as any).state, 'running')
+      assert.equal(starts, 2); assert.deepEqual(choices, [true, false])
+      now = 4000
+      assert.equal((await worker.request('status', {}) as any).state, 'running')
+      assert.equal(stops, 1)
+    } finally { release?.(); await worker.deactivate() }
+  }
+})
+
+test('automatic restart respects stop refusal and contains restart failures', async () => {
+  for (const stopped of [false, true]) {
+    let starts = 0
+    const worker = await mountWorker({ default: (orca) => register(orca, {
+      now: () => 0, checkHealth: async () => true,
+      ensureServer: async () => { if (++starts > 1) throw new Error('private path'); return { port: 18799, version: testedVersion, started: false, startedByPlugin: true } },
+      claudeSetupStatus: async () => ({ restart: true, message: '' }), rosterBusy: async () => false,
+      stopServer: async () => ({ stopped, message: '' }),
+      openChat: async () => ({ message: '' }), listBots: async () => [], addMausBot: async () => {},
+      readThread: async () => ({ messages: [], hasMore: false }), sendMessage: async () => ({ sendId: 'fake-send-id-000000' })
+    }) }, { host: mockHost() })
+    try {
+      await worker.request('status', {}); await new Promise<void>((resolve) => setImmediate(resolve))
+      await worker.request('status', {}); await new Promise<void>((resolve) => setImmediate(resolve))
+      const status = await worker.request('status', {}) as any
+      assert.equal(status.state, stopped ? 'start_failed' : 'running')
+      assert.equal(starts, stopped ? 2 : 1)
+      assert.doesNotMatch(JSON.stringify(status), /private path/)
+    } finally { await worker.deactivate() }
+  }
+})

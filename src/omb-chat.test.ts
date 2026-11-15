@@ -6,7 +6,7 @@ const botId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
 const sendId = 'fake-send-id-000001'
 function fake() {
   const calls: string[][] = []
-  const deps: CliDeps = { home: '/fake', env: {}, platform: 'darwin', exists: () => true, sleep: async () => {}, execFile: async (_file, args) => { calls.push(args); return JSON.stringify({ messages: [], hasMore: true }) } }
+  const deps: CliDeps = { userInfo: () => ({ username: 'fake-user', shell: '/fake/shell' }), home: '/fake', env: {}, platform: 'darwin', exists: () => true, sleep: async () => {}, execFile: async (_file, args) => { calls.push(args); return JSON.stringify({ messages: [], hasMore: true }) } }
   return { deps, calls }
 }
 test('read and send use exact arguments and bounded defaults', async () => {

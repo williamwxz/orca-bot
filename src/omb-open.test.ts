@@ -8,7 +8,7 @@ const input = { port: 18799, startedByPlugin: true }
 function fake(paired = false) {
   const calls: string[][] = []
   const deps: CliDeps = {
-    home: '/fake', platform: 'darwin', env: {}, exists: () => true, sleep: async () => {},
+    userInfo: () => ({ username: 'fake-user', shell: '/fake/shell' }), home: '/fake', platform: 'darwin', env: {}, exists: () => true, sleep: async () => {},
     execFile: async (_file, args) => {
       calls.push(args)
       if (args[0] === 'pair') return secret

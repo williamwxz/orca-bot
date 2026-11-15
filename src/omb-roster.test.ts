@@ -1,5 +1,5 @@
 import { assert, test } from 'orca/testing'
-import { listBots, addMausBot } from './omb-roster.ts'
+import { listBots, addMausBot, rosterBusy } from './omb-roster.ts'
 import type { HttpDeps } from './omb-http.ts'
 const id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
 const bot = { id, name: 'Helper', title: '', chiefOfStaff: false, busy: false, modelSelection: { instanceId: 'codex', model: 'gpt-6' } }
@@ -37,7 +37,7 @@ test('raw fleet route carries thread, activity states and bounded avatar data', 
   assert.equal(result[0].activeTaskId, 'thread')
   assert.match(result[0].avatar!, /^data:image\/png/)
   assert.equal(result[0].model, 'codex/gpt-6')
-  assert.equal(result[0].modelLabel, 'gpt-6')
+  assert.equal(result[0].modelLabel, 'GPT-6')
   deps.avatar = async () => { throw new Error('missing') }
   assert.equal((await listBots({ port: 18799 }, deps))[0].avatar, undefined)
 })
@@ -55,4 +55,28 @@ test('malformed and failed roster responses show a plain error', async () => {
   for (const bots of [[null], [{ ...bot, id: 'bad' }], [{ ...bot, modelSelection: null }]]) {
     await assert.rejects(listBots({ port: 18799 }, fake(bots).deps), /Could not refresh bots/)
   }
+})
+
+test('model labels prefer supplied labels, remove instance prefix and only capitalise GPT', async () => {
+  for (const [selection, label, expected] of [
+    [{ model: 'gpt-6.1-sol' }, undefined, 'GPT-6.1-sol'],
+    [{ model: 'codex/gpt-6' }, undefined, 'GPT-6'],
+    [{ model: 'claude-custom' }, undefined, 'claude-custom'],
+    [{ model: 'id', label: 'Claude Sonnet' }, undefined, 'Claude Sonnet'],
+    [{ model: 'id' }, 'Friendly model', 'Friendly model']
+  ] as const) {
+    const { deps, calls } = fake([{ ...bot, modelSelection: { instanceId: 'codex', ...selection }, modelLabel: label }])
+    assert.equal((await listBots({ port: 18799 }, deps))[0].modelLabel, expected)
+    assert.equal(calls.length, 1)
+  }
+})
+
+test('restart safety includes hidden bots and fails closed on roster errors', async () => {
+  for (const activity of [{ busy: true }, { waitingForTeammates: true }, { activity: 'waiting-on-you' }]) {
+    assert.equal(await rosterBusy(18799, fake([{ ...bot, hidden: true, ...activity }]).deps), true)
+  }
+  assert.equal(await rosterBusy(18799, fake([bot]).deps), false)
+  const { deps } = fake([])
+  deps.request = async () => { throw new Error('offline') }
+  assert.equal(await rosterBusy(18799, deps), true)
 })
