@@ -6,6 +6,7 @@ export type Bot = {
   state: 'working' | 'waiting' | 'idle'
   unread: boolean
   modelLabel: string
+  activeTaskId?: string
 }
 
 export function mainFirst<T extends { main: boolean }>(bots: T[]): T[] {

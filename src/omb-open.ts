@@ -2,7 +2,7 @@ import { join } from 'node:path'
 import { cliOptions, defaultCliDeps, ombBinary } from './omb-cli.ts'
 import type { CliDeps } from './omb-cli.ts'
 
-export type OpenInput = { port: number; startedByPlugin: boolean; botId?: string }
+export type OpenInput = { port: number; startedByPlugin: boolean; botId?: string; activeTaskId?: string }
 export type OpenResult = { message: string }
 export const validBotId = (value: unknown): value is string => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
 
@@ -44,6 +44,12 @@ async function open(input: OpenInput, deps: CliDeps, forcePair: boolean): Promis
     }) as { browserPageId: string } | undefined
     const pair = input.startedByPlugin && (forcePair || !deps.fileExists(marker))
     let url = `${origin}/`
+    // Observed on OpenMausBot 0.1.158: activeTaskId is the thread ID used by the web UI.
+    // The worker resolves this from its roster, never from panel-supplied thread data.
+    if (input.botId && input.activeTaskId) {
+      const query = new URLSearchParams({ thread: input.activeTaskId, bot: input.botId })
+      url += `?${query}`
+    }
     if (pair) {
       const output = await deps.execFile(ombBinary(deps), ['pair', '--label', 'Orca', '--port', String(input.port), '--data-dir', join(deps.home, '.bot-deck/data')], cliOptions(deps))
       const links = output.match(/http:\/\/127\.0\.0\.1:\d+\/pair#[^\s\x1b]+/g) ?? []
@@ -51,9 +57,8 @@ async function open(input: OpenInput, deps: CliDeps, forcePair: boolean): Promis
       if (!link) throw new Error('Missing sign-in link')
       url = link
     }
-    // The installed UI requires a thread ID for deep links; bot IDs alone cannot select a chat.
     if (tab) {
-      await run(['goto', '--url', url, '--page', tab.browserPageId, '--json'])
+      if (pair || input.botId) await run(['goto', '--url', url, '--page', tab.browserPageId, '--json'])
       await run(['tab', 'switch', '--page', tab.browserPageId, '--focus', '--json'])
     } else {
       await run(['tab', 'create', '--url', url, '--json'])

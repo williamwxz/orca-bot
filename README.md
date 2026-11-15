@@ -12,8 +12,8 @@ its ordinary sign-in page without creating credentials.
 The panel lists bots with their engine/model, Working or Waiting state, unread
 indicator, and Main badge. The main bot appears first. The roster refreshes every
 five seconds while visible and keeps the last list if a refresh fails.
-Click a bot to open chat, then select its conversation in OpenMausBot: this version
-has no verified bot-ID-only link. **New bot** opens the same UI, where you create bots.
+Click a bot to open its active conversation, or the main UI if it has no active task.
+Open chat brings an existing tab forward without changing its conversation. **New bot** opens the same UI, where you create bots.
 
 ## How it starts OpenMausBot
 

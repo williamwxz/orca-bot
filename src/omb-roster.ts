@@ -14,6 +14,7 @@ function mapBot(value: unknown): Bot {
   const selection = bot.modelSelection as { instanceId?: unknown; model?: unknown } | null
   if (!selection || typeof selection.instanceId !== 'string' || typeof selection.model !== 'string') throw new Error('Invalid model')
   return {
+    ...(typeof bot.activeTaskId === 'string' && bot.activeTaskId.trim() ? { activeTaskId: bot.activeTaskId } : {}),
     id: bot.id,
     name: bot.name,
     title: bot.title,

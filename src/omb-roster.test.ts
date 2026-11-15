@@ -37,3 +37,13 @@ test('roster command errors never expose stderr', async () => {
   deps.execFile = async () => { throw new Error('stderr: password=secret') }
   await assert.rejects(listBots({ port: 18799 }, deps), { message: 'Could not refresh bots. Check that OpenMausBot is running.' })
 })
+
+test('roster carries only the active task ID and leaves bots without one unlinked', async () => {
+  const bots = [
+    { ...bot, activeTaskId: 'thread-active', tasks: [{ taskId: 'thread-old' }, { taskId: 'thread-active' }] },
+    { ...bot, activeTaskId: null, tasks: [{ taskId: 'thread-old' }] },
+    { ...bot, activeTaskId: '' }
+  ]
+  const result = await listBots({ port: 18799 }, fake(JSON.stringify({ bots })))
+  assert.deepEqual(result.map((item) => item.activeTaskId), ['thread-active', undefined, undefined])
+})

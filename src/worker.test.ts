@@ -23,7 +23,7 @@ test('status answers starting immediately and running after the fake attempt set
     assert.equal((await worker.request('status', {}) as { state: string }).state, 'starting')
     assert.equal((await worker.request('status', {}) as { state: string }).state, 'starting')
     assert.equal(calls, 1)
-    settle({ port: 8799, version: testedVersion, started: true })
+    settle({ port: 8799, version: testedVersion, started: true, startedByPlugin: true })
     await attempt
     await new Promise<void>((resolve) => queueMicrotask(resolve))
     assert.deepEqual(await worker.request('status', {}), {
@@ -76,7 +76,7 @@ test('version messages support suffixed and unknown versions', () => {
 test('chat and roster handlers refuse before running and validate bot IDs', async () => {
   const calls: unknown[] = []
   const worker = await mountWorker({ default: (orca) => register(orca, {
-    ensureServer: async () => ({ port: 18799, version: testedVersion, started: true }),
+    ensureServer: async () => ({ port: 18799, version: testedVersion, started: true, startedByPlugin: true }),
     stopServer: async () => ({ stopped: true, message: 'Stopped' }),
     openChat: async (input) => {
       calls.push(input)
@@ -113,6 +113,46 @@ test('chat and roster handlers refuse before running and validate bot IDs', asyn
     assert.deepEqual(calls[3], { port: 18799, startedByPlugin: true, botId: undefined })
     await worker.request('server.stop', {})
     await assert.rejects(worker.request('chat.open', {}), /OpenMausBot is not running yet/)
+  } finally {
+    await worker.deactivate()
+  }
+})
+
+test('bot chat resolves its thread from the last worker roster, never panel input', async () => {
+  const botId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+  const calls: unknown[] = []
+  let failRefresh = false
+  let activeTaskId: string | undefined = 'server-thread'
+  const worker = await mountWorker({ default: (orca) => register(orca, {
+    ensureServer: async () => ({ port: 18799, version: testedVersion, started: false, startedByPlugin: true }),
+    stopServer: async () => ({ stopped: true, message: 'Stopped' }),
+    openChat: async (input) => {
+      calls.push(input)
+      return { message: 'Opened' }
+    },
+    signInAgain: async () => ({ message: 'Opened' }),
+    listBots: async () => {
+      if (failRefresh) throw new Error('Offline')
+      return [{ id: botId, name: 'Bot', title: '', main: true, state: 'idle', unread: false, modelLabel: 'Codex', activeTaskId }]
+    }
+  }) }, { host: mockHost() })
+  try {
+    await worker.request('status', {})
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    await worker.request('chat.open', { botId, activeTaskId: 'panel-thread', threadId: 'panel-thread' })
+    assert.deepEqual(calls[0], { port: 18799, startedByPlugin: true, botId })
+    await worker.request('bots.list', {})
+    await worker.request('chat.open', { botId, activeTaskId: 'panel-thread' })
+    assert.deepEqual(calls[1], { port: 18799, startedByPlugin: true, botId, activeTaskId: 'server-thread' })
+    failRefresh = true
+    await assert.rejects(worker.request('bots.list', {}), /Offline/)
+    await worker.request('chat.open', { botId })
+    assert.deepEqual(calls[2], calls[1])
+    failRefresh = false
+    activeTaskId = undefined
+    await worker.request('bots.list', {})
+    await worker.request('chat.open', { botId, activeTaskId: 'panel-thread' })
+    assert.deepEqual(calls[3], calls[0])
   } finally {
     await worker.deactivate()
   }

@@ -47,21 +47,20 @@ test('first open pairs, creates tab with exact arguments and writes a private no
   assert.deepEqual(calls.map((call) => call.args), [['tab', 'list', '--json'], ['tab', 'create', '--url', `${origin}/`, '--json']])
 })
 
-test('existing same-origin tab is navigated and focused, including a pairing tab', async () => {
+test('plain open focuses the existing same-origin tab without navigating away', async () => {
   const { deps, calls } = fake()
   const exec = deps.execFile
   deps.execFile = async (file, args, options) => {
     const result = await exec(file, args, options)
     if (args[1] === 'list') return JSON.stringify({ ok: true, result: { tabs: [
       { browserPageId: 'wrong', url: `${origin}0/` },
-      { browserPageId: 'existing', url: secret }
+      { browserPageId: 'existing', url: `${origin}/?thread=current&bot=current` }
     ] } })
     return result
   }
   await openChat({ ...input, startedByPlugin: false }, deps)
   assert.deepEqual(calls.map((call) => call.args), [
     ['tab', 'list', '--json'],
-    ['goto', '--url', `${origin}/`, '--page', 'existing', '--json'],
     ['tab', 'switch', '--page', 'existing', '--focus', '--json']
   ])
 })
@@ -157,4 +156,32 @@ test('CLI failure envelopes and malformed tab lists do not create tabs or leak o
     await assert.rejects(openChat(input, deps), { message: 'Could not open chat. Check Orca and OpenMausBot, then try again.' })
     assert.equal(calls, 1)
   }
+})
+
+test('bot opens use the active thread address, and pairing still takes priority', async () => {
+  const botId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+  const activeTaskId = 'thread/with & characters'
+  const url = `${origin}/?${new URLSearchParams({ thread: activeTaskId, bot: botId })}`
+  const { deps, calls } = fake()
+  await openChat({ ...input, startedByPlugin: false, botId, activeTaskId }, deps)
+  assert.deepEqual(calls[1].args, ['tab', 'create', '--url', url, '--json'])
+  const exec = deps.execFile
+  deps.execFile = async (file, args, options) => {
+    const output = await exec(file, args, options)
+    if (args[1] === 'list') return JSON.stringify({ ok: true, result: { tabs: [{ browserPageId: 'existing', url: `${origin}/` }] } })
+    return output
+  }
+  calls.length = 0
+  await openChat({ ...input, startedByPlugin: false, botId, activeTaskId }, deps)
+  assert.deepEqual(calls.map((call) => call.args), [
+    ['tab', 'list', '--json'],
+    ['goto', '--url', url, '--page', 'existing', '--json'],
+    ['tab', 'switch', '--page', 'existing', '--focus', '--json']
+  ])
+  calls.length = 0
+  await signInAgain({ ...input, botId, activeTaskId }, deps)
+  assert.deepEqual(calls[2].args, ['goto', '--url', secret, '--page', 'existing', '--json'])
+  calls.length = 0
+  await openChat({ ...input, startedByPlugin: false, botId }, deps)
+  assert.deepEqual(calls[1].args, ['goto', '--url', `${origin}/`, '--page', 'existing', '--json'])
 })
