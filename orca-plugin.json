@@ -29,6 +29,10 @@
       {
         "id": "orcabot.stopServer",
         "title": "Orca Bot: Stop the OpenMausBot server"
+      },
+      {
+        "id": "orcabot.importTools",
+        "title": "Orca Bot: Bring in tools from my AI apps"
       }
     ],
     "settings": [

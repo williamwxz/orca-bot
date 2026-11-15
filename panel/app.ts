@@ -12,24 +12,29 @@ const running = element<HTMLElement>('running')
 const roster = element<HTMLElement>('roster')
 const refreshNote = element<HTMLElement>('refresh-note')
 const result = element<HTMLElement>('result')
-const setup = createSetup((answer) => frame.plugin.request('setup.answer', answer))
+const setup = createSetup((answer) => frame.plugin.request('setup.answer', answer), () => frame.plugin.request('tools.import', {}))
 const shareTools = element<HTMLInputElement>('share-tools')
+const importTools = element<HTMLInputElement>('import-tools')
 const linkAgents = element<HTMLInputElement>('link-agents')
 function renderSetup(): void {
   const state = setup.state
   element('setup').hidden = element('list-header').hidden || !state.loaded || state.answered
   element('link-agents-label').hidden = !agentNames(state.agents)
   element('agent-names').textContent = agentNames(state.agents)
+  element('import-tools-label').hidden = state.tools.length === 0
+  element('import-tools-copy').textContent = `Adds ${state.tools.length} tools from ${[...new Set(state.tools.map(t => t.source))].join(', ')} to OpenMausBot, switched off. Turn them on per bot in the Bot Dashboard. Tokens saved in those apps are copied to OpenMausBot on this computer.`
   element('setup-message').textContent = state.message
   for (const id of ['setup-allow', 'setup-skip']) element<HTMLButtonElement>(id).disabled = state.busy
-  shareTools.disabled = linkAgents.disabled = state.busy
+  importTools.disabled = shareTools.disabled = linkAgents.disabled = state.busy
 }
 async function answerSetup(allow: boolean): Promise<void> {
+  setup.state.importTools = importTools.checked
   setup.state.shareTools = shareTools.checked
   setup.state.linkAgents = linkAgents.checked
   const applying = setup.answer(allow)
   renderSetup()
   await applying
+  if (setup.state.answered && setup.state.message) result.textContent = setup.state.message
   renderSetup()
   await refreshAfterChange()
 }
@@ -203,7 +208,7 @@ async function refreshNow(explicitRetry: boolean): Promise<void> {
   retry.disabled = true
   let delay = 5000
   try {
-    try { setup.load(await frame.plugin.request('setup.get', {})); renderSetup() } catch { /* Retry with the next refresh; bots still load. */ }
+    try { setup.load(await frame.plugin.request('setup.get', {})); if (!setup.state.answered && !setup.state.toolsLoaded) setup.loadTools((await frame.plugin.request('tools.find', {})).tools); renderSetup() } catch { /* Retry with the next refresh; bots still load. */ }
     const status = await frame.plugin.request('status', { retry: explicitRetry })
     element<HTMLButtonElement>('open-page').disabled = opening || status.state !== 'running'
     message.textContent = status.message

@@ -1,3 +1,5 @@
+import { defaultImportDeps, findTools, importTools, importMessage } from './import-tools.ts'
+import type { Tool, ImportResult } from './import-tools.ts'
 import { defaultLinkDeps, findAgents, syncAgentLinks } from './agent-link.ts'
 import type { SetupAnswer } from './protocol.ts'
 import { readThread, sendMessage, newSendId } from './omb-chat.ts'
@@ -14,6 +16,8 @@ import type { ServerResult, StopResult } from './omb-server.ts'
 import { TESTED_OPENMAUSBOT_VERSION, compareVersions } from '../shared/omb-version.ts'
 
 export type WorkerDeps = {
+  findTools?: () => Promise<Tool[]>
+  importTools?: (port: number) => Promise<ImportResult>
   findAgents?: () => { claude: boolean; codex: boolean }
   syncAgentLinks?: (input: { enabled: boolean; owned: boolean; port: number }) => Promise<void>
   checkHealth: (port: number) => Promise<boolean>
@@ -35,7 +39,10 @@ function defaults(): WorkerDeps {
   const cli = defaultCliDeps()
   const http = defaultHttpDeps()
   const links = defaultLinkDeps()
+  const imports = defaultImportDeps()
   return {
+    findTools: () => findTools(imports),
+    importTools: port => importTools(port, imports),
     findAgents: () => findAgents(links),
     syncAgentLinks: async (input) => syncAgentLinks({ ...input, owned: input.owned && await isPluginServer(input.port, deps) }, links),
     checkHealth: (port) => serverHealthy(port, deps),
@@ -70,6 +77,7 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaults()): vo
   let opening: Promise<OpenResult> | undefined
   let lastHealthCheck = -Infinity
   let checking: Promise<void> | undefined
+  let importing: Promise<ImportResult> | undefined
   let answering: Promise<{ answered: true }> | undefined
   let linkSetting: boolean | undefined
   let linkRetryAt = -Infinity
@@ -134,7 +142,7 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaults()): vo
           const setup = await deps.claudeSetupStatus?.(checked.port!, share) ?? { restart: false, message: '' }
           if (status !== checked) return
           checked.message = [versionMessage(checked.version!), setup.message, linkMessage].filter(Boolean).join(' ')
-          if (!setup.restart || !deps.rosterBusy || await deps.rosterBusy(checked.port!)) return
+          if (importing || !setup.restart || !deps.rosterBusy || await deps.rosterBusy(checked.port!)) return
           if (status !== checked || pending) return
           const restartShare = share
           status = { ...checked, state: 'starting', message: 'Restarting OpenMausBot to apply your Claude setup…' }
@@ -176,6 +184,32 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaults()): vo
     if (status?.state !== 'running' || status.port === undefined) throw new Error('OpenMausBot is not running yet.')
     return status.port
   }
+  const bringTools = (): Promise<ImportResult> => {
+    if (importing) return importing
+    importing = Promise.resolve().then(async () => {
+      await checking
+      await pending
+      if (status?.state !== 'running') {
+        const share = await orca.storage.get('setupAnswered') === true && await orca.settings.get('shareClaudeSetup') === true
+        pending = deps.ensureServer(share).then(server => {
+          startedByPlugin = server.startedByPlugin
+          stopped = false
+          status = { state: 'running', message: versionMessage(server.version), port: server.port, version: server.version, testedVersion: TESTED_OPENMAUSBOT_VERSION }
+        }).catch(() => { throw new Error('Could not start OpenMausBot to import tools.') }).finally(() => { pending = undefined })
+        await pending
+      }
+      const port = runningPort()
+      if (!startedByPlugin || !deps.importTools) throw new Error('Tools can only be imported into a server Orca Bot started.')
+      try { return await deps.importTools(port) }
+      catch { throw new Error('Could not import or switch off tools. Check the Bot Dashboard.') }
+    }).finally(() => { importing = undefined })
+    return importing
+  }
+  orca.panels.handle('tools.find', async () => {
+    try { return { tools: await deps.findTools?.() ?? [] } } catch { return { tools: [] } }
+  })
+  orca.panels.handle('tools.import', bringTools)
+  orca.commands.register('orcabot.importTools', async () => ({ message: importMessage(await bringTools()) }))
   const chat = (input: { botId?: string } = {}): Promise<OpenResult> => {
     const port = runningPort()
     if (!input || typeof input !== 'object' || (input.botId !== undefined && !validBotId(input.botId))) throw new Error('Invalid bot ID.')
@@ -208,6 +242,8 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaults()): vo
   })
   orca.commands.register('orcabot.open', () => chat())
   const stop = async (): Promise<StopResult> => {
+    // Finish importing and switching tools off before stopping our server.
+    await importing?.catch(() => {})
     // Wait for our own startup so a stop command cannot leave it running afterwards.
     await pending
     const result = await deps.stopServer()

@@ -39,6 +39,10 @@ Grok signed in on this computer.
 
 Good to know:
 
+- **Orca Bot: Bring in tools from my AI apps** in the command palette, or the
+  matching setup-card row, copies tools from your AI apps into OpenMausBot,
+  switched off. Turn them on per bot in the Bot Dashboard.
+
 - The panel shows the last 20 messages as plain text and sends messages of up to
   16,000 characters. Anything richer says "This needs the full chat."
 - **Add MausBot** brings back the main bot if you hid it.
@@ -72,6 +76,10 @@ line tool to open the browser tab.
 ### What Orca Bot does to protect you
 
 - **Asks first.**
+- **Imported tools stay on this computer.** Imported tool definitions, including
+  any tokens in them, are copied into OpenMausBot's settings in `~/.orca-bot/data`;
+  tools arrive switched off. Orca Bot uses an internal OpenMausBot route for this,
+  which a new OpenMausBot version may change.
 - **Usage analytics are off.** OpenMausBot's page sends anonymous usage events
   to PostHog by default. For a server Orca Bot starts, it switches this off
   before the page first loads. If you turn it on yourself in OpenMausBot's
