@@ -1,5 +1,5 @@
 import { register } from './worker.ts'
-import { openChat, signInAgain } from './omb-open.ts'
+import { openChat } from './omb-open.ts'
 import type { CliDeps } from './omb-cli.ts'
 import { assert, test, mockHost, mountWorker } from 'orca/testing'
 import { checkNode, ensureInstalled, ensureServer, findServer, startServer, stopServer } from './omb-server.ts'
@@ -284,10 +284,10 @@ test('fresh workers recover pairing ownership only from a matching persisted ser
     const cli: CliDeps = {
       home: '/fake', platform: 'darwin', env: {},
       exists: () => true,
-      fileExists: (path) => files.has(path),
-      write: (path, value) => { files.set(path, value) },
+      sleep: async () => {},
       execFile: async (_file, args) => {
         cliCalls.push(args)
+        if (args[0] === 'snapshot') return 'button "Connect" [ref=e11]'
         if (args[0] === 'pair') return 'http://127.0.0.1:8799/pair#code=FAKE-ONLY'
         if (args[1] === 'list') return JSON.stringify({ ok: true, result: { tabs: [] } })
         return JSON.stringify({ ok: true, result: { browserPageId: 'fake-page' } })
@@ -297,7 +297,10 @@ test('fresh workers recover pairing ownership only from a matching persisted ser
       ensureServer: () => ensureServer(deps),
       stopServer: async () => ({ stopped: false, message: 'Unused' }),
       openChat: (input) => openChat(input, cli),
-      signInAgain: (input) => signInAgain(input, cli),
+      listModels: async () => [],
+      createBot: async () => { throw new Error('Unused') },
+      setModel: async () => {},
+      addMausBot: async () => {},
       listBots: async () => []
     }) }, { host: mockHost() })
     try {
@@ -306,7 +309,7 @@ test('fresh workers recover pairing ownership only from a matching persisted ser
       await worker.request('chat.open', {})
       const owned = record?.port === 8799 && record.serverPid === 43
       assert.equal(cliCalls.filter((args) => args[0] === 'pair').length, owned ? 1 : 0)
-      await worker.request('chat.signIn', {})
+      await worker.request('chat.open', {})
       assert.equal(cliCalls.filter((args) => args[0] === 'pair').length, owned ? 2 : 0)
     } finally {
       await worker.deactivate()

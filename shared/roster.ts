@@ -6,6 +6,9 @@ export type Bot = {
   state: 'working' | 'waiting' | 'idle'
   unread: boolean
   modelLabel: string
+  model?: string
+  avatar?: string
+  addable?: boolean
   activeTaskId?: string
 }
 

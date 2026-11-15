@@ -1,42 +1,59 @@
-import { cliOptions, defaultCliDeps, ombBinary } from './omb-cli.ts'
-import type { CliDeps } from './omb-cli.ts'
+import { defaultHttpDeps } from './omb-http.ts'
+import type { HttpDeps } from './omb-http.ts'
 import { mainFirst } from '../shared/roster.ts'
 import type { Bot } from '../shared/roster.ts'
 import { validBotId } from './omb-open.ts'
+import { addableMausBot, visibleBot } from '../shared/appearance.ts'
 
-function mapBot(value: unknown): Bot {
-  if (!value || typeof value !== 'object') throw new Error('Invalid bot')
-  const bot = value as Record<string, unknown>
-  if (!validBotId(bot.id) || typeof bot.name !== 'string' || typeof bot.title !== 'string') throw new Error('Invalid bot')
-  for (const field of ['chiefOfStaff', 'busy', 'waitingForTeammates', 'unread']) {
-    if (typeof bot[field] !== 'boolean') throw new Error('Invalid bot')
-  }
-  const selection = bot.modelSelection as { instanceId?: unknown; model?: unknown } | null
-  if (!selection || typeof selection.instanceId !== 'string' || typeof selection.model !== 'string') throw new Error('Invalid model')
-  return {
-    ...(typeof bot.activeTaskId === 'string' && bot.activeTaskId.trim() ? { activeTaskId: bot.activeTaskId } : {}),
-    id: bot.id,
-    name: bot.name,
-    title: bot.title,
-    main: bot.chiefOfStaff as boolean,
-    state: bot.busy ? 'working' : bot.waitingForTeammates ? 'waiting' : 'idle',
-    unread: bot.unread as boolean,
-    modelLabel: [selection.instanceId, selection.model].filter(Boolean).join(' / ') || 'Default model'
-  }
-}
-
-export async function listBots(input: { port: number }, deps: CliDeps = defaultCliDeps()): Promise<Bot[]> {
-  let output: string
+export async function listBots(input: { port: number }, deps: HttpDeps = defaultHttpDeps()): Promise<Bot[]> {
   try {
-    output = await deps.execFile(ombBinary(deps), ['bots', '--port', String(input.port), '--json'], cliOptions(deps))
+    // The CLI projection discards hidden/sidebarHidden/defaultBot and avatarUrl.
+    // Use its underlying fleet route so visibility never depends on activity being present.
+    const value = await deps.request(input.port, '/api/bots?messages=0') as { bots: Record<string, any>[] }
+    if (!Array.isArray(value?.bots)) throw new Error('Invalid roster')
+    const bots: Bot[] = []
+    for (const bot of value.bots) {
+      if (!bot || !validBotId(bot.id) || typeof bot.name !== 'string') throw new Error('Invalid bot')
+      const addable = addableMausBot(bot)
+      if (!visibleBot(bot) && !addable) continue
+      const selection = bot.modelSelection
+      if (typeof selection?.instanceId !== 'string' || typeof selection.model !== 'string') throw new Error('Invalid model')
+      let avatar: string | undefined
+      if (typeof bot.avatarUrl === 'string' && bot.avatarCrop !== 'mascot') {
+        try {
+          avatar = await deps.avatar(input.port, bot.avatarUrl)
+        } catch {
+          // A missing or oversized image must never hide a bot.
+        }
+      }
+      bots.push({
+        id: bot.id,
+        name: bot.name,
+        title: typeof bot.title === 'string' ? bot.title : '',
+        main: bot.chiefOfStaff === true,
+        state: bot.busy ? 'working' : bot.waitingForTeammates || bot.activity === 'waiting-on-you' ? 'waiting' : 'idle',
+        unread: bot.unread === true,
+        model: `${selection.instanceId}/${selection.model}`,
+        modelLabel: 'Unknown model',
+        ...(typeof bot.threadId === 'string' && bot.threadId ? { activeTaskId: bot.threadId } : {}),
+        ...(avatar ? { avatar } : {}),
+        ...(addable ? { addable: true } : {})
+      })
+    }
+    return mainFirst(bots)
   } catch {
     throw new Error('Could not refresh bots. Check that OpenMausBot is running.')
   }
+}
+
+export async function addMausBot(input: { port: number; botId: string }, deps: HttpDeps = defaultHttpDeps()): Promise<void> {
+  if (!validBotId(input.botId)) throw new Error('Invalid bot ID.')
+  const bots = await listBots(input, deps)
+  if (!bots.some((bot) => bot.id === input.botId && bot.addable)) throw new Error('MausBot is no longer hidden. Refresh the roster.')
   try {
-    const value = JSON.parse(output)
-    if (!Array.isArray(value?.bots)) throw new Error('Invalid roster')
-    return mainFirst(value.bots.map(mapBot))
+    // The UI's Add MausBot welcome action saves these same visibility fields.
+    await deps.request(input.port, `/api/bots/${input.botId}`, { welcomed: true, sidebarHidden: false, pinned: true })
   } catch {
-    throw new Error('OpenMausBot returned an unexpected bot list.')
+    throw new Error('Could not add MausBot. Try again from OpenMausBot settings.')
   }
 }

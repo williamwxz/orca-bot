@@ -7,8 +7,7 @@ import { TESTED_OPENMAUSBOT_VERSION } from '../shared/omb-version.ts'
 export type CliDeps = {
   execFile: (file: string, args: string[], options: { env: NodeJS.ProcessEnv; timeout: number }) => Promise<string>
   exists: (path: string) => boolean
-  fileExists: (path: string) => boolean
-  write: (path: string, value: string, mode: number) => void
+  sleep: (ms: number) => Promise<void>
   home: string
   platform: string
   env: NodeJS.ProcessEnv
@@ -32,11 +31,7 @@ export function defaultCliDeps(): CliDeps {
         return false
       }
     },
-    fileExists: fs.existsSync,
-    write: (path, value, mode) => {
-      fs.writeFileSync(path, value, { mode })
-      fs.chmodSync(path, mode)
-    },
+    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     home: homedir(),
     platform: process.platform,
     env: { ...process.env }
