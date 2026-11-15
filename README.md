@@ -121,8 +121,7 @@ line tool to open the browser tab.
 To remove everything: stop the server from the command palette, uninstall the
 plugin, and delete `~/.bot-deck`.
 
-Found a problem? Please report it privately to the maintainer (GitHub's
-"Report a vulnerability" on this repository) rather than in a public issue.
+Found a problem? See [SECURITY.md](SECURITY.md).
 
 ## Development
 
@@ -137,8 +136,8 @@ orca plugin dev watch .    # load locally and reload on save
 
 ## License and credits
 
-Bot Deck is MIT licensed. OpenMausBot is by milind-soni and contributors, under
-Apache-2.0. The panel adapts its colours and layout values; see
+Bot Deck is licensed under [Apache-2.0](LICENSE), the same license as
+OpenMausBot, which is by milind-soni and contributors. The panel adapts its colours and layout values; see
 [NOTICE](NOTICE).
 
 The earlier Grok Bot client is kept at the tag `grok-bot-final`.
