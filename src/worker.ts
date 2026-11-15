@@ -2,6 +2,7 @@
 // own client (src/gateway.ts) with the session of the signed-in Grok Bot desktop app
 // (src/session.ts). Nothing is stored: the session lives in this process's memory only.
 import type { OrcaWorkerApi } from 'orca/worker'
+import { createStatusLine } from '../shared/status.ts'
 import type { Bot } from '../shared/model.ts'
 import { createConnection, type ConnectionDeps } from './connection.ts'
 import { createGatewayClient } from './gateway.ts'
@@ -40,6 +41,7 @@ export function createClient(deps: ConnectionDeps = {}) {
 /** Registers the panel's handlers. Tests pass fakes for the session and the network. */
 export function register(orca: OrcaWorkerApi, deps: ConnectionDeps = {}): void {
   const { connection, client } = createClient(deps)
+  const statusLines = new Map<string, ReturnType<typeof createStatusLine>>()
   const handle = orca.panels.handle as (
     name: string,
     handler: (input: any) => Promise<unknown>
@@ -48,12 +50,22 @@ export function register(orca: OrcaWorkerApi, deps: ConnectionDeps = {}): void {
   // Also the panel's Refresh: it re-reads the desktop app, so a newly signed-in account is used.
   handle('status', async () => {
     connection.reset()
+    statusLines.clear()
     try {
       await connection.getRoute()
       return { ok: true, message: '' }
     } catch (error) {
       return { ok: false, message: error instanceof Error ? error.message : 'Could not connect' }
     }
+  })
+
+  handle('status.read', async (input) => {
+    const id = requireId(input?.id)
+    const read = statusLines.get(id) ?? createStatusLine()
+    const result = read(await client.botStatus(id), Date.now())
+    if (result.state === 'idle') statusLines.delete(id)
+    else statusLines.set(id, read)
+    return result
   })
 
   handle('bots.list', () => client.listBots())

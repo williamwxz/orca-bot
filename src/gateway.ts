@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { listServerBots, sendServerMessage, deleteServerBot } from './server.ts'
+import { listServerBots, sendServerMessage, deleteServerBot, getBotStatus } from './server.ts'
 import { toBot, toEntry } from '../shared/model.ts'
 import {
   assertAllowedCredentialUrl, normalizeHeaders, backendHeaders, request, READ_METHODS,
@@ -140,6 +140,15 @@ export function createGatewayClient(options: ClientOptions) {
     return r.entries.map(record)
   }
   return {
+    async botStatus(id: string) {
+      if (harnesses.get(id) !== 'temporal' || !options.getAccount) return undefined
+      try {
+        const { account, appVersion } = await serverAccount()
+        return (await getBotStatus(account, appVersion, id, options))?.live
+      } catch {
+        return undefined
+      }
+    },
     async listBots() {
       const rows = await agents()
       let serverHarnesses = new Map<string, string>()

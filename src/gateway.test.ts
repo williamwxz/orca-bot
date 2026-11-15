@@ -363,3 +363,42 @@ test('reset supersedes a pending account load without retaining its credentials'
   assert.equal(current.account.key, 'fixture-new')
   assert.equal((await connection.getAccount()).account.key, 'fixture-new')
 })
+
+test('botStatus reads only known server bots and returns raw live records', async () => {
+  const live = { isRunning: true, updatedAtMs: '1000', activity: { kind: 'thinking' } }
+  const f = fake([{ agents: [{ id: 'server', harness: 'temporal' }, { id: 'box', harness: 'box' }] },
+    { statuses: [{ agentId: 'server', isRunning: true, live }] }])
+  const client = createGatewayClient({
+    fetch: f.fetch,
+    getRoute: () => route,
+    refreshRoute: () => route,
+    getAccount: () => ({ account: { key: 'fixture', accessToken: 'fixture-token' } })
+  })
+  assert.equal(await client.botStatus('server'), undefined)
+  assert.equal(f.calls.length, 0)
+  await client.listBots()
+  assert.equal(await client.botStatus('box'), undefined)
+  assert.equal(await client.botStatus('unknown'), undefined)
+  assert.equal(f.calls.length, 1)
+  assert.deepEqual(await client.botStatus('server'), live)
+  assert.equal(f.calls.length, 2)
+  assert.ok(f.calls[1].url.endsWith('/ListGrokBotAgentStatuses'))
+})
+test('botStatus suppresses missing accounts and every request failure', async () => {
+  const f = fake([{ agents: [{ id: 'server', harness: 'temporal' }] }])
+  await f.client.listBots()
+  assert.equal(await f.client.botStatus('server'), undefined)
+  assert.equal(f.calls.length, 1)
+  for (const failure of [new Error('offline'), new Response('{}', { status: 403 }), {}]) {
+    const g = fake([{ agents: [{ id: 'server', harness: 'temporal' }] }, failure])
+    const client = createGatewayClient({
+      fetch: g.fetch,
+      getRoute: () => route,
+      refreshRoute: () => route,
+      getAccount: () => ({ account: { key: 'fixture', accessToken: 'fixture-token' } })
+    })
+    await client.listBots()
+    assert.equal(await client.botStatus('server'), undefined)
+    assert.equal(g.calls.length, 2)
+  }
+})

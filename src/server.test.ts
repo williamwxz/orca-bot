@@ -1,5 +1,5 @@
 import { assert, test } from 'orca/testing'
-import { deleteServerBot, listServerBots, sendServerMessage } from './server.ts'
+import { deleteServerBot, listServerBots, sendServerMessage, getBotStatus } from './server.ts'
 import { request } from './gateway.ts'
 
 const account = { key: 'fixture-account', accessToken: 'fixture-access-token', teamId: '42' }
@@ -119,4 +119,23 @@ test('backend send deadline and 5xx are unknown with one request and no replay',
     await assert.rejects(sendServerMessage(account, undefined, input, f), (e: any) => e.code === 'outcome_unknown')
     assert.equal(f.calls.length, 1)
   }
+})
+
+test('status read has exact wire request and preserves live and top-level running flags', async () => {
+  const live = { agentId: input.agentId, isRunning: false, updatedAtMs: '1000' }
+  const row = { agentId: input.agentId, isRunning: true, live }
+  const f = fake({ statuses: [{ agentId: 'other', isRunning: false }, row] })
+  assert.deepEqual(await getBotStatus(account, '1.2.3', input.agentId, f), row)
+  check(f.calls[0], 'ListGrokBotAgentStatuses', { agentIds: [input.agentId] })
+  for (const body of [{}, { statuses: [] }, { statuses: [{ agentId: 'other' }] }]) {
+    assert.equal(await getBotStatus(account, undefined, input.agentId, fake(body)), undefined)
+  }
+})
+test('status errors use read mappings and reject malformed successful JSON', async () => {
+  for (const code of ['unauthenticated', 'permission_denied', 'unimplemented']) {
+    await assert.rejects(getBotStatus(account, undefined, input.agentId, fake({ code }, 403)), (e: any) =>
+      e.code === (code === 'unimplemented' ? 'unsupported_version' : 'not_signed_in'))
+  }
+  const fetch = (async () => new Response('{')) as typeof globalThis.fetch
+  await assert.rejects(getBotStatus(account, undefined, input.agentId, { fetch }), (e: any) => e.code === 'unsupported_version')
 })

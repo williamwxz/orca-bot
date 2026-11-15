@@ -1,4 +1,8 @@
-import { backendHeaders, redact, request, type Account, type Dependencies } from './transport.ts'
+import type { GrokBotAgentLiveState } from '../shared/status.ts'
+import { backendHeaders, redact, request, READ_METHODS, type Account, type Dependencies } from './transport.ts'
+
+// Register this unary read with the shared transport's response handling.
+READ_METHODS.add('ListGrokBotAgentStatuses')
 
 export type ServerBot = { agentId: string; id: string; harness: string }
 export type ServerMessage = { agentId: string; text: string; messageId: string }
@@ -19,7 +23,7 @@ const UNKNOWN_CONNECT_CODES = new Set([
 ])
 function mapBackendError(error: unknown, method: string) {
   const e = error as any
-  const read = method === 'ListGrokBotAgents'
+  const read = method === 'ListGrokBotAgents' || method === 'ListGrokBotAgentStatuses'
   if (e.connectCode === 'unimplemented') {
     throw failure('unsupported_version', 'This version of Grok Bot is not supported yet')
   }
@@ -92,4 +96,13 @@ export async function sendServerMessage(
 }
 export async function deleteServerBot(account: Account, appVersion: string | undefined, agentId: string, deps: Dependencies): Promise<void> {
   await call(account, appVersion, 'DeleteGrokBotAgent', { id: agentId }, deps)
+}
+
+export type BotStatus = { agentId: string; live?: GrokBotAgentLiveState; isRunning: boolean }
+export async function getBotStatus(
+  account: Account, appVersion: string | undefined, agentId: string, deps: Dependencies
+): Promise<BotStatus | undefined> {
+  const result = await call(account, appVersion, 'ListGrokBotAgentStatuses', { agentIds: [agentId] }, deps)
+  if (!Array.isArray(result?.statuses)) return undefined
+  return result.statuses.find((status: BotStatus) => status?.agentId === agentId)
 }

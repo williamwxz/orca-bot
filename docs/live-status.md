@@ -553,3 +553,14 @@ require importing the desktop's full animation/state framework.
 8. High confidence: desktop watch defaults to protobuf; server-streaming JSON acceptance is inferred, not tested.
 9. Recommendation: validate unary polling first; if streaming, use one selected-bot worker watch and fixed Working… fallback.
 10. Open: deployed support/headers/filtering, unary session semantics, failure clearing, pre-frame UI, and absolute lifetime semantics.
+
+## Implemented in Bot Deck
+
+The data path now provides `getBotStatus`, server-run-only `botStatus(id)`, and
+`status.read { id }` for later panel polling. The pure `statusLine` formatter
+handles freshness, SetStatus detail, typing and the exact generic/thinking
+phrases above; `createStatusLine` retains a phrase while activity is unchanged.
+The worker keeps this state per bot and clears idle results. Status failures
+return idle without disrupting chat. Panel wiring is a separate task.
+The endpoint is still untested against the real server; coverage uses fake fetch
+and fake desktop sessions only.
