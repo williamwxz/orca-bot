@@ -23,5 +23,10 @@ export function replaceConfigAtomically(path: string, value: string, temp: strin
     created = true
     io.chmodSync(temp, mode)
     io.renameSync(temp, path)
-  } finally { if (created) try { io.unlinkSync(temp) } catch {} }
+  } finally {
+    if (created)
+      try {
+        io.unlinkSync(temp)
+      } catch {}
+  }
 }

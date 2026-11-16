@@ -4,9 +4,15 @@ import { cliOptions } from './omb-cli.ts'
 import type { CliDeps } from './omb-cli.ts'
 
 function fake(env: NodeJS.ProcessEnv = {}): CliDeps {
-  return { home: '/fake', platform: 'darwin', env,
+  return {
+    home: '/fake',
+    platform: 'darwin',
+    env,
     userInfo: () => ({ username: 'fake-user', shell: '/fake/shell' }),
-    exists: () => false, sleep: async () => {}, execFile: async () => '' }
+    exists: () => false,
+    sleep: async () => {},
+    execFile: async () => ''
+  }
 }
 
 test('child environment fills account and locale values without mutating parent', () => {
@@ -23,7 +29,9 @@ test('child environment fills account and locale values without mutating parent'
 test('present account values and either locale are preserved, including empty strings', () => {
   for (const value of ['existing', '']) {
     const deps = fake({ USER: value, LOGNAME: value, SHELL: value, LANG: value })
-    deps.userInfo = () => { throw new Error('No lookup needed') }
+    deps.userInfo = () => {
+      throw new Error('No lookup needed')
+    }
     const env = childEnvironment(deps)
     for (const key of ['USER', 'LOGNAME', 'SHELL', 'LANG']) assert.equal(env[key], value)
     const withLocale = childEnvironment(fake({ LC_ALL: value }))

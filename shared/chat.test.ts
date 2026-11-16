@@ -1,31 +1,56 @@
 import { assert, test } from 'orca/testing'
-import { parseThread, collapseActivities, refreshInterval, sendDraft, displayText, reconcileAttempts, elapsedTime } from './chat.ts'
+import {
+  parseThread,
+  collapseActivities,
+  refreshInterval,
+  sendDraft,
+  displayText,
+  reconcileAttempts,
+  elapsedTime
+} from './chat.ts'
 import type { Composer } from './chat.ts'
 
 test('recent messages hide digests, collapse tools, preserve text and flag unknown content', () => {
-  const result = parseThread({ hasMore: true, messages: [
-    { id: '4', at: 4, kind: 'approval', text: 'SECRET' },
-    { id: '1', at: 1, role: 'user', kind: 'text', text: 'Hello\nworld <b>text</b>' },
-    { id: '2', at: 2, kind: 'activity', tool: { name: 'linear.list_teams', arguments: 'SECRET', output: 'SECRET' } },
-    { id: '3', at: 3, kind: 'activity', tool: {} },
-    { id: '5', at: 5, kind: 'digest', text: '[digest] SECRET' }
-  ] })
+  const result = parseThread({
+    hasMore: true,
+    messages: [
+      { id: '4', at: 4, kind: 'approval', text: 'SECRET' },
+      { id: '1', at: 1, role: 'user', kind: 'text', text: 'Hello\nworld <b>text</b>' },
+      {
+        id: '2',
+        at: 2,
+        kind: 'activity',
+        tool: { name: 'linear.list_teams', arguments: 'SECRET', output: 'SECRET' }
+      },
+      { id: '3', at: 3, kind: 'activity', tool: {} },
+      { id: '5', at: 5, kind: 'digest', text: '[digest] SECRET' }
+    ]
+  })
   assert.equal(result.hasMore, true)
   assert.equal(result.messages[0].text, 'Hello\nworld <b>text</b>')
   assert.equal(result.messages[0].role, 'user')
   assert.equal(result.messages[1].text, 'Used a tool: list_teams')
-  assert.deepEqual(collapseActivities(result.messages).map((m) => m.text), ['Hello\nworld <b>text</b>', 'Used 2 tools', 'This needs the full chat.'])
+  assert.deepEqual(
+    collapseActivities(result.messages).map((m) => m.text),
+    ['Hello\nworld <b>text</b>', 'Used 2 tools', 'This needs the full chat.']
+  )
   assert.doesNotMatch(JSON.stringify(result), /SECRET|digest|arguments|output/)
   assert.equal(parseThread({ messages: [] }).hasMore, false)
 })
 test('text is cut only above 4000 characters and unknown kinds stay plain', () => {
-  const thread = parseThread({ messages: [
-    { kind: 'text', text: 'a'.repeat(4000) }, { kind: 'text', text: 'a'.repeat(4001) },
-    ...['file', 'card', 'form', 'new-kind'].map((kind) => ({ kind, text: 'hidden' }))
-  ] })
+  const thread = parseThread({
+    messages: [
+      { kind: 'text', text: 'a'.repeat(4000) },
+      { kind: 'text', text: 'a'.repeat(4001) },
+      ...['file', 'card', 'form', 'new-kind'].map((kind) => ({ kind, text: 'hidden' }))
+    ]
+  })
   assert.equal(thread.messages[0].text.length, 4000)
   assert.equal(displayText(thread.messages[1].text), 'a'.repeat(4000) + '… Open the full chat for the rest.')
-  assert.equal(thread.messages.slice(2).every((m) => m.kind === 'unsupported' && m.text === 'This needs the full chat.'), true)
+  assert.equal(
+    thread.messages.slice(2).every((m) => m.kind === 'unsupported' && m.text === 'This needs the full chat.'),
+    true
+  )
 })
 test('refresh uses two seconds when working or sending, otherwise six', () => {
   for (const state of ['working', 'idle', 'waiting'] as const) {
@@ -37,7 +62,12 @@ test('send shows pending immediately, restores failed text and never resends aut
   const state: Composer = { draft: 'Hello', attempts: [], sending: false }
   let fail!: (error: Error) => void
   let calls = 0
-  const send = () => { calls++; return new Promise<void>((_resolve, reject) => { fail = reject }) }
+  const send = () => {
+    calls++
+    return new Promise<void>((_resolve, reject) => {
+      fail = reject
+    })
+  }
   const pending = sendDraft(state, ['old'], send, () => {})
   assert.equal(state.draft, '')
   assert.equal(state.attempts[0].state, 'pending')
@@ -55,17 +85,26 @@ test('send shows pending immediately, restores failed text and never resends aut
 test('empty and over-limit messages do not send', async () => {
   for (const draft of ['  ', 'x'.repeat(16001)]) {
     const state: Composer = { draft, attempts: [], sending: false }
-    await sendDraft(state, [], async () => { throw new Error('must not call') }, () => {})
+    await sendDraft(
+      state,
+      [],
+      async () => {
+        throw new Error('must not call')
+      },
+      () => {}
+    )
     assert.equal(state.attempts.length, 0)
   }
 })
 
 test('screenshot Hi echo and reply remove the local copy, even if echo arrived before acceptance', () => {
   const attempt = { text: 'Hi', state: 'sent' as const, sentAt: 10000 }
-  const messages = parseThread({ messages: [
-    { id: 'hi', role: 'user', kind: 'text', text: 'Hi', at: 9000 },
-    { id: 'reply', role: 'bot', kind: 'text', text: 'Hi! What can I help with?', at: 11000 }
-  ] }).messages
+  const messages = parseThread({
+    messages: [
+      { id: 'hi', role: 'user', kind: 'text', text: 'Hi', at: 9000 },
+      { id: 'reply', role: 'bot', kind: 'text', text: 'Hi! What can I help with?', at: 11000 }
+    ]
+  }).messages
   assert.deepEqual(reconcileAttempts([attempt], messages).attempts, [])
   assert.deepEqual(reconcileAttempts([{ ...attempt, state: 'pending' }], messages).attempts, [])
 })
@@ -77,14 +116,34 @@ test('identical sends consume separate echoes across refreshes with five seconds
   assert.deepEqual(initial.attempts, [second])
   const repeated = reconcileAttempts(initial.attempts, [echo], initial.matchedIds)
   assert.deepEqual(repeated.attempts, [second])
-  assert.deepEqual(reconcileAttempts(repeated.attempts, [echo, { ...echo, id: 'two', at: 11000 }], repeated.matchedIds).attempts, [])
-  for (const invalid of [{ ...echo, at: 4999 }, { ...echo, role: 'bot' as const }, { ...echo, text: 'hi' }]) {
+  assert.deepEqual(
+    reconcileAttempts(repeated.attempts, [echo, { ...echo, id: 'two', at: 11000 }], repeated.matchedIds)
+      .attempts,
+    []
+  )
+  for (const invalid of [
+    { ...echo, at: 4999 },
+    { ...echo, role: 'bot' as const },
+    { ...echo, text: 'hi' }
+  ]) {
     assert.deepEqual(reconcileAttempts([first], [invalid]).attempts, [first])
   }
   assert.deepEqual(reconcileAttempts([first], [{ ...echo, at: 5000 }]).attempts, [])
   assert.deepEqual(reconcileAttempts([{ ...first, state: 'failed' }], [echo]).attempts.length, 1)
-  assert.deepEqual(reconcileAttempts([{ ...first, text: 'x'.repeat(5000) }], [{ ...echo, text: 'x'.repeat(5000) }]).attempts, [])
+  assert.deepEqual(
+    reconcileAttempts([{ ...first, text: 'x'.repeat(5000) }], [{ ...echo, text: 'x'.repeat(5000) }]).attempts,
+    []
+  )
 })
 test('elapsed working time counts whole seconds and minutes', () => {
-  for (const [ms, label] of [[0, '0s'], [3999, '3s'], [59000, '59s'], [60000, '1m 0s'], [65000, '1m 5s'], [120000, '2m 0s'], [-1000, '0s']] as const) assert.equal(elapsedTime(1000, 1000 + ms), label)
+  for (const [ms, label] of [
+    [0, '0s'],
+    [3999, '3s'],
+    [59000, '59s'],
+    [60000, '1m 0s'],
+    [65000, '1m 5s'],
+    [120000, '2m 0s'],
+    [-1000, '0s']
+  ] as const)
+    assert.equal(elapsedTime(1000, 1000 + ms), label)
 })

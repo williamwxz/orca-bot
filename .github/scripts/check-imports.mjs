@@ -6,9 +6,11 @@ import { lstatSync, readFileSync, readdirSync } from 'node:fs'
 import { join, posix, relative } from 'node:path'
 
 const root = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim()
-const committed = new Set(execFileSync('git', [
-  'ls-tree', '-r', '--name-only', '-z', 'HEAD',
-], { cwd: root, encoding: 'utf8' }).split('\0').filter(Boolean))
+const committed = new Set(
+  execFileSync('git', ['ls-tree', '-r', '--name-only', '-z', 'HEAD'], { cwd: root, encoding: 'utf8' })
+    .split('\0')
+    .filter(Boolean)
+)
 const failures = []
 let checked = 0
 

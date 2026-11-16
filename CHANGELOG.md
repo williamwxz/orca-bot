@@ -1,10 +1,13 @@
 # Changelog
 
-## 0.1.3
+## 0.1.3 (16 November 2026)
 
 - Plugin icon, and author and repository links on the plugin page.
 - Removed the deprecated `publisher` field; Orca takes it from the repository
   owner.
+- Source reformatted to short, readable lines, and generated listing pages are
+  no longer shipped. Orca's directory holds releases whose code looks packed.
+  No behaviour change.
 
 ## 0.1.2 (15 November 2026)
 

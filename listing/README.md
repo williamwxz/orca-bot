@@ -26,3 +26,6 @@ When the panel changes, refresh the two copied files before rebuilding and
 review every image again. The official manifest schema permits screenshot
 `path`, `alt`, optional `caption`, and optional `theme`; theme is omitted so
 all screenshots remain visible regardless of the catalog viewer's theme.
+
+The pages `build.mjs` writes (`bots.html`, `chat.html`, `setup.html`,
+`cover.html`, `screenshot-*.html`) are build output and are not committed.

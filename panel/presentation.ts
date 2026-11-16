@@ -11,6 +11,9 @@ export function dayLabel(at: number, previous: number | undefined, now = Date.no
   // Out-of-range timestamps make an invalid date, whose ISO form throws.
   if (Number.isNaN(date.getTime())) return undefined
   if (previous && date.toDateString() === new Date(previous).toDateString()) return undefined
-  const day = date.toDateString() === new Date(now).toDateString() ? 'Today' : date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+  const day =
+    date.toDateString() === new Date(now).toDateString()
+      ? 'Today'
+      : date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
   return `${day} ${date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`
 }

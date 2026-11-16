@@ -23,7 +23,12 @@ test('avatars accept only stored raster paths and keep data URLs below 64 KB', a
     requests++
     return new Response(new Uint8Array(bytes), { headers: { 'content-type': type } })
   })
-  for (const path of ['https://evil.invalid/image.png', '/api/attachments/../secret.png', '/api/attachments/fake.svg']) assert.equal(await deps.avatar(18799, path), undefined)
+  for (const path of [
+    'https://evil.invalid/image.png',
+    '/api/attachments/../secret.png',
+    '/api/attachments/fake.svg'
+  ])
+    assert.equal(await deps.avatar(18799, path), undefined)
   assert.equal(requests, 0)
   assert.match((await deps.avatar(18799, '/api/attachments/fake.png'))!, /^data:image\/png;base64,/)
   bytes = 48000

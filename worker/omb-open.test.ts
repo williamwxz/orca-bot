@@ -8,7 +8,12 @@ const input = { port: 18799, startedByPlugin: true }
 function fake(paired = false, value: string | null = null) {
   const calls: string[][] = []
   const deps: CliDeps = {
-    userInfo: () => ({ username: 'fake-user', shell: '/fake/shell' }), home: '/fake', platform: 'darwin', env: {}, exists: () => true, sleep: async () => {},
+    userInfo: () => ({ username: 'fake-user', shell: '/fake/shell' }),
+    home: '/fake',
+    platform: 'darwin',
+    env: {},
+    exists: () => true,
+    sleep: async () => {},
     execFile: async (_file, args) => {
       calls.push(args)
       if (args[0] === 'storage') return JSON.stringify({ ok: true, result: { value } })
@@ -31,7 +36,18 @@ test('pairing screen triggers a fresh pair, exact snapshot/click arrays, then re
     ['tab', 'list', '--json'],
     ['tab', 'create', '--url', `${origin}/api/health`, '--json'],
     ['storage', 'local', 'get', '--key', 'omb-analytics-opt-out', '--page', 'page-1', '--json'],
-    ['storage', 'local', 'set', '--key', 'omb-analytics-opt-out', '--value', '1', '--page', 'page-1', '--json'],
+    [
+      'storage',
+      'local',
+      'set',
+      '--key',
+      'omb-analytics-opt-out',
+      '--value',
+      '1',
+      '--page',
+      'page-1',
+      '--json'
+    ],
     ['goto', '--url', wanted, '--page', 'page-1', '--json'],
     ['snapshot', '--page', 'page-1'],
     ['pair', '--label', 'Orca', '--port', '18799', '--data-dir', '/fake/.orca-bot/data'],
@@ -47,12 +63,19 @@ test('pairing screen triggers a fresh pair, exact snapshot/click arrays, then re
 test('no pairing on a signed-in tab, preserving its conversation', async () => {
   const { deps, calls } = fake(true, '1')
   const run = deps.execFile
-  deps.execFile = async (file, args, options) => args[1] === 'list'
-    ? JSON.stringify({ ok: true, result: { tabs: [{ browserPageId: 'existing', url: `${origin}/?thread=current` }] } })
-    : run(file, args, options)
+  deps.execFile = async (file, args, options) =>
+    args[1] === 'list'
+      ? JSON.stringify({
+          ok: true,
+          result: { tabs: [{ browserPageId: 'existing', url: `${origin}/?thread=current` }] }
+        })
+      : run(file, args, options)
   await openChat(input, deps)
   assert.deepEqual(calls[1], ['tab', 'switch', '--page', 'existing', '--focus', '--json'])
-  assert.equal(calls.some((args) => ['pair', 'goto', 'click'].includes(args[0])), false)
+  assert.equal(
+    calls.some((args) => ['pair', 'goto', 'click'].includes(args[0])),
+    false
+  )
 })
 
 test('lost sessions repair on every open without a marker', async () => {
@@ -72,8 +95,13 @@ test('lost sessions repair on every open without a marker', async () => {
 
 test('external server pairing screen never pairs or presses Connect', async () => {
   const { deps, calls } = fake()
-  assert.deepEqual(await openChat({ ...input, startedByPlugin: false }, deps), { message: 'Sign in to OpenMausBot in the browser tab.' })
-  assert.equal(calls.some((args) => ['pair', 'click', 'storage'].includes(args[0])), false)
+  assert.deepEqual(await openChat({ ...input, startedByPlugin: false }, deps), {
+    message: 'Sign in to OpenMausBot in the browser tab.'
+  })
+  assert.equal(
+    calls.some((args) => ['pair', 'click', 'storage'].includes(args[0])),
+    false
+  )
 })
 
 test('automatic pairing failures are actionable and redact all credentials', async () => {
@@ -111,7 +139,9 @@ test('ordinary open failures and malformed tab lists are sanitized', async () =>
   const { deps } = fake()
   for (const text of ['not json FAKE-SECRET', '{"ok":false}', '{"ok":true,"result":{"tabs":null}}']) {
     deps.execFile = async () => text
-    await assert.rejects(openChat(input, deps), { message: 'Could not open chat. Check Orca and OpenMausBot, then try again.' })
+    await assert.rejects(openChat(input, deps), {
+      message: 'Could not open chat. Check Orca and OpenMausBot, then try again.'
+    })
   }
 })
 
@@ -133,7 +163,10 @@ test('delayed pairing screen is detected, and a mismatched pairing link is never
   }
   assert.match((await openChat(input, deps)).message, /Press Connect/)
   assert.equal(calls.filter((args) => args[0] === 'snapshot').length, 4)
-  assert.deepEqual(calls.filter((args) => args[0] === 'goto'), [['goto', '--url', `${origin}/`, '--page', 'page-1', '--json']])
+  assert.deepEqual(
+    calls.filter((args) => args[0] === 'goto'),
+    [['goto', '--url', `${origin}/`, '--page', 'page-1', '--json']]
+  )
 })
 
 test('new owned tab checks analytics before loading the requested app and preserves choices', async () => {
@@ -146,10 +179,28 @@ test('new owned tab checks analytics before loading the requested app and preser
       ['tab', 'list', '--json'],
       ['tab', 'create', '--url', `${origin}/api/health`, '--json'],
       ['storage', 'local', 'get', '--key', 'omb-analytics-opt-out', '--page', 'page-1', '--json'],
-      ...(value === null ? [['storage', 'local', 'set', '--key', 'omb-analytics-opt-out', '--value', '1', '--page', 'page-1', '--json']] : []),
+      ...(value === null
+        ? [
+            [
+              'storage',
+              'local',
+              'set',
+              '--key',
+              'omb-analytics-opt-out',
+              '--value',
+              '1',
+              '--page',
+              'page-1',
+              '--json'
+            ]
+          ]
+        : []),
       ['goto', '--url', wanted, '--page', 'page-1', '--json']
     ])
-    assert.equal(calls.filter((args) => args[0] === 'storage' && args[2] === 'set').length, value === null ? 1 : 0)
+    assert.equal(
+      calls.filter((args) => args[0] === 'storage' && args[2] === 'set').length,
+      value === null ? 1 : 0
+    )
   }
 })
 
@@ -159,14 +210,30 @@ test('existing owned tab defaults analytics off and reloads the conversation or 
     for (const requested of [false, true]) {
       const { deps, calls } = fake(true)
       const run = deps.execFile
-      deps.execFile = async (file, args, options) => args[1] === 'list'
-        ? JSON.stringify({ ok: true, result: { tabs: [{ browserPageId: 'existing', url: current }] } })
-        : run(file, args, options)
+      deps.execFile = async (file, args, options) =>
+        args[1] === 'list'
+          ? JSON.stringify({ ok: true, result: { tabs: [{ browserPageId: 'existing', url: current }] } })
+          : run(file, args, options)
       await openChat({ ...input, ...(requested ? { botId, activeTaskId: 'task-1' } : {}) }, deps)
-      const wanted = requested ? `${origin}/?thread=task-1&bot=${botId}` : current.includes('/pair') ? `${origin}/` : current
+      const wanted = requested
+        ? `${origin}/?thread=task-1&bot=${botId}`
+        : current.includes('/pair')
+          ? `${origin}/`
+          : current
       assert.deepEqual(calls.slice(0, 4), [
         ['storage', 'local', 'get', '--key', 'omb-analytics-opt-out', '--page', 'existing', '--json'],
-        ['storage', 'local', 'set', '--key', 'omb-analytics-opt-out', '--value', '1', '--page', 'existing', '--json'],
+        [
+          'storage',
+          'local',
+          'set',
+          '--key',
+          'omb-analytics-opt-out',
+          '--value',
+          '1',
+          '--page',
+          'existing',
+          '--json'
+        ],
         ['goto', '--url', wanted, '--page', 'existing', '--json'],
         ['tab', 'switch', '--page', 'existing', '--focus', '--json']
       ])
@@ -180,16 +247,28 @@ test('storage failures on new or existing owned tabs fail closed with a generic 
       const { deps, calls } = fake(true)
       const run = deps.execFile
       deps.execFile = async (file, args, options) => {
-        if (existing && args[1] === 'list') return JSON.stringify({ ok: true, result: { tabs: [{ browserPageId: 'existing', url: `${origin}/` }] } })
+        if (existing && args[1] === 'list')
+          return JSON.stringify({
+            ok: true,
+            result: { tabs: [{ browserPageId: 'existing', url: `${origin}/` }] }
+          })
         if (args[0] === 'storage') {
           if (args[2] === stage) throw new Error('private failure details')
           if (stage === 'malformed') return '{"ok":true,"result":{}}'
         }
         return run(file, args, options)
       }
-      await assert.rejects(openChat(input, deps), { message: 'Could not open chat. Check Orca and OpenMausBot, then try again.' })
-      assert.equal(calls.some((args) => ['goto', 'snapshot', 'pair', 'click'].includes(args[0])), false)
-      assert.equal(calls.some((args) => args[0] === 'tab' && args[1] === 'create' && args[3] !== `${origin}/api/health`), false)
+      await assert.rejects(openChat(input, deps), {
+        message: 'Could not open chat. Check Orca and OpenMausBot, then try again.'
+      })
+      assert.equal(
+        calls.some((args) => ['goto', 'snapshot', 'pair', 'click'].includes(args[0])),
+        false
+      )
+      assert.equal(
+        calls.some((args) => args[0] === 'tab' && args[1] === 'create' && args[3] !== `${origin}/api/health`),
+        false
+      )
     }
   }
 })
@@ -198,12 +277,22 @@ test('unowned new and existing tabs never access storage', async () => {
   for (const existing of [false, true]) {
     const { deps, calls } = fake(true)
     const run = deps.execFile
-    deps.execFile = async (file, args, options) => existing && args[1] === 'list'
-      ? JSON.stringify({ ok: true, result: { tabs: [{ browserPageId: 'existing', url: `${origin}/?thread=current` }] } })
-      : run(file, args, options)
+    deps.execFile = async (file, args, options) =>
+      existing && args[1] === 'list'
+        ? JSON.stringify({
+            ok: true,
+            result: { tabs: [{ browserPageId: 'existing', url: `${origin}/?thread=current` }] }
+          })
+        : run(file, args, options)
     await openChat({ ...input, startedByPlugin: false }, deps)
-    assert.equal(calls.some((args) => args[0] === 'storage'), false)
-    assert.equal(calls.some((args) => args[0] === 'goto'), false)
+    assert.equal(
+      calls.some((args) => args[0] === 'storage'),
+      false
+    )
+    assert.equal(
+      calls.some((args) => args[0] === 'goto'),
+      false
+    )
     if (!existing) assert.deepEqual(calls[1], ['tab', 'create', '--url', `${origin}/`, '--json'])
   }
 })
@@ -227,21 +316,40 @@ test('background repair pairs an existing tab without focus and restores a safe 
       const { deps, calls } = existingFake(false, url, value)
       assert.equal(await repairChat(input, deps), true)
       const wanted = url.includes('/pair') ? `${origin}/` : url
-      assert.equal(calls.some(args => args.includes('--focus') || ['create', 'switch'].includes(args[1])), false)
-      assert.deepEqual(calls.filter(args => args[0] === 'goto').at(-1), ['goto', '--url', wanted, '--page', 'existing', '--json'])
-      const firstGoto = calls.findIndex(args => args[0] === 'goto')
-      assert.ok(calls.findIndex(args => args[0] === 'storage') < firstGoto)
-      assert.equal(calls.filter(args => args[0] === 'storage' && args[2] === 'set').length, value === null ? 1 : 0)
-      assert.equal(calls.filter(args => args[0] === 'pair').length, 1)
+      assert.equal(
+        calls.some((args) => args.includes('--focus') || ['create', 'switch'].includes(args[1])),
+        false
+      )
+      assert.deepEqual(calls.filter((args) => args[0] === 'goto').at(-1), [
+        'goto',
+        '--url',
+        wanted,
+        '--page',
+        'existing',
+        '--json'
+      ])
+      const firstGoto = calls.findIndex((args) => args[0] === 'goto')
+      assert.ok(calls.findIndex((args) => args[0] === 'storage') < firstGoto)
+      assert.equal(
+        calls.filter((args) => args[0] === 'storage' && args[2] === 'set').length,
+        value === null ? 1 : 0
+      )
+      assert.equal(calls.filter((args) => args[0] === 'pair').length, 1)
     }
   }
 })
 
 test('background repair does nothing for absent, foreign, signed-in or unowned tabs', async () => {
   for (const mode of ['absent', 'foreign', 'signed-in', 'unowned']) {
-    const { deps, calls } = mode === 'absent' ? fake() : existingFake(mode === 'signed-in', mode === 'foreign' ? 'http://127.0.0.1:9999/' : `${origin}/`)
+    const { deps, calls } =
+      mode === 'absent'
+        ? fake()
+        : existingFake(mode === 'signed-in', mode === 'foreign' ? 'http://127.0.0.1:9999/' : `${origin}/`)
     assert.equal(await repairChat({ ...input, startedByPlugin: mode !== 'unowned' }, deps), true)
-    assert.equal(calls.some(args => ['goto', 'pair', 'click', 'storage'].includes(args[0]) || args[1] === 'create'), false)
+    assert.equal(
+      calls.some((args) => ['goto', 'pair', 'click', 'storage'].includes(args[0]) || args[1] === 'create'),
+      false
+    )
     if (mode === 'unowned') assert.equal(calls.length, 0)
   }
 })
@@ -257,14 +365,19 @@ test('background failures expose only false, including storage, pairing and conf
       return result
     }
     assert.equal(await repairChat(input, deps), false)
-    if (stage === 'storage') assert.equal(calls.some(args => ['goto', 'pair', 'click'].includes(args[0])), false)
+    if (stage === 'storage')
+      assert.equal(
+        calls.some((args) => ['goto', 'pair', 'click'].includes(args[0])),
+        false
+      )
   }
 })
 
 test('background repair waits for enabled Connect before clicking', async () => {
   const { deps, calls } = existingFake()
   const run = deps.execFile
-  let pairing = false, reads = 0
+  let pairing = false,
+    reads = 0
   deps.execFile = async (file, args, options) => {
     const result = await run(file, args, options)
     if (args[0] === 'pair') pairing = true
@@ -272,6 +385,6 @@ test('background repair waits for enabled Connect before clicking', async () => 
     return result
   }
   assert.equal(await repairChat(input, deps), true)
-  assert.equal(calls.filter(args => args[0] === 'click').length, 1)
+  assert.equal(calls.filter((args) => args[0] === 'click').length, 1)
   assert.ok(reads >= 3)
 })

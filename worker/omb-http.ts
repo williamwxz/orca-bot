@@ -1,4 +1,7 @@
-export type HttpDeps = { request: (port: number, path: string, patch?: object) => Promise<unknown>; avatar: (port: number, path: string) => Promise<string | undefined> }
+export type HttpDeps = {
+  request: (port: number, path: string, patch?: object) => Promise<unknown>
+  avatar: (port: number, path: string) => Promise<string | undefined>
+}
 
 export function defaultHttpDeps(): HttpDeps {
   if (process.env.NODE_TEST_CONTEXT) throw new Error('Tests must inject HTTP dependencies')
@@ -20,9 +23,13 @@ export function httpDeps(fetcher: typeof fetch): HttpDeps {
     },
     avatar: async (port, path) => {
       if (!/^\/api\/attachments\/[A-Za-z0-9-]+\.(png|jpg|gif|webp)$/.test(path)) return undefined
-      const response = await fetcher(`http://127.0.0.1:${port}${path}`, { redirect: 'error', signal: AbortSignal.timeout(5000) })
+      const response = await fetcher(`http://127.0.0.1:${port}${path}`, {
+        redirect: 'error',
+        signal: AbortSignal.timeout(5000)
+      })
       const type = response.headers.get('content-type')?.split(';')[0]
-      if (!response.ok || !type || !['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(type)) return undefined
+      if (!response.ok || !type || !['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(type))
+        return undefined
       const reader = response.body?.getReader()
       if (!reader) return undefined
       const chunks: Uint8Array[] = []
