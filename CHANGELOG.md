@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.2 (15 November 2026)
+
+- Renamed to **Bot Team for Orca**. Nothing else changed.
+
 ## 0.1.1 (15 November 2026)
 
 - Renamed from Orca Bot to **Bot for Orca**. Orca's community catalog reserves

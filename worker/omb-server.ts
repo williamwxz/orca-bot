@@ -216,7 +216,7 @@ export async function startServer(bin: string, port: number, deps: ServerDeps = 
     const fd = deps.open(join(folder, 'server.log'))
     let child: { pid: number; unref(): void }
     try {
-      // Bot for Orca keeps its own OpenMausBot workspace, apart from any the person already has in
+      // Bot Team for Orca keeps its own OpenMausBot workspace, apart from any the person already has in
       // ~/.openmausbot, so starting it never resumes routines or connections they set up elsewhere.
       const dataDir = join(folder, 'data')
       deps.mkdir(dataDir)
@@ -287,12 +287,12 @@ export async function stopServer(deps: ServerDeps = defaultServerDeps()): Promis
       const remaining = await health(record.port, deps, Math.min(1500, deadline - deps.now()))
       if (!remaining) {
         deps.remove(path)
-        return { stopped: true, message: 'Stopped the OpenMausBot server started by Bot for Orca.' }
+        return { stopped: true, message: 'Stopped the OpenMausBot server started by Bot Team for Orca.' }
       }
       await deps.sleep(Math.min(250, Math.max(0, deadline - deps.now())))
     }
     return { stopped: false, message: 'Sent the stop signal, but OpenMausBot health is still responding. The pid file was kept; try stopping again.' }
   } catch {
-    return { stopped: false, message: 'Could not verify or stop a server started by Bot for Orca; no other server was touched.' }
+    return { stopped: false, message: 'Could not verify or stop a server started by Bot Team for Orca; no other server was touched.' }
   }
 }
