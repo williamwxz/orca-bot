@@ -31,33 +31,60 @@ export function defaultLinkDeps(): LinkDeps {
   const server = defaultServerDeps()
   const file = join(cli.home, '.orca-bot/agent-link.json')
   return {
-    ...cli, bin: ombBinary(cli),
+    ...cli,
+    bin: ombBinary(cli),
     claudeEnv: () => claudeEnvironment(server, false).env,
-    read: () => { try { return fs.readFileSync(file, 'utf8') } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw new Error('Could not read setup.') } },
+    read: () => {
+      try {
+        return fs.readFileSync(file, 'utf8')
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+        throw new Error('Could not read setup.')
+      }
+    },
     write: (value) => {
       fs.mkdirSync(join(cli.home, '.orca-bot'), { recursive: true, mode: 0o700 })
       fs.writeFileSync(file, value, { mode: 0o600 })
       fs.chmodSync(file, 0o600)
     },
-    execFile: (file, args, env) => new Promise((resolve, reject) => {
-      execFile(file, args, { env, timeout: 10000 }, (error) => error ? reject(new Error('Command failed.')) : resolve())
-    }),
-    readConfig: path => { try { return fs.readFileSync(path, 'utf8') } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw new Error('Could not read setup.') } },
+    execFile: (file, args, env) =>
+      new Promise((resolve, reject) => {
+        execFile(file, args, { env, timeout: 10000 }, (error) =>
+          error ? reject(new Error('Command failed.')) : resolve()
+        )
+      }),
+    readConfig: (path) => {
+      try {
+        return fs.readFileSync(path, 'utf8')
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+        throw new Error('Could not read setup.')
+      }
+    },
     replaceConfig: (path, value) => replaceConfigAtomically(path, value, `${path}.${randomUUID()}.tmp`, fs),
-    listAgent: (file, env) => new Promise((resolve, reject) => {
-      execFile(file, ['mcp', 'list'], { env, timeout: 10000, maxBuffer: 1024 * 1024 }, (error, stdout) => error ? reject(new Error('Could not check setup.')) : resolve(stdout))
-    }),
+    listAgent: (file, env) =>
+      new Promise((resolve, reject) => {
+        execFile(file, ['mcp', 'list'], { env, timeout: 10000, maxBuffer: 1024 * 1024 }, (error, stdout) =>
+          error ? reject(new Error('Could not check setup.')) : resolve(stdout)
+        )
+      }),
     // Codex add replaces existing entries; refuse to overwrite one we do not own.
-    codexEntryExists: (file, env) => new Promise((resolve, reject) => {
-      execFile(file, ['mcp', 'list', '--json'], { env, timeout: 10000 }, (error, stdout) => {
-        if (error) { reject(new Error('Could not check setup.')); return }
-        try {
-          const entries: unknown = JSON.parse(stdout)
-          if (!Array.isArray(entries)) throw new Error()
-          resolve(entries.some((entry) => entry?.name === MCP_ENTRY_NAME))
-        } catch { reject(new Error('Could not check setup.')) }
+    codexEntryExists: (file, env) =>
+      new Promise((resolve, reject) => {
+        execFile(file, ['mcp', 'list', '--json'], { env, timeout: 10000 }, (error, stdout) => {
+          if (error) {
+            reject(new Error('Could not check setup.'))
+            return
+          }
+          try {
+            const entries: unknown = JSON.parse(stdout)
+            if (!Array.isArray(entries)) throw new Error()
+            resolve(entries.some((entry) => entry?.name === MCP_ENTRY_NAME))
+          } catch {
+            reject(new Error('Could not check setup.'))
+          }
+        })
       })
-    })
   }
 }
 
@@ -74,10 +101,15 @@ function programs(deps: LinkDeps): Partial<{ [K in Agent]: string }> {
 
 export function findAgents(deps: LinkDeps = defaultLinkDeps()) {
   const found = programs(deps)
-  return Object.fromEntries(agentKeys.map(agent => [agent, !!found[agent]])) as Partial<{ [K in Agent]: boolean }>
+  return Object.fromEntries(agentKeys.map((agent) => [agent, !!found[agent]])) as Partial<{
+    [K in Agent]: boolean
+  }>
 }
 
-export async function syncAgentLinks(input: { enabled: boolean; owned: boolean; port: number }, deps: LinkDeps = defaultLinkDeps()): Promise<void> {
+export async function syncAgentLinks(
+  input: { enabled: boolean; owned: boolean; port: number },
+  deps: LinkDeps = defaultLinkDeps()
+): Promise<void> {
   if (!input.owned) return
   const found = programs(deps)
   let record: Record
@@ -87,9 +119,17 @@ export async function syncAgentLinks(input: { enabled: boolean; owned: boolean; 
     if (!record || typeof record !== 'object' || Array.isArray(record)) throw new Error()
     for (const agent of Object.keys(record)) {
       const entry = record[agent as Agent]
-      if (!agentKeys.includes(agent as Agent) || !entry || !Number.isInteger(entry.port) || typeof entry.bin !== 'string') throw new Error()
+      if (
+        !agentKeys.includes(agent as Agent) ||
+        !entry ||
+        !Number.isInteger(entry.port) ||
+        typeof entry.bin !== 'string'
+      )
+        throw new Error()
     }
-  } catch { throw new Error('Could not read Bot Team for Orca setup.') }
+  } catch {
+    throw new Error('Could not read Bot Team for Orca setup.')
+  }
   for (const agent of agentKeys) {
     const file = found[agent]
     if (!file) continue
@@ -108,17 +148,27 @@ export async function syncAgentLinks(input: { enabled: boolean; owned: boolean; 
             const raw = JSON.parse(deps.readConfig(path) ?? '')
             const entries = opencodeEntries(raw)
             const entry = entries?.[MCP_ENTRY_NAME]
-            if (!entry || entry.type !== 'local' || !Array.isArray(entry.command) || entry.command.length !== 2 || entry.command[0] !== previous.bin || entry.command[1] !== 'mcp') throw new Error()
+            if (
+              !entry ||
+              entry.type !== 'local' ||
+              !Array.isArray(entry.command) ||
+              entry.command.length !== 2 ||
+              entry.command[0] !== previous.bin ||
+              entry.command[1] !== 'mcp'
+            )
+              throw new Error()
             delete entries![MCP_ENTRY_NAME]
             deps.replaceConfig(path, JSON.stringify(raw, null, 2) + '\n')
-          } catch { throw new Error(`Remove ${MCP_ENTRY_NAME} from opencode by hand.`) }
+          } catch {
+            throw new Error(`Remove ${MCP_ENTRY_NAME} from opencode by hand.`)
+          }
         }
         delete record[agent]
         deps.write(JSON.stringify(record))
       }
       if (input.enabled) {
         if (!previous) {
-          if (spec.check === 'codex' && await deps.codexEntryExists(file, env)) throw new Error()
+          if (spec.check === 'codex' && (await deps.codexEntryExists(file, env))) throw new Error()
           if (spec.check === 'config') {
             if (!deps.readConfig) throw new Error()
             const raw = deps.readConfig(join(deps.home, spec.config))
@@ -136,7 +186,8 @@ export async function syncAgentLinks(input: { enabled: boolean; owned: boolean; 
         deps.write(JSON.stringify(record))
       }
     } catch (error) {
-      if (error instanceof Error && error.message === `Remove ${MCP_ENTRY_NAME} from opencode by hand.`) throw error
+      if (error instanceof Error && error.message === `Remove ${MCP_ENTRY_NAME} from opencode by hand.`)
+        throw error
       throw new Error(`Could not add Bot Team for Orca to ${agents[agent].label}.`)
     }
   }

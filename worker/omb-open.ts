@@ -7,7 +7,8 @@ export type OpenInput = { port: number; startedByPlugin: boolean; botId?: string
 export type OpenResult = { message: string }
 // Disable anonymous usage analytics by default, while preserving the person's choice.
 const ANALYTICS_OPT_OUT = 'omb-analytics-opt-out'
-export const validBotId = (value: unknown): value is string => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
+export const validBotId = (value: unknown): value is string =>
+  typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
 
 function orcaBinary(deps: CliDeps): string {
   const mac = '/Applications/Orca.app/Contents/Resources/bin/orca'
@@ -22,7 +23,8 @@ function orcaBinary(deps: CliDeps): string {
 
 function resultOf(text: string): Record<string, unknown> {
   const response = JSON.parse(text)
-  if (response?.ok !== true || !response.result || typeof response.result !== 'object') throw new Error('Invalid CLI response')
+  if (response?.ok !== true || !response.result || typeof response.result !== 'object')
+    throw new Error('Invalid CLI response')
   return response.result
 }
 
@@ -31,9 +33,29 @@ function browser(deps: CliDeps) {
   const run = async (args: string[]) => resultOf(await deps.execFile(bin, args, cliOptions(deps, 60000)))
   const snapshot = async (page: string) => deps.execFile(bin, ['snapshot', '--page', page], cliOptions(deps))
   const defaultAnalyticsOff = async (page: string): Promise<boolean> => {
-    const stored = await run(['storage', 'local', 'get', '--key', ANALYTICS_OPT_OUT, '--page', page, '--json'])
+    const stored = await run([
+      'storage',
+      'local',
+      'get',
+      '--key',
+      ANALYTICS_OPT_OUT,
+      '--page',
+      page,
+      '--json'
+    ])
     if (stored.value === null) {
-      await run(['storage', 'local', 'set', '--key', ANALYTICS_OPT_OUT, '--value', '1', '--page', page, '--json'])
+      await run([
+        'storage',
+        'local',
+        'set',
+        '--key',
+        ANALYTICS_OPT_OUT,
+        '--value',
+        '1',
+        '--page',
+        page,
+        '--json'
+      ])
       return true
     }
     if (typeof stored.value !== 'string') throw new Error('Invalid storage response')
@@ -62,17 +84,24 @@ export async function openChat(input: OpenInput, deps: CliDeps = defaultCliDeps(
   const origin = `http://127.0.0.1:${input.port}`
   let page: string
   let wanted = `${origin}/`
-  if (input.botId && input.activeTaskId) wanted += `?${new URLSearchParams({ thread: input.activeTaskId, bot: input.botId })}`
+  if (input.botId && input.activeTaskId)
+    wanted += `?${new URLSearchParams({ thread: input.activeTaskId, bot: input.botId })}`
   try {
     const tab = await existingTab(origin, run)
     if (tab) {
       page = tab.browserPageId
       if (!input.botId && !new URL(tab.url).pathname.startsWith('/pair')) wanted = tab.url
-      const changed = input.startedByPlugin && await defaultAnalyticsOff(page)
+      const changed = input.startedByPlugin && (await defaultAnalyticsOff(page))
       if (input.botId || changed) await run(['goto', '--url', wanted, '--page', page, '--json'])
       await run(['tab', 'switch', '--page', page, '--focus', '--json'])
     } else {
-      const created = await run(['tab', 'create', '--url', input.startedByPlugin ? `${origin}/api/health` : wanted, '--json'])
+      const created = await run([
+        'tab',
+        'create',
+        '--url',
+        input.startedByPlugin ? `${origin}/api/health` : wanted,
+        '--json'
+      ])
       if (typeof created.browserPageId !== 'string') throw new Error('Missing page')
       page = created.browserPageId
       if (input.startedByPlugin) {
@@ -95,14 +124,22 @@ export async function openChat(input: OpenInput, deps: CliDeps = defaultCliDeps(
   } catch {
     throw new Error('Could not open chat. Check Orca and OpenMausBot, then try again.')
   }
-  return { message: await pairTab(input.port, page, wanted, deps) ? '' : 'Press Connect in the browser tab to finish.' }
+  return {
+    message: (await pairTab(input.port, page, wanted, deps))
+      ? ''
+      : 'Press Connect in the browser tab to finish.'
+  }
 }
 
 async function pairTab(port: number, page: string, wanted: string, deps: CliDeps): Promise<boolean> {
   const origin = `http://127.0.0.1:${port}`
   try {
     const { run, snapshot } = browser(deps)
-    const output = await deps.execFile(ombBinary(deps), ['pair', '--label', 'Orca', '--port', String(port), '--data-dir', join(deps.home, '.orca-bot/data')], cliOptions(deps))
+    const output = await deps.execFile(
+      ombBinary(deps),
+      ['pair', '--label', 'Orca', '--port', String(port), '--data-dir', join(deps.home, '.orca-bot/data')],
+      cliOptions(deps)
+    )
     const links = output.match(/http:\/\/127\.0\.0\.1:\d+\/pair#[^\s\x1b]+/g) ?? []
     const link = links.find((value) => new URL(value).origin === origin)
     if (!link) throw new Error('Missing pairing link')
@@ -143,5 +180,7 @@ export async function repairChat(input: OpenInput, deps: CliDeps = defaultCliDep
     // As on an explicit existing-tab open, apply the default before any app navigation.
     if (await defaultAnalyticsOff(page)) await run(['goto', '--url', wanted, '--page', page, '--json'])
     return await pairTab(input.port, page, wanted, deps)
-  } catch { return false }
+  } catch {
+    return false
+  }
 }

@@ -12,7 +12,10 @@ const running = element<HTMLElement>('running')
 const roster = element<HTMLElement>('roster')
 const refreshNote = element<HTMLElement>('refresh-note')
 const result = element<HTMLElement>('result')
-const setup = createSetup((answer) => frame.plugin.request('setup.answer', answer), () => frame.plugin.request('tools.import', {}))
+const setup = createSetup(
+  (answer) => frame.plugin.request('setup.answer', answer),
+  () => frame.plugin.request('tools.import', {})
+)
 const shareTools = element<HTMLInputElement>('share-tools')
 const importTools = element<HTMLInputElement>('import-tools')
 const linkAgents = element<HTMLInputElement>('link-agents')
@@ -22,7 +25,8 @@ function renderSetup(): void {
   element('link-agents-label').hidden = !agentNames(state.agents)
   element('agent-names').textContent = agentNames(state.agents)
   element('import-tools-label').hidden = state.tools.length === 0
-  element('import-tools-copy').textContent = `Adds ${state.tools.length} ${state.tools.length === 1 ? 'tool' : 'tools'} from ${[...new Set(state.tools.map(t => t.source))].join(', ')} to OpenMausBot, switched off. Turn them on per bot in the Bot Dashboard. Tokens saved in those apps are copied to OpenMausBot on this computer.`
+  element('import-tools-copy').textContent =
+    `Adds ${state.tools.length} ${state.tools.length === 1 ? 'tool' : 'tools'} from ${[...new Set(state.tools.map((t) => t.source))].join(', ')} to OpenMausBot, switched off. Turn them on per bot in the Bot Dashboard. Tokens saved in those apps are copied to OpenMausBot on this computer.`
   element('setup-message').textContent = state.message
   for (const id of ['setup-allow', 'setup-skip']) element<HTMLButtonElement>(id).disabled = state.busy
   importTools.disabled = shareTools.disabled = linkAgents.disabled = state.busy
@@ -51,7 +55,22 @@ const changing = new Set<string>()
 const readBots = new Set<string>()
 const previews = new Map<string, string>()
 const rosterView = element<HTMLElement>('roster-view')
-const chatView = createChatView(element('bot-view'), frame, makeAvatar, (id) => void open(id), () => { rosterView.hidden = false; element('list-header').hidden = false; renderSetup(); renderBots() }, (id, preview) => { if (preview) previews.set(id, preview); else previews.delete(id) })
+const chatView = createChatView(
+  element('bot-view'),
+  frame,
+  makeAvatar,
+  (id) => void open(id),
+  () => {
+    rosterView.hidden = false
+    element('list-header').hidden = false
+    renderSetup()
+    renderBots()
+  },
+  (id, preview) => {
+    if (preview) previews.set(id, preview)
+    else previews.delete(id)
+  }
+)
 function showBot(bot: Bot): void {
   readBots.add(bot.id)
   rosterView.hidden = true
@@ -64,13 +83,23 @@ function makeAvatar(bot: Bot): HTMLElement {
   const avatar = document.createElement('span')
   avatar.className = `avatar avatar-${bot.state} ${bot.avatar ? 'picture' : 'drawn'}`
   if (bot.avatar) {
-    const img = document.createElement('img'); img.src = bot.avatar; img.alt = ''; avatar.append(img)
+    const img = document.createElement('img')
+    img.src = bot.avatar
+    img.alt = ''
+    avatar.append(img)
   } else avatar.innerHTML = avatarSvg(bot.id)
   if (bot.state === 'waiting') {
-    const badge = document.createElement('span'); badge.className = 'clock-badge'; badge.setAttribute('aria-label', 'Waiting'); badge.append(icon('clock')); avatar.append(badge)
+    const badge = document.createElement('span')
+    badge.className = 'clock-badge'
+    badge.setAttribute('aria-label', 'Waiting')
+    badge.append(icon('clock'))
+    avatar.append(badge)
   }
   if (bot.state === 'working') {
-    const label = document.createElement('span'); label.className = 'motion-label'; label.textContent = 'Working'; avatar.append(label)
+    const label = document.createElement('span')
+    label.className = 'motion-label'
+    label.textContent = 'Working'
+    avatar.append(label)
   }
   return avatar
 }
@@ -130,7 +159,8 @@ function renderBots(): void {
     empty.textContent = 'No bots yet.'
     roster.append(empty)
     const openButton = document.createElement('button')
-    openButton.type = 'button'; openButton.textContent = 'Jump to Bot Dashboard'
+    openButton.type = 'button'
+    openButton.textContent = 'Jump to Bot Dashboard'
     openButton.disabled = opening
     openButton.addEventListener('click', () => void open())
     roster.append(openButton)
@@ -159,8 +189,11 @@ function renderBots(): void {
     const name = document.createElement('span')
     name.className = 'bot-name'
     name.textContent = bot.name
-    const copy = document.createElement('span'); copy.className = 'bot-copy'
-    const heading = document.createElement('span'); heading.className = 'bot-heading'; heading.append(name)
+    const copy = document.createElement('span')
+    copy.className = 'bot-copy'
+    const heading = document.createElement('span')
+    heading.className = 'bot-heading'
+    heading.append(name)
     copy.append(heading)
     chat.append(avatar, copy)
     if (bot.main) {
@@ -189,11 +222,16 @@ function renderBots(): void {
     row.append(chat, state)
     roster.append(row)
   }
-  if (focused) Array.from(roster.querySelectorAll<HTMLElement>('[data-focus]')).find((node) => node.dataset.focus === focused)?.focus()
+  if (focused)
+    Array.from(roster.querySelectorAll<HTMLElement>('[data-focus]'))
+      .find((node) => node.dataset.focus === focused)
+      ?.focus()
 }
 
 function refresh(explicitRetry = false): Promise<void> {
-  refreshPending ??= refreshNow(explicitRetry).finally(() => { refreshPending = undefined })
+  refreshPending ??= refreshNow(explicitRetry).finally(() => {
+    refreshPending = undefined
+  })
   return refreshPending
 }
 
@@ -208,7 +246,14 @@ async function refreshNow(explicitRetry: boolean): Promise<void> {
   retry.disabled = true
   let delay = 5000
   try {
-    try { setup.load(await frame.plugin.request('setup.get', {})); if (!setup.state.answered && !setup.state.toolsLoaded) setup.loadTools((await frame.plugin.request('tools.find', {})).tools); renderSetup() } catch { /* Retry with the next refresh; bots still load. */ }
+    try {
+      setup.load(await frame.plugin.request('setup.get', {}))
+      if (!setup.state.answered && !setup.state.toolsLoaded)
+        setup.loadTools((await frame.plugin.request('tools.find', {})).tools)
+      renderSetup()
+    } catch {
+      /* Retry with the next refresh; bots still load. */
+    }
     const status = await frame.plugin.request('status', { retry: explicitRetry })
     element<HTMLButtonElement>('open-page').disabled = opening || status.state !== 'running'
     message.textContent = status.message

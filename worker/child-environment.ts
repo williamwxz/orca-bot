@@ -19,7 +19,12 @@ export function childEnvironment(deps: EnvironmentDeps): NodeJS.ProcessEnv {
   }
   if (env.LANG === undefined && env.LC_ALL === undefined) env.LANG = 'en_US.UTF-8'
   const separator = deps.platform === 'win32' ? ';' : ':'
-  const extra = ['/opt/homebrew/bin', '/usr/local/bin', join(deps.home, '.local/bin'), join(deps.home, '.volta/bin')]
+  const extra = [
+    '/opt/homebrew/bin',
+    '/usr/local/bin',
+    join(deps.home, '.local/bin'),
+    join(deps.home, '.volta/bin')
+  ]
   env.PATH = [env.PATH ?? '', ...extra].join(separator)
   return env
 }

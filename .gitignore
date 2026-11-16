@@ -1,2 +1,8 @@
 node_modules/
 .orca/
+# Built by listing/build.mjs; only the sources and the PNGs in images/ are kept.
+listing/bots.html
+listing/chat.html
+listing/setup.html
+listing/cover.html
+listing/screenshot-*.html
