@@ -72,7 +72,7 @@ test('unowned servers refuse before reading sources or requesting, and errors ar
   const { deps, calls } = fake()
   deps.owned = async () => false
   deps.read = () => { throw new Error('should not read') }
-  await assert.rejects(importTools(1234, deps), /server Bot for Orca started/)
+  await assert.rejects(importTools(1234, deps), /server Bot Team for Orca started/)
   assert.equal(calls.length, 0)
   deps.owned = async () => { throw new Error(token) }
   await assert.rejects(importTools(1234, deps), error => !String(error).includes(token))

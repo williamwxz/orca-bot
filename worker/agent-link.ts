@@ -89,7 +89,7 @@ export async function syncAgentLinks(input: { enabled: boolean; owned: boolean; 
       const entry = record[agent as Agent]
       if (!agentKeys.includes(agent as Agent) || !entry || !Number.isInteger(entry.port) || typeof entry.bin !== 'string') throw new Error()
     }
-  } catch { throw new Error('Could not read Bot for Orca setup.') }
+  } catch { throw new Error('Could not read Bot Team for Orca setup.') }
   for (const agent of agentKeys) {
     const file = found[agent]
     if (!file) continue
@@ -137,7 +137,7 @@ export async function syncAgentLinks(input: { enabled: boolean; owned: boolean; 
       }
     } catch (error) {
       if (error instanceof Error && error.message === `Remove ${MCP_ENTRY_NAME} from opencode by hand.`) throw error
-      throw new Error(`Could not add Bot for Orca to ${agents[agent].label}.`)
+      throw new Error(`Could not add Bot Team for Orca to ${agents[agent].label}.`)
     }
   }
 }

@@ -1,10 +1,10 @@
-# Bot for Orca
+# Bot Team for Orca
 
 A team of bots inside [Orca](https://github.com/stablyai/orca).
 
 ## Summary
 
-Bot for Orca is an Orca plugin that runs the open-source
+Bot Team for Orca is an Orca plugin that runs the open-source
 [OpenMausBot](https://github.com/milind-soni/OpenMausBot) on your own computer
 and puts it in Orca's sidebar. You get a list of bots, each one its own Claude,
 Codex or Grok agent, and a chat window for each.
@@ -16,7 +16,7 @@ Codex or Grok agent, and a chat window for each.
   linked only after you approve in the setup card; change either in Orca's Settings.
 - **Two places to chat.** A quick chat in the panel, and the full OpenMausBot
   page in an Orca browser tab, one click away.
-- **Runs locally.** Bot for Orca has no server of its own and collects nothing.
+- **Runs locally.** Bot Team for Orca has no server of its own and collects nothing.
 
 Unofficial. Not made by or affiliated with Orca, OpenMausBot or the makers of the models it runs. For now it runs on macOS only: it has not been tested on Windows or Linux, and Orca's mobile app does not show plugins yet.
 
@@ -26,9 +26,9 @@ Unofficial. Not made by or affiliated with Orca, OpenMausBot or the makers of th
 `npm` on your PATH. To run bots you also need at least one of Claude, Codex or
 Grok signed in on this computer.
 
-1. Install Bot for Orca in Orca and open the **Bot for Orca** panel in the right
+1. Install Bot Team for Orca in Orca and open the **Bot Team for Orca** panel in the right
    sidebar. The first start downloads OpenMausBot (about 75 MB) and can take a
-   minute. Until Bot for Orca is in Orca's plugin catalog, load it from a copy of
+   minute. Until Bot Team for Orca is in Orca's plugin catalog, load it from a copy of
    this repository with `orca plugin dev load .`.
 2. The panel lists your bots. With none yet, press **Jump to Bot Dashboard** and
    create one there.
@@ -39,7 +39,7 @@ Grok signed in on this computer.
 
 Good to know:
 
-- **Bot for Orca: Bring in tools from my AI apps** in the command palette, or the
+- **Bot Team for Orca: Bring in tools from my AI apps** in the command palette, or the
   matching setup-card row, copies tools from Claude Code, Claude Desktop, Cursor,
   Gemini CLI, Codex, opencode and Antigravity into OpenMausBot,
   switched off. Turn them on per bot in the Bot Dashboard.
@@ -47,10 +47,10 @@ Good to know:
 - The panel shows the last 20 messages as plain text and sends messages of up to
   16,000 characters. Anything richer says "This needs the full chat."
 - **Add MausBot** brings back the main bot if you hid it.
-- The **Set up Bot for Orca** card asks before sharing Claude tools or linking your
+- The **Set up Bot Team for Orca** card asks before sharing Claude tools or linking your
   Claude, Codex, opencode and Antigravity agents to the bots. Change either choice later in Orca's Settings.
   Read [Security review](#security-review) before allowing access.
-- **Bot for Orca: Stop the OpenMausBot server** in the command palette stops the
+- **Bot Team for Orca: Stop the OpenMausBot server** in the command palette stops the
   server. It keeps running after you close the panel, so that routines and long
   tasks can finish.
 - If an OpenMausBot server is already running on port 8799, 18799 or 28799, Orca
@@ -68,13 +68,13 @@ the plugin does; OpenMausBot and the model providers have their own terms.
 | Messages, replies, files a bot reads | To the model provider of that bot (Anthropic, OpenAI or xAI), under your own account. This is how any bot works. |
 | Chat history, bot settings, memory | Stays on this computer in `~/.orca-bot/data`, readable only by your user account. |
 | Anything a tool or connector touches | To that service (for example Gmail or Linear) when a bot uses the tool. |
-| Bot for Orca itself | Sends nothing anywhere. It has no analytics, no account and no server. |
+| Bot Team for Orca itself | Sends nothing anywhere. It has no analytics, no account and no server. |
 
 The panel cannot reach the network at all. The plugin's worker talks only to
 `127.0.0.1`, to npm once to download OpenMausBot, and to Orca's own command
 line tool to open the browser tab.
 
-### What Bot for Orca does to protect you
+### What Bot Team for Orca does to protect you
 
 - **Asks first.** Nothing is shared with bots, linked to your agents or
   imported until you approve it in the setup card. You can change each choice
@@ -82,15 +82,15 @@ line tool to open the browser tab.
 - **Imported tools stay on this computer.** Imported tool definitions, including
   any tokens in them, are copied into OpenMausBot's settings in `~/.orca-bot/data`;
   sources include Claude Code, Claude Desktop, Cursor, Gemini CLI, Codex,
-  opencode and Antigravity, and tools arrive switched off. Bot for Orca uses an internal OpenMausBot route for this,
+  opencode and Antigravity, and tools arrive switched off. Bot Team for Orca uses an internal OpenMausBot route for this,
   which a new OpenMausBot version may change.
 - **Usage analytics are off.** OpenMausBot's page sends anonymous usage events
-  to PostHog by default. For a server Bot for Orca starts, it switches this off
+  to PostHog by default. For a server Bot Team for Orca starts, it switches this off
   before the page first loads. If you turn it on yourself in OpenMausBot's
-  Settings, Bot for Orca leaves your choice alone.
+  Settings, Bot Team for Orca leaves your choice alone.
 - **Local only.** The server listens on `127.0.0.1`, so other computers on your
   network cannot reach it.
-- **Its own workspace.** Bot for Orca uses `~/.orca-bot/data` and never opens an
+- **Its own workspace.** Bot Team for Orca uses `~/.orca-bot/data` and never opens an
   existing `~/.openmausbot`, so it cannot wake routines or connections you set
   up elsewhere.
 - **A pinned version.** It installs one tested OpenMausBot version (in
@@ -100,7 +100,7 @@ line tool to open the browser tab.
   never shown, logged or returned by the plugin. Your message text is passed to
   OpenMausBot privately, not on a command line that other programs can read.
   Error messages never include raw output.
-- **No logins stored.** Bot for Orca does not read, copy or keep your Claude,
+- **No logins stored.** Bot Team for Orca does not read, copy or keep your Claude,
   Codex or Grok login. It only tells Claude which Orca login folder to use.
   The one exception is a tool import you start yourself, described above.
 
@@ -118,11 +118,11 @@ line tool to open the browser tab.
    local programs as the owner. This is its design, and it means other software
    running under your account can read chats and message your bots.
 4. **A reused server is trusted as it is.** If something else is already
-   answering as OpenMausBot on one of the three ports, Bot for Orca talks to it and
-   your messages go there. Bot for Orca does not switch off analytics on a server it
+   answering as OpenMausBot on one of the three ports, Bot Team for Orca talks to it and
+   your messages go there. Bot Team for Orca does not switch off analytics on a server it
    did not start.
 5. **The download is trusted.** The pinned version comes from npm, and npm
-   checks it against its own records. Bot for Orca does not add a second check.
+   checks it against its own records. Bot Team for Orca does not add a second check.
 6. **`~/.orca-bot/server.log` can contain a sign-in code.** It is readable only
    by you and is emptied on each start. Do not share it.
 7. **Linked agents can drive your bots.** With agent linking on, Claude,
@@ -156,7 +156,7 @@ orca plugin dev watch .    # load locally and reload on save
 
 ## License and credits
 
-Bot for Orca is licensed under [Apache-2.0](LICENSE), the same license as
+Bot Team for Orca is licensed under [Apache-2.0](LICENSE), the same license as
 OpenMausBot, which is by milind-soni and contributors. The panel adapts its colours and layout values; see
 [NOTICE](NOTICE).
 
