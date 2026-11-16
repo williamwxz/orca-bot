@@ -2,11 +2,16 @@
   "$schema": "https://raw.githubusercontent.com/stablyai/orca/main/docs/schemas/plugins/orca-plugin.v2.schema.json",
   "manifestVersion": 2,
   "id": "bot-for-orca",
-  "publisher": "williamwxz",
   "name": "Bot Team for Orca",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "A team of bots inside Orca. Runs the open-source OpenMausBot on your machine: a roster of bots, each its own Claude, Codex or Grok agent. Unofficial. Not made by or affiliated with Orca, OpenMausBot or the makers of the models it runs.",
   "license": "Apache-2.0",
+  "author": {
+    "name": "William Weixin Zhang",
+    "url": "https://github.com/williamwxz"
+  },
+  "repository": "https://github.com/williamwxz/orca-bot",
+  "icon": "images/icon.png",
   "engines": {
     "orca": ">=1.4.246"
   },

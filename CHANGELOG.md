@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.3
+
+- Plugin icon, and author and repository links on the plugin page.
+- Removed the deprecated `publisher` field; Orca takes it from the repository
+  owner.
+
 ## 0.1.2 (15 November 2026)
 
 - Renamed to **Bot Team for Orca**. Nothing else changed.
