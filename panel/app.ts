@@ -2,6 +2,7 @@ import { createSetup, agentNames } from './setup.ts'
 import { createChatView } from './chat-view.ts'
 import type { FrameApi } from './chat-view.ts'
 import type { Bot } from '../shared/roster.ts'
+import type { Hosts } from '../worker/paired-host.ts'
 import { avatarSvg } from '../shared/appearance.ts'
 
 const frame = (globalThis as unknown as { orca: FrameApi }).orca
@@ -42,6 +43,50 @@ async function answerSetup(allow: boolean): Promise<void> {
   renderSetup()
   await refreshAfterChange()
 }
+const hostRow = element<HTMLElement>('host-row')
+const hostSelect = element<HTMLSelectElement>('host')
+let hosts: Hosts | undefined
+const hostChosen = () => !hosts || hosts.selected === 'local' || hosts.hosts.some(host => host.id === hosts!.selected)
+function renderHosts(): void {
+  hostRow.hidden = element('list-header').hidden || !hosts || (hosts.hosts.length === 0 && hosts.selected === 'local')
+  if (!hosts) return
+  const choices = [...(hostChosen() ? [] : [['', 'Choose…']]), ['local', 'This computer'], ...hosts.hosts.map(host => [host.id, host.name])]
+  hostSelect.replaceChildren(...choices.map(([value, label]) => {
+    const option = document.createElement('option')
+    option.value = value; option.textContent = label; option.disabled = !value
+    return option
+  }))
+  hostSelect.value = hostChosen() ? hosts.selected : ''
+}
+async function loadHosts(): Promise<void> {
+  try { hosts = await frame.plugin.request('hosts.get', {}) } catch { /* Keep the last choice shown; status reports the problem. */ }
+  renderHosts()
+}
+async function chooseHost(id: string): Promise<void> {
+  if (!id) return
+  hostSelect.disabled = true
+  try {
+    hosts = await frame.plugin.request('hosts.select', { id })
+    // Let a refresh of the previous host finish before its bots are cleared.
+    await refreshPending
+    bots = []; selected = undefined; previews.clear(); readBots.clear()
+    chatView.update(bots)
+    renderBots()
+    running.hidden = true
+    result.textContent = ''
+    message.hidden = false
+    message.textContent = 'Connecting…'
+  } catch (error) {
+    message.hidden = false
+    message.textContent = error instanceof Error ? error.message : 'Could not change where your bots run.'
+    return
+  } finally {
+    hostSelect.disabled = false
+    renderHosts()
+  }
+  await refreshAfterChange()
+}
+hostSelect.addEventListener('change', () => void chooseHost(hostSelect.value))
 element('setup-allow').addEventListener('click', () => void answerSetup(true))
 element('setup-skip').addEventListener('click', () => void answerSetup(false))
 element('open-page').addEventListener('click', () => void open())
@@ -63,6 +108,7 @@ const chatView = createChatView(
   () => {
     rosterView.hidden = false
     element('list-header').hidden = false
+    renderHosts()
     renderSetup()
     renderBots()
   },
@@ -75,6 +121,7 @@ function showBot(bot: Bot): void {
   readBots.add(bot.id)
   rosterView.hidden = true
   element('list-header').hidden = true
+  renderHosts()
   renderSetup()
   chatView.open(bot)
   renderBots()
@@ -259,7 +306,7 @@ async function refreshNow(explicitRetry: boolean): Promise<void> {
     message.textContent = status.message
     message.hidden = !status.message
     running.hidden = status.state !== 'running'
-    retry.hidden = status.state === 'running' || status.state === 'starting'
+    retry.hidden = status.state === 'running' || status.state === 'starting' || !hostChosen()
     if (status.state === 'starting') delay = 2000
     if (status.state === 'running') {
       try {
@@ -286,8 +333,9 @@ async function refreshNow(explicitRetry: boolean): Promise<void> {
 retry.addEventListener('click', () => void refresh(true))
 document.addEventListener('visibilitychange', () => {
   clearTimeout(timer)
-  if (!document.hidden) void refresh()
+  if (!document.hidden) void start()
 })
 window.addEventListener('pagehide', () => clearTimeout(timer))
-window.addEventListener('pageshow', () => void refresh())
-void refresh()
+const start = () => loadHosts().then(() => refresh())
+window.addEventListener('pageshow', () => void start())
+void start()

@@ -52,6 +52,9 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
     plugin: {
       request: async (name: string, input: unknown) => {
         calls.push({ name, input })
+        if (name === 'hosts.get') return { selected: 'local', hosts: [{ id: 'mini-1', name: 'Mac Mini' }], message: '' }
+        if (name === 'hosts.select')
+          return { selected: (input as { id: string }).id, hosts: [{ id: 'mini-1', name: 'Mac Mini' }], message: '' }
         if (name === 'tools.find') return { tools: [{ name: 'fake', source: 'Cursor' }] }
         if (name === 'setup.get') return { answered, agents: { claude: true, codex: false } }
         if (name === 'status') return { state: 'running', message: '' }
@@ -129,6 +132,21 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
     get('bot-view').children[0].children[0].emit('click')
     assert.equal(get('list-header').hidden, false)
     assert.equal(get('setup').hidden, true)
+    // The picker lists this computer and each paired server, and hides with the bot list.
+    assert.equal(get('host-row').hidden, false)
+    assert.deepEqual(get('host').children.map((option) => [option.value, option.textContent]), [['local', 'This computer'], ['mini-1', 'Mac Mini']])
+    assert.equal(get('host').value, 'local')
+    get('roster').children[0].children[0].emit('click'); await flush()
+    assert.equal(get('host-row').hidden, true)
+    get('bot-view').children[0].children[0].emit('click')
+    const listed = calls.filter((call) => call.name === 'bots.list').length
+    get('host').value = 'mini-1'
+    get('host').emit('change'); await flush()
+    assert.deepEqual(calls.find((call) => call.name === 'hosts.select')?.input, { id: 'mini-1' })
+    assert.equal(get('host').value, 'mini-1')
+    assert.equal(get('host').disabled, false)
+    assert.equal(calls.filter((call) => call.name === 'bots.list').length, listed + 1)
+    assert.equal(get('roster').children.length, 1)
   } finally {
     win.emit('pagehide')
     keys.forEach((key, i) => {

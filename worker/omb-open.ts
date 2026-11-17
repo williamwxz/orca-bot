@@ -1,3 +1,4 @@
+import { orcaBinary } from './orca-cli.ts'
 import { connectRef, pairingScreen } from '../shared/appearance.ts'
 import { join } from 'node:path'
 import { cliOptions, defaultCliDeps, ombBinary } from './omb-cli.ts'
@@ -10,16 +11,6 @@ const ANALYTICS_OPT_OUT = 'omb-analytics-opt-out'
 export const validBotId = (value: unknown): value is string =>
   typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
 
-function orcaBinary(deps: CliDeps): string {
-  const mac = '/Applications/Orca.app/Contents/Resources/bin/orca'
-  if (deps.platform === 'darwin' && deps.exists(mac)) return mac
-  const separator = deps.platform === 'win32' ? ';' : ':'
-  for (const folder of (deps.env.PATH ?? '').split(separator).filter(Boolean)) {
-    const path = join(folder, deps.platform === 'win32' ? 'orca.exe' : 'orca')
-    if (deps.exists(path)) return path
-  }
-  throw new Error('Orca CLI was not found. Install Orca or add orca to PATH.')
-}
 
 function resultOf(text: string): Record<string, unknown> {
   const response = JSON.parse(text)

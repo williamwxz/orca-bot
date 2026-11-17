@@ -56,6 +56,34 @@ Good to know:
 - If an OpenMausBot server is already running on port 8799, 18799 or 28799, Orca
   Bot uses it as it is and never changes or stops it.
 
+## Use bots on a paired Orca server
+
+When this computer has a server saved in Orca's Remote Orca Servers, the panel
+shows **Bots run on** with **This computer** and each paired server. Choose one
+and the panel switches at once; the choice is remembered. The first time, the
+panel asks before it starts anything, so OpenMausBot is not installed here when
+you only want the server's bots. With no paired servers the picker stays hidden
+and the bots run on this computer.
+
+The server needs Orca, Node.js 24 or newer, and at least one project added in
+Orca there. It does not need Bot Team for Orca installed. When you choose the
+server, the plugin opens a terminal named **Bot Team for Orca** in that
+project, through Orca's existing pairing. It copies the plugin's own worker
+code to `~/.orca-bot/relay` on the server and runs it there. It closes that
+terminal after 10 minutes without use and opens a new one, in a few seconds,
+the next time the panel needs it. OpenMausBot keeps running on the server.
+
+The server keeps its files, bots and chat history, and starts OpenMausBot there
+if it is not running yet. The client does not install OpenMausBot, copy model
+logins, create SSH connections, expose a bot port or ask for a second pairing
+code. An unavailable server never falls back to a different bot team on this
+computer.
+
+From a paired client you can list bots, read and send messages, and add
+MausBot. Setup, tool imports, the Bot Dashboard and stopping OpenMausBot stay
+in Orca on the server. A paired client never changes the server's Claude setup
+or agent links, and never restarts or stops OpenMausBot there.
+
 ## Security review
 
 Reviewed on 15 November 2026 against OpenMausBot 0.1.158. This describes what
@@ -70,9 +98,11 @@ the plugin does; OpenMausBot and the model providers have their own terms.
 | Anything a tool or connector touches | To that service (for example Gmail or Linear) when a bot uses the tool. |
 | Bot Team for Orca itself | Sends nothing anywhere. It has no analytics, no account and no server. |
 
-The panel cannot reach the network at all. The plugin's worker talks only to
-`127.0.0.1`, to npm once to download OpenMausBot, and to Orca's own command
-line tool to open the browser tab.
+The panel cannot reach the network at all. In local mode the worker talks to
+`127.0.0.1`, npm to download OpenMausBot, and Orca's CLI. With a paired server
+it uses Orca's CLI to type requests into its terminal there, through the
+already-authorized pairing. Message text then appears briefly in the arguments
+of that `orca` command on this computer.
 
 ### What Bot Team for Orca does to protect you
 
