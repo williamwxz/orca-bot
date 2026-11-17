@@ -1,4 +1,14 @@
 {
   "extends": "./.orca/types/tsconfig.json",
-  "include": ["worker", "panel", "shared"]
+  "include": [
+    "worker",
+    "panel",
+    "shared"
+  ],
+  "compilerOptions": {
+    "lib": [
+      "ES2023",
+      "DOM"
+    ]
+  }
 }

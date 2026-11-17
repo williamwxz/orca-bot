@@ -2,6 +2,7 @@ import type { FoundAgents } from '../shared/agents.ts'
 import type { Tool, ImportResult } from './import-tools.ts'
 import type { Thread } from '../shared/chat.ts'
 import type { Bot } from '../shared/roster.ts'
+import type { Hosts } from './paired-host.ts'
 
 export type Status = {
   state: 'running' | 'starting' | 'needs_node' | 'install_failed' | 'start_failed'
@@ -25,5 +26,11 @@ export type Requests = {
   'bots.addMausBot': { input: { botId: string }; output: { message: string } }
   'bots.list': { input: Record<string, never>; output: Bot[] }
   status: { input: { retry?: boolean }; output: Status }
+  'hosts.get': { input: Record<string, never>; output: Hosts }
+  'hosts.select': { input: { id: string }; output: Hosts }
   'server.stop': { input: Record<string, never>; output: { stopped: boolean; message: string } }
+}
+
+declare module 'orca' {
+  interface PluginRequests extends Requests {}
 }

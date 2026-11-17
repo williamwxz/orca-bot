@@ -1,3 +1,4 @@
+import { registerPairedHost } from './paired-host.ts'
 import { linkError } from '../shared/agents.ts'
 import type { FoundAgents } from '../shared/agents.ts'
 import { defaultImportDeps, findTools, importTools, importMessage } from './import-tools.ts'
@@ -44,7 +45,7 @@ export type WorkerDeps = {
   listBots: (input: { port: number }) => Promise<Bot[]>
 }
 
-function defaults(): WorkerDeps {
+export function defaultWorkerDeps(): WorkerDeps {
   if (process.env.NODE_TEST_CONTEXT) throw new Error('Tests must inject worker dependencies')
   const deps = defaultServerDeps()
   const cli = defaultCliDeps()
@@ -92,7 +93,7 @@ export function versionMessage(version: string): string {
   return ''
 }
 
-export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaults()): void {
+export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDeps()): void {
   let status: Status | undefined
   let pending: Promise<void> | undefined
   let stopped = false
@@ -425,5 +426,5 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaults()): vo
 }
 
 export default function activate(orca: OrcaWorkerApi): void {
-  register(orca)
+  registerPairedHost(orca, api => register(api))
 }

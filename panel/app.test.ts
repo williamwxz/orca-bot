@@ -28,6 +28,8 @@ class Element {
   }
   focus() {}
 }
+const botNames = (root: Element): string[] =>
+  root.children.flatMap((child) => (child.className === 'bot-name' ? [child.textContent] : botNames(child)))
 const flush = () => new Promise<void>((resolve) => setImmediate(resolve))
 
 test('panel keeps bots below setup, opens the main page from the header, and retries failed approval', async () => {
@@ -48,10 +50,29 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
   let answered = false
   let reject!: (error: Error) => void
   let resolve!: () => void
+  let host = 'local'
+  let hostsBroken = false
+  let holdNextBots = false
+  let holdBots: ((bots: unknown) => void) | undefined
   const frame = {
     plugin: {
       request: async (name: string, input: unknown) => {
         calls.push({ name, input })
+        if (name === 'hosts.get')
+          return hostsBroken
+            ? { selected: host, hosts: [], message: 'Could not read Orca’s paired servers.' }
+            : { selected: host, hosts: [{ id: 'mini-1', name: 'Mac Mini' }], message: '' }
+        if (name === 'hosts.select') {
+          host = (input as { id: string }).id
+          return { selected: host, hosts: [{ id: 'mini-1', name: 'Mac Mini' }], message: '' }
+        }
+        if (name === 'status' && hostsBroken) return { state: 'start_failed', message: 'Could not read Orca’s paired servers.' }
+        if (name === 'bots.list' && holdNextBots) {
+          holdNextBots = false
+          return new Promise((done) => { holdBots = done })
+        }
+        if (name === 'bots.list' && host !== 'local')
+          return [{ id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', name: 'Remote bot', state: 'idle', modelLabel: 'Claude' }]
         if (name === 'tools.find') return { tools: [{ name: 'fake', source: 'Cursor' }] }
         if (name === 'setup.get') return { answered, agents: { claude: true, codex: false } }
         if (name === 'status') return { state: 'running', message: '' }
@@ -129,6 +150,51 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
     get('bot-view').children[0].children[0].emit('click')
     assert.equal(get('list-header').hidden, false)
     assert.equal(get('setup').hidden, true)
+    // The picker lists this computer and each paired server, and hides with the bot list.
+    assert.equal(get('host-row').hidden, false)
+    assert.deepEqual(get('host').children.map((option) => [option.value, option.textContent]), [['local', 'This computer'], ['mini-1', 'Mac Mini']])
+    assert.equal(get('host').value, 'local')
+    get('roster').children[0].children[0].emit('click'); await flush()
+    assert.equal(get('host-row').hidden, true)
+    get('bot-view').children[0].children[0].emit('click')
+    const listed = calls.filter((call) => call.name === 'bots.list').length
+    get('host').value = 'mini-1'
+    get('host').emit('change'); await flush()
+    assert.deepEqual(calls.find((call) => call.name === 'hosts.select')?.input, { id: 'mini-1' })
+    assert.equal(get('host').value, 'mini-1')
+    assert.equal(get('host').disabled, false)
+    assert.equal(calls.filter((call) => call.name === 'bots.list').length, listed + 1)
+    assert.deepEqual(botNames(get('roster')), ['Remote bot'])
+    // Switching clears the old host's bots at once, and a late answer from that host is dropped.
+    holdNextBots = true
+    win.emit('pageshow'); await flush()
+    assert.ok(holdBots)
+    get('host').value = 'local'
+    get('host').emit('change')
+    assert.equal(get('running').hidden, true)
+    assert.deepEqual(botNames(get('roster')), [])
+    await flush()
+    // Hold the new host's list too, to look at the moment the stale answer lands.
+    const stale = holdBots!
+    holdNextBots = true
+    stale([{ id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', name: 'Stale bot', state: 'idle', modelLabel: 'Claude' }])
+    await flush(); await flush(); await flush()
+    assert.notEqual(holdBots, stale)
+    assert.deepEqual(botNames(get('roster')), [])
+    holdBots!([{ id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', name: 'Fake bot', state: 'idle', modelLabel: 'Codex' }])
+    await flush(); await flush()
+    assert.deepEqual(botNames(get('roster')), ['Fake bot'])
+    // When Orca cannot list servers, Retry shows and asks Orca again before checking status.
+    host = 'mini-1'
+    hostsBroken = true
+    win.emit('pageshow'); await flush(); await flush()
+    assert.equal(get('retry').hidden, false)
+    hostsBroken = false
+    const asked = calls.filter((call) => call.name === 'hosts.get').length
+    get('retry').emit('click'); await flush(); await flush()
+    assert.equal(calls.filter((call) => call.name === 'hosts.get').length, asked + 1)
+    assert.equal(get('retry').hidden, true)
+    assert.deepEqual(botNames(get('roster')), ['Remote bot'])
   } finally {
     win.emit('pagehide')
     keys.forEach((key, i) => {

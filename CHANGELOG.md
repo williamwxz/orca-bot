@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **Bots run on**: pick this computer or a paired Orca server in the panel.
+  The server needs Orca, Node.js 24 or newer and one project in Orca; it does
+  not need this plugin. Chat and the bot list work from the client; setup,
+  tool imports, the Bot Dashboard and stopping OpenMausBot stay on the server.
+  Not yet tested between two computers.
+
 ## 0.1.3 (16 November 2026)
 
 - Plugin icon, and author and repository links on the plugin page.
