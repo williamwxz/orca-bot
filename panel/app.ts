@@ -62,24 +62,28 @@ async function loadHosts(): Promise<void> {
   try { hosts = await frame.plugin.request('hosts.get', {}) } catch { /* Keep the last choice shown; status reports the problem. */ }
   renderHosts()
 }
+// Rises on every host change, so answers from the previous host are dropped, not shown.
+let hostGeneration = 0
 async function chooseHost(id: string): Promise<void> {
   if (!id) return
+  hostGeneration++
   hostSelect.disabled = true
+  // Clear the old host's bots at once, so nothing of theirs can be clicked while switching.
+  bots = []
+  selected = undefined
+  previews.clear()
+  readBots.clear()
+  chatView.update(bots)
+  renderBots()
+  running.hidden = true
+  result.textContent = ''
+  message.hidden = false
+  message.textContent = 'Connecting…'
   try {
     hosts = await frame.plugin.request('hosts.select', { id })
-    // Let a refresh of the previous host finish before its bots are cleared.
-    await refreshPending
-    bots = []; selected = undefined; previews.clear(); readBots.clear()
-    chatView.update(bots)
-    renderBots()
-    running.hidden = true
-    result.textContent = ''
-    message.hidden = false
-    message.textContent = 'Connecting…'
   } catch (error) {
-    message.hidden = false
     message.textContent = error instanceof Error ? error.message : 'Could not change where your bots run.'
-    return
+    await loadHosts()
   } finally {
     hostSelect.disabled = false
     renderHosts()
@@ -292,7 +296,11 @@ async function refreshNow(explicitRetry: boolean): Promise<void> {
   if (document.hidden) return
   retry.disabled = true
   let delay = 5000
+  const generation = hostGeneration
+  const current = () => generation === hostGeneration
   try {
+    // Ask Orca again while the chosen server is unknown, so a passing failure recovers by itself.
+    if (!hostChosen()) await loadHosts()
     try {
       setup.load(await frame.plugin.request('setup.get', {}))
       if (!setup.state.answered && !setup.state.toolsLoaded)
@@ -302,15 +310,18 @@ async function refreshNow(explicitRetry: boolean): Promise<void> {
       /* Retry with the next refresh; bots still load. */
     }
     const status = await frame.plugin.request('status', { retry: explicitRetry })
+    if (!current()) return
     element<HTMLButtonElement>('open-page').disabled = opening || status.state !== 'running'
     message.textContent = status.message
     message.hidden = !status.message
     running.hidden = status.state !== 'running'
-    retry.hidden = status.state === 'running' || status.state === 'starting' || !hostChosen()
+    // While servers are listed, choosing one is the way forward; Retry is for failures.
+    retry.hidden = status.state === 'running' || status.state === 'starting' || (!hostChosen() && !!hosts?.hosts.length)
     if (status.state === 'starting') delay = 2000
     if (status.state === 'running') {
       try {
         const nextBots = await frame.plugin.request('bots.list', {})
+        if (!current()) return
         for (const bot of nextBots) if (!bot.unread) readBots.delete(bot.id)
         bots = nextBots
         chatView.update(bots)
@@ -321,6 +332,7 @@ async function refreshNow(explicitRetry: boolean): Promise<void> {
       }
     }
   } catch {
+    if (!current()) return
     message.hidden = false
     message.textContent = 'Could not read status. Please retry.'
     retry.hidden = false

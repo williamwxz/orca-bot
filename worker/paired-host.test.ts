@@ -8,7 +8,10 @@ test('bots run here without paired servers, and nothing is guessed once a server
   const deps = { call: async () => ({ environments: hosts }) }
   const offline = { call: async () => { throw new Error('offline') } }
   assert.deepEqual(await readHosts(undefined, { call: async () => ({ environments: [] }) }), { selected: 'local', hosts: [], message: '' })
-  assert.deepEqual(await readHosts(undefined, offline), { selected: 'local', hosts: [], message: '' })
+  // Not knowing the servers is not the same as having none: nothing starts here on a guess.
+  const unknown = await readHosts(undefined, offline)
+  assert.equal(unknown.selected, '')
+  assert.match(unknown.message, /Could not read/)
   assert.deepEqual(await readHosts('local', deps), { selected: 'local', hosts, message: '' })
   assert.deepEqual(await readHosts('mini-1', deps), { selected: 'mini-1', hosts, message: '' })
   const unchosen = await readHosts(undefined, deps)

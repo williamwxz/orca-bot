@@ -32,6 +32,8 @@ export async function readHosts(saved: unknown, deps: BridgeDeps): Promise<Hosts
     // Never fall back to a different bot team than the one the person chose.
     return { selected: saved, hosts, message: failed ? 'Could not read Orca’s paired servers. Check that Orca’s command line tool is installed, then retry.' : 'The chosen Orca server is no longer paired. Choose where your bots run.' }
   }
+  // Not knowing which servers exist is not the same as having none: never start bots here on a guess.
+  if (failed) return { selected: '', hosts, message: 'Could not read Orca’s paired servers. Choose This computer, or press Retry.' }
   // Ask once instead of guessing: starting bots here downloads OpenMausBot.
   return hosts.length ? { selected: '', hosts, message: 'Choose where your bots run.' } : { selected: LOCAL, hosts, message: '' }
 }
