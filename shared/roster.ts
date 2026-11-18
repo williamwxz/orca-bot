@@ -60,13 +60,18 @@ export function groupRoster(bots: Bot[]): GroupedRoster {
   const ungroupedTop = visible.filter((bot) => bot.main && !bot.pinned && !bot.section)
   const groups: RosterGroup[] = []
   const pinned = visible.filter((bot) => bot.pinned)
-  if (pinned.length) groups.push({ title: 'Pinned', bots: pinned })
+  const builtInTitle = (title: string) => {
+    let unique = title
+    while (sections.includes(unique)) unique += ' (automatic)'
+    return unique
+  }
+  if (pinned.length) groups.push({ title: builtInTitle('Pinned'), bots: pinned })
   for (const section of sections) {
     const members = visible.filter((bot) => !bot.pinned && bot.section === section)
     if (members.length) groups.push({ title: section, bots: members })
   }
   const rest = visible.filter((bot) => !bot.pinned && !bot.section && !bot.main)
-  if (rest.length) groups.push({ title: 'Bots', bots: rest })
+  if (rest.length) groups.push({ title: builtInTitle('Bots'), bots: rest })
   return { ungroupedTop, groups, addable, sections }
 }
 

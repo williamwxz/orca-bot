@@ -18,6 +18,7 @@ import { defaultCliDeps } from './omb-cli.ts'
 import type { Bot, BotAction } from '../shared/roster.ts'
 import type { Status } from './protocol.ts'
 import {
+  withServerLock,
   ensureServer,
   ensureInstalled,
   INSTALL_NOTICE,
@@ -37,6 +38,7 @@ export type WorkerDeps = {
   findAgents?: () => FoundAgents
   syncAgentLinks?: (input: { enabled: boolean; owned: boolean; port: number }) => Promise<void>
   hostPrefs?: HostPrefs
+  withLifecycle?: <T>(operation: () => Promise<T>) => Promise<T>
   checkHealth: (port: number) => Promise<boolean>
   now: () => number
   ensureServer: (share: boolean, allowInstall?: boolean) => Promise<ServerResult>
@@ -73,6 +75,7 @@ export function defaultWorkerDeps(): WorkerDeps {
         links
       ),
     hostPrefs: defaultHostPrefs(),
+    withLifecycle: (operation) => withServerLock(deps, operation),
     checkHealth: (port) => serverHealthy(port, deps),
     now: Date.now,
     ensureServer: (share, allowInstall) => ensureServer(deps, share, allowInstall),
@@ -118,6 +121,7 @@ export function versionMessage(version: string): string {
 }
 
 export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDeps()): void {
+  const lifecycle = deps.withLifecycle ?? (async <T>(operation: () => Promise<T>) => operation())
   let status: Status | undefined
   let pending: Promise<void> | undefined
   let stopped = false
@@ -128,6 +132,7 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
   let repairAt = -Infinity
   let repairFailedUntil = -Infinity
   let seenPrefs: Required<StoredPrefs> | undefined
+  let pendingPrefs: StoredPrefs = {}
 
   let prefsQueue: Promise<unknown> = Promise.resolve()
   const withPrefs = <T>(operation: () => Promise<T>): Promise<T> => {
@@ -136,96 +141,60 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
     return next
   }
 
+  const prefKeys = {
+    shareTools: ['settings', 'shareClaudeSetup'],
+    linkAgents: ['settings', 'linkAgents'],
+    setupAnswered: ['storage', 'setupAnswered'],
+    installConsent: ['storage', 'openmausbotInstallConsent'],
+    stopped: ['storage', 'botServerStopped']
+  } as const
   const syncPrefs = (): Promise<Required<StoredPrefs>> =>
     withPrefs(async () => {
-      let shareTools = (await orca.settings.get('shareClaudeSetup')) === true
-      let linkAgents = (await orca.settings.get('linkAgents')) === true
-      let setupAnswered = (await orca.storage.get('setupAnswered')) === true
-      let installConsent = (await orca.storage.get('openmausbotInstallConsent')) === true
+      const current = {} as Required<StoredPrefs>
+      const prior = seenPrefs ?? ((await orca.storage.get('syncedHostPrefs')) as StoredPrefs | null)
+      for (const key of Object.keys(prefKeys) as (keyof StoredPrefs)[]) {
+        const [bag, name] = prefKeys[key]
+        current[key] = (await orca[bag].get(name)) === true
+      }
       const shared = deps.hostPrefs?.read()
-      if (deps.hostPrefs) {
-        if (!shared) {
-          if (setupAnswered || installConsent || shareTools || linkAgents) {
-            deps.hostPrefs.write({ shareTools, linkAgents, setupAnswered, installConsent })
-          }
-        } else {
-          const patch: Partial<StoredPrefs> = {}
-          // A consent-only file may predate the local worker's first sync. Migrate retained
-          // true choices for missing keys, but never seed an absent choice from relay defaults.
-          for (const [key, value] of Object.entries({
-            shareTools,
-            linkAgents,
-            setupAnswered,
-            installConsent
-          })) {
-            if (shared[key as keyof StoredPrefs] === undefined && value) {
-              patch[key as keyof StoredPrefs] = true
-            }
-          }
-          if (seenPrefs && shareTools !== seenPrefs.shareTools) patch.shareTools = shareTools
-          else if (typeof shared.shareTools === 'boolean' && shared.shareTools !== shareTools) {
-            shareTools = shared.shareTools
-            await orca.settings.set('shareClaudeSetup', shareTools)
-          }
-          if (seenPrefs && linkAgents !== seenPrefs.linkAgents) patch.linkAgents = linkAgents
-          else if (typeof shared.linkAgents === 'boolean' && shared.linkAgents !== linkAgents) {
-            linkAgents = shared.linkAgents
-            await orca.settings.set('linkAgents', linkAgents)
-          }
-          if (seenPrefs && setupAnswered !== seenPrefs.setupAnswered)
-            patch.setupAnswered = setupAnswered
-          else if (
-            typeof shared.setupAnswered === 'boolean' &&
-            shared.setupAnswered !== setupAnswered
-          ) {
-            setupAnswered = shared.setupAnswered
-            await orca.storage.set('setupAnswered', setupAnswered)
-          }
-          if (seenPrefs && installConsent !== seenPrefs.installConsent)
-            patch.installConsent = installConsent
-          else if (
-            typeof shared.installConsent === 'boolean' &&
-            shared.installConsent !== installConsent
-          ) {
-            installConsent = shared.installConsent
-            await orca.storage.set('openmausbotInstallConsent', installConsent)
-          }
-          if (Object.keys(patch).length) deps.hostPrefs.write(patch)
+      const patch: StoredPrefs = {}
+      for (const key of Object.keys(prefKeys) as (keyof StoredPrefs)[]) {
+        const [bag, name] = prefKeys[key]
+        if (typeof prior?.[key] === 'boolean' && current[key] !== prior[key]) {
+          patch[key] = current[key]
+        } else if (typeof shared?.[key] === 'boolean') {
+          current[key] = shared[key]!
+          await orca[bag].set(name, current[key])
+        } else if (current[key]) {
+          patch[key] = true
         }
       }
-      seenPrefs = { shareTools, linkAgents, setupAnswered, installConsent }
-      return seenPrefs
+      // Background reconciliation cannot wedge status if the disk is temporarily unwritable.
+      // Keep the previous snapshot on failure so the native change is retried next time.
+      try {
+        if (Object.keys(patch).length) deps.hostPrefs?.write(patch)
+        await orca.storage.set('syncedHostPrefs', current)
+        seenPrefs = current
+        pendingPrefs = {}
+      } catch {
+        pendingPrefs = patch
+      }
+      return current
     })
 
   const writePrefs = (patch: Partial<StoredPrefs>): Promise<void> =>
     withPrefs(async () => {
-      // Persist first: a failed disk write must not look like a successful permission change.
+      patch = { ...pendingPrefs, ...patch }
       deps.hostPrefs?.write(patch)
-      if (patch.shareTools !== undefined)
-        await orca.settings.set('shareClaudeSetup', patch.shareTools)
-      if (patch.linkAgents !== undefined) await orca.settings.set('linkAgents', patch.linkAgents)
-      if (patch.setupAnswered !== undefined)
-        await orca.storage.set('setupAnswered', patch.setupAnswered)
-      if (patch.installConsent !== undefined)
-        await orca.storage.set('openmausbotInstallConsent', patch.installConsent)
-      seenPrefs = {
-        shareTools:
-          patch.shareTools ??
-          seenPrefs?.shareTools ??
-          (await orca.settings.get('shareClaudeSetup')) === true,
-        linkAgents:
-          patch.linkAgents ??
-          seenPrefs?.linkAgents ??
-          (await orca.settings.get('linkAgents')) === true,
-        setupAnswered:
-          patch.setupAnswered ??
-          seenPrefs?.setupAnswered ??
-          (await orca.storage.get('setupAnswered')) === true,
-        installConsent:
-          patch.installConsent ??
-          seenPrefs?.installConsent ??
-          (await orca.storage.get('openmausbotInstallConsent')) === true
+      pendingPrefs = {}
+      const current = { ...seenPrefs } as Required<StoredPrefs>
+      for (const key of Object.keys(prefKeys) as (keyof StoredPrefs)[]) {
+        const [bag, name] = prefKeys[key]
+        if (patch[key] !== undefined) await orca[bag].set(name, patch[key])
+        current[key] = (await orca[bag].get(name)) === true
       }
+      await orca.storage.set('syncedHostPrefs', current)
+      seenPrefs = current
     })
 
   const repair = (immediate = false): void => {
@@ -332,7 +301,7 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
   })
   orca.panels.handle('server.install', async () => {
     await syncPrefs()
-    await writePrefs({ installConsent: true })
+    await writePrefs({ installConsent: true, stopped: false })
     await pending
     if (status?.state !== 'running') status = undefined
     stopped = false
@@ -341,6 +310,19 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
   })
   orca.panels.handle('status', async (input: { retry?: boolean } = {}): Promise<Status> => {
     const prefs = await syncPrefs()
+    if (input.retry) {
+      await writePrefs({ stopped: false })
+      prefs.stopped = false
+    }
+    stopped = prefs.stopped
+    if (stopped) {
+      status = {
+        state: 'start_failed',
+        message: 'OpenMausBot was stopped. Press Retry to start it again.',
+        testedVersion: TESTED_OPENMAUSBOT_VERSION
+      }
+      return status
+    }
     const allowInstall = prefs.installConsent
     const answered = prefs.setupAnswered
     const share = answered && prefs.shareTools
@@ -404,7 +386,6 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
             )
               return
             if (status !== checked || pending) return
-            const restartShare = share
             status = {
               ...checked,
               state: 'starting',
@@ -413,42 +394,74 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
                 : 'Restarting OpenMausBot to apply your Claude setup\u2026'
             }
             pending = Promise.resolve()
-              .then(async () => {
-                await opening?.catch(() => {})
-                // Keep the old server available if download or integrity verification fails.
-                try {
-                  if (setup.updating) await deps.prepareServer?.(allowInstall)
-                } catch (error) {
-                  status = checked
-                  checked.message =
-                    error instanceof ServerError
-                      ? error.message
-                      : 'Could not prepare the OpenMausBot update. Press Retry.'
-                  return
-                }
-                // A turn may have started while opening the dashboard or preparing the update.
-                if (sends || (await deps.rosterBusy!(checked.port!))) {
-                  status = checked
-                  return
-                }
-                const result = await deps.stopServer()
-                if (!result.stopped) {
-                  status = checked
-                  return
-                }
-                lastRoster = []
-                const server = await deps.ensureServer(restartShare, allowInstall)
-                startedByPlugin = server.startedByPlugin
-                lastHealthCheck = -Infinity
-                status = {
-                  state: 'running',
-                  message: versionMessage(server.version),
-                  port: server.port,
-                  version: server.version,
-                  testedVersion: TESTED_OPENMAUSBOT_VERSION
-                }
-                repair(true)
-              })
+              .then(() =>
+                lifecycle(async () => {
+                  await opening?.catch(() => {})
+                  const fresh = await syncPrefs()
+                  const restartShare = fresh.setupAnswered && fresh.shareTools
+                  const stillNeedsRestart = await deps.claudeSetupStatus?.(
+                    checked.port!,
+                    restartShare
+                  )
+                  if (fresh.stopped) {
+                    stopped = true
+                    status = {
+                      state: 'start_failed',
+                      message: 'OpenMausBot was stopped. Press Retry to start it again.',
+                      testedVersion: TESTED_OPENMAUSBOT_VERSION
+                    }
+                    return
+                  }
+                  if (stillNeedsRestart && !stillNeedsRestart.restart) {
+                    // Another worker already applied the change while we waited for the lock.
+                    const server = await deps.ensureServer(restartShare, fresh.installConsent)
+                    startedByPlugin = server.startedByPlugin
+                    status = {
+                      state: 'running',
+                      message: versionMessage(server.version),
+                      port: server.port,
+                      version: server.version,
+                      testedVersion: TESTED_OPENMAUSBOT_VERSION
+                    }
+                    lastHealthCheck = -Infinity
+                    return
+                  }
+                  // Keep the old server available if download or integrity verification fails.
+                  try {
+                    if (stillNeedsRestart?.updating ?? setup.updating)
+                      await deps.prepareServer?.(fresh.installConsent)
+                  } catch (error) {
+                    status = checked
+                    checked.message =
+                      error instanceof ServerError
+                        ? error.message
+                        : 'Could not prepare the OpenMausBot update. Press Retry.'
+                    return
+                  }
+                  // A turn may have started while opening the dashboard or preparing the update.
+                  if (sends || (await deps.rosterBusy!(checked.port!))) {
+                    status = checked
+                    return
+                  }
+                  const result = await deps.stopServer()
+                  if (!result.stopped) {
+                    status = checked
+                    return
+                  }
+                  lastRoster = []
+                  const server = await deps.ensureServer(restartShare, fresh.installConsent)
+                  startedByPlugin = server.startedByPlugin
+                  lastHealthCheck = -Infinity
+                  status = {
+                    state: 'running',
+                    message: versionMessage(server.version),
+                    port: server.port,
+                    version: server.version,
+                    testedVersion: TESTED_OPENMAUSBOT_VERSION
+                  }
+                  repair(true)
+                })
+              )
               .catch(() => {
                 status = {
                   state: 'start_failed',
@@ -515,6 +528,9 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
     if (importing) return importing
     importing = Promise.resolve()
       .then(async () => {
+        await syncPrefs()
+        await writePrefs({ stopped: false })
+        stopped = false
         await checking
         await pending
         if (status?.state !== 'running') {
@@ -644,7 +660,14 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
     await importing?.catch(() => {})
     // Wait for our own startup so a stop command cannot leave it running afterwards.
     await pending
-    const result = await deps.stopServer()
+    const result = await lifecycle(async () => {
+      const result = await deps.stopServer()
+      if (result.stopped) {
+        await syncPrefs()
+        await writePrefs({ stopped: true })
+      }
+      return result
+    })
     if (result.stopped) {
       lastRoster = []
       stopped = true

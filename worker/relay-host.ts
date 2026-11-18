@@ -12,11 +12,13 @@ import {
   ensureInstalled,
   ensureServer,
   isPluginServer,
-  stopServer
+  stopServer,
+  withServerLock
 } from './omb-server.ts'
 import type { ServerDeps } from './omb-server.ts'
 import { defaultCliDeps } from './omb-cli.ts'
 import type { CliDeps } from './omb-cli.ts'
+import type { PageStore } from './omb-open.ts'
 import { openChat } from './omb-open.ts'
 import { TESTED_OPENMAUSBOT_VERSION } from '../shared/omb-version.ts'
 import { NEXT, PING, RELAYED, WINDOW, frames, lineReader, unpack } from './relay-frames.ts'
@@ -37,10 +39,12 @@ export type RelayIo = {
 export function pairedClientDeps(
   base: WorkerDeps = defaultWorkerDeps(),
   server: ServerDeps = { ...defaultServerDeps(), spawn: orphanSpawn },
-  cli?: CliDeps
+  cli?: CliDeps,
+  pageStore?: PageStore
 ): WorkerDeps {
   return {
     ...base,
+    withLifecycle: (operation) => withServerLock(server, operation),
     ensureServer: (share, allowInstall) => ensureServer(server, share, allowInstall),
     prepareServer: (allowInstall) =>
       ensureInstalled(TESTED_OPENMAUSBOT_VERSION, server, allowInstall),
@@ -51,6 +55,7 @@ export function pairedClientDeps(
         {
           ...input,
           clientBrowser: true,
+          pageStore,
           startedByPlugin: input.startedByPlugin && (await isPluginServer(input.port, server))
         },
         resolvedCli
@@ -97,7 +102,8 @@ export function orphanSpawn(
 
 export function createRelay(
   io: RelayIo,
-  host: (api: OrcaWorkerApi) => void = (api) => register(api, pairedClientDeps())
+  host: (api: OrcaWorkerApi, pageStore: PageStore) => void = (api, pages) =>
+    register(api, pairedClientDeps(undefined, undefined, undefined, pages))
 ): (chunk: string) => void {
   const handlers = new Map<string, (input: unknown, context: unknown) => unknown>()
   const store: Store = io.load() ?? { storage: {}, settings: {} }
@@ -108,24 +114,40 @@ export function createRelay(
     io.save(store)
     return Promise.resolve()
   }
-  const disposable = { dispose() {} }
-  host({
-    panels: {
-      handle: (name: string, handler: (input: unknown, context: unknown) => unknown) => {
-        handlers.set(name, handler)
-        return disposable
-      }
+  const pages: PageStore = {
+    get: (origin) => {
+      const saved = store.storage.clientPages as Record<string, unknown> | undefined
+      return typeof saved?.[origin] === 'string' ? (saved[origin] as string) : undefined
     },
-    commands: { register: () => disposable },
-    storage: {
-      get: (key: string) => value(store.storage, key),
-      set: (key: string, next: unknown) => set(store.storage, key, next)
-    },
-    settings: {
-      get: (key: string) => value(store.settings, key),
-      set: (key: string, next: unknown) => set(store.settings, key, next)
+    set: (origin, pageId) => {
+      const saved = { ...((store.storage.clientPages as Record<string, string>) ?? {}) }
+      if (pageId) saved[origin] = pageId
+      else delete saved[origin]
+      store.storage.clientPages = saved
+      io.save(store)
     }
-  } as unknown as OrcaWorkerApi)
+  }
+  const disposable = { dispose() {} }
+  host(
+    {
+      panels: {
+        handle: (name: string, handler: (input: unknown, context: unknown) => unknown) => {
+          handlers.set(name, handler)
+          return disposable
+        }
+      },
+      commands: { register: () => disposable },
+      storage: {
+        get: (key: string) => value(store.storage, key),
+        set: (key: string, next: unknown) => set(store.storage, key, next)
+      },
+      settings: {
+        get: (key: string) => value(store.settings, key),
+        set: (key: string, next: unknown) => set(store.settings, key, next)
+      }
+    } as unknown as OrcaWorkerApi,
+    pages
+  )
 
   let reply: { lines: string[]; at: number } | undefined
   const flush = () => {

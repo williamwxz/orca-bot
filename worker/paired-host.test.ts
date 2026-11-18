@@ -183,6 +183,13 @@ test('host preferences sync two-way between a remote host local worker and a pai
   const files = new Map<string, string>()
   const hostPrefs = fileHostPrefs('/fake/.orca-bot/preferences.json', {
     mkdirSync: () => undefined,
+    renameSync: (from, to) => {
+      files.set(String(to), files.get(String(from))!)
+      files.delete(String(from))
+    },
+    unlinkSync: (path) => {
+      files.delete(String(path))
+    },
     readFileSync: (path) => {
       const content = files.get(String(path))
       if (content === undefined) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
@@ -368,3 +375,29 @@ function fakeTerminal(
     throw new Error(`unexpected ${key}`)
   }
 }
+
+test('relay page store is saved with paired-client state and reloads after reconnect', () => {
+  let saved: any
+  let pages: any
+  const io = {
+    hash: 'fake',
+    write: () => {},
+    load: () => saved,
+    save: (store: any) => {
+      saved = JSON.parse(JSON.stringify(store))
+    }
+  }
+  createRelay(io, (_api, store) => {
+    pages = store
+  })
+  pages.set('http://127.0.0.1:8799', 'client-page')
+  createRelay(io, (_api, store) => {
+    pages = store
+  })
+  assert.equal(pages.get('http://127.0.0.1:8799'), 'client-page')
+  pages.set('http://127.0.0.1:8799', undefined)
+  createRelay(io, (_api, store) => {
+    pages = store
+  })
+  assert.equal(pages.get('http://127.0.0.1:8799'), undefined)
+})

@@ -34,15 +34,18 @@ const remoteName = () =>
     ? hosts.hosts.find((host) => host.id === hosts!.selected)?.name
     : undefined
 
-function renderSetup(): void {
+function renderSetup(hostName = remoteName()): void {
   const state = setup.state
-  const target = remoteName() ?? 'this computer'
+  const target = hostName ?? 'this computer'
   element('setup').hidden = element('list-header').hidden || !state.loaded || state.answered
   element('link-agents-label').hidden = !agentNames(state.agents)
+  element('share-tools-copy').textContent =
+    `Claude bots use the Claude connectors, MCP servers, skills and instructions on ${target}. Codex bots always use the Codex setup on ${target}.`
+  element('agent-host').textContent = ` on ${target}`
   element('agent-names').textContent = agentNames(state.agents)
   element('import-tools-label').hidden = state.tools.length === 0
   element('import-tools-copy').textContent =
-    `Adds ${state.tools.length} ${state.tools.length === 1 ? 'tool' : 'tools'} from ${[...new Set(state.tools.map((t) => t.source))].join(', ')} to OpenMausBot, switched off. Turn them on per bot in the Bot Dashboard. Tokens saved in those apps are copied to OpenMausBot on ${target}.`
+    `Adds ${state.tools.length} ${state.tools.length === 1 ? 'tool' : 'tools'} from ${[...new Set(state.tools.map((t) => t.source))].join(', ')} on ${target} to OpenMausBot, switched off. Turn them on per bot in the Bot Dashboard. Tokens saved in those apps on ${target} are copied to OpenMausBot there.`
   element('setup-message').textContent = state.message
   for (const id of ['setup-allow', 'setup-skip'])
     element<HTMLButtonElement>(id).disabled = state.busy
@@ -94,8 +97,10 @@ async function chooseHost(id: string): Promise<void> {
   hostGeneration++
   botMenu.close()
   hostSelect.disabled = true
-  settings.beginHostChange()
+  const nextRemote = hosts?.hosts.find((host) => host.id === id)?.name
+  settings.beginHostChange(nextRemote)
   setup.state.loaded = false
+  renderSetup(nextRemote)
   let hostProblem = ''
   // Clear the old host's bots at once, so nothing of theirs can be clicked while switching.
   bots = []
@@ -273,7 +278,7 @@ function makeBotRow(bot: Bot, sections: string[]): HTMLElement {
   chat.type = 'button'
   chat.className = 'bot-chat'
   chat.dataset.focus = `${bot.id}-chat`
-  chat.disabled = opening || changing.has(bot.id)
+  chat.setAttribute('aria-disabled', String(opening || changing.has(bot.id)))
   chat.title = bot.title || `Open ${bot.name}'s chat`
   chat.setAttribute('aria-label', `Open ${bot.name}'s chat`)
   const avatar = makeAvatar(bot)
@@ -293,11 +298,18 @@ function makeBotRow(bot: Bot, sections: string[]): HTMLElement {
     main.append(icon('crown'), document.createTextNode('Chief of Staff'))
     heading.append(main)
   }
-  chat.addEventListener('click', () => showBot(bot))
+  chat.addEventListener('click', () => {
+    if (!opening && !changing.has(bot.id)) showBot(bot)
+  })
   row.addEventListener('click', (event) => {
+    if (opening || changing.has(bot.id)) return
     if (!(event?.target as Element | undefined)?.closest?.('button')) showBot(bot)
   })
-  row.addEventListener('contextmenu', (event) => botMenu.open(bot, sections, event))
+  const openMenu = (event: Event) => botMenu.open(bot, sections, event, chat, changing.has(bot.id))
+  row.addEventListener('contextmenu', openMenu)
+  row.addEventListener('keydown', (event) => {
+    if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) openMenu(event)
+  })
   const model = document.createElement('span')
   model.className = 'model'
   model.textContent = previews.get(bot.id) ?? bot.modelLabel

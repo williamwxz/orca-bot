@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Host preferences recover from corrupt JSON and save atomically; a persisted
+  sync snapshot distinguishes native Settings edits from remote changes.
+  Stop intent and client dashboard page IDs survive relay reconnects.
+- Host lifecycle operations serialize across workers, recheck state under the
+  lock, and install through unique staging directories.
+- Remote permission descriptions identify the host supplying tools and agents.
+  Bot menus support keyboard opening, arrow navigation and focus restoration;
+  built-in group headers remain distinct from custom sections.
+
 - One installation notice card, a gear Settings icon, and a right-click bot
   menu for pinning, renaming, grouping, deleting or hiding the default MausBot.
   Grouped rosters show Pinned and named section headings.

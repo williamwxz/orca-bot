@@ -11,8 +11,12 @@ type MenuEvent = {
 
 export function createBotMenu(menu: HTMLElement, act: (input: BotAction) => Promise<void>) {
   let busy = false
+  let disabled = false
+  let trigger: HTMLElement | undefined
+  let items: HTMLButtonElement[] = []
 
-  function close(): void {
+  function close(restoreFocus = false): void {
+    if (restoreFocus) trigger?.focus()
     menu.hidden = true
     menu.replaceChildren()
   }
@@ -32,7 +36,7 @@ export function createBotMenu(menu: HTMLElement, act: (input: BotAction) => Prom
   }
 
   async function run(input: BotAction): Promise<void> {
-    if (busy) return
+    if (busy || disabled) return
     busy = true
     close()
     try {
@@ -47,10 +51,12 @@ export function createBotMenu(menu: HTMLElement, act: (input: BotAction) => Prom
     btn.type = 'button'
     btn.className = `bot-menu-item${extraClass ? ` ${extraClass}` : ''}`
     btn.setAttribute('role', 'menuitem')
+    btn.disabled = disabled
+    items.push(btn)
     btn.textContent = label
     btn.addEventListener('click', (event) => {
       ;(event as MenuEvent | undefined)?.stopPropagation?.()
-      onClick()
+      if (!disabled) onClick()
     })
     return btn
   }
@@ -71,7 +77,7 @@ export function createBotMenu(menu: HTMLElement, act: (input: BotAction) => Prom
     cancel.type = 'button'
     cancel.className = 'bot-menu-btn'
     cancel.textContent = 'Cancel'
-    cancel.addEventListener('click', () => close())
+    cancel.addEventListener('click', () => close(true))
     const save = document.createElement('button')
     save.type = 'button'
     save.className = 'bot-menu-btn primary'
@@ -89,7 +95,7 @@ export function createBotMenu(menu: HTMLElement, act: (input: BotAction) => Prom
         submit()
       } else if (key === 'Escape') {
         ;(event as MenuEvent | undefined)?.preventDefault?.()
-        close()
+        close(true)
       }
     })
     actions.append(cancel, save)
@@ -146,7 +152,7 @@ export function createBotMenu(menu: HTMLElement, act: (input: BotAction) => Prom
         submit()
       } else if (key === 'Escape') {
         ;(event as MenuEvent | undefined)?.preventDefault?.()
-        close()
+        close(true)
       }
     })
     form.append(input, add)
@@ -168,7 +174,7 @@ export function createBotMenu(menu: HTMLElement, act: (input: BotAction) => Prom
     cancel.type = 'button'
     cancel.className = 'bot-menu-btn'
     cancel.textContent = 'Cancel'
-    cancel.addEventListener('click', () => close())
+    cancel.addEventListener('click', () => close(true))
     const confirm = document.createElement('button')
     confirm.type = 'button'
     confirm.className = 'bot-menu-btn danger'
@@ -179,13 +185,22 @@ export function createBotMenu(menu: HTMLElement, act: (input: BotAction) => Prom
     confirm.focus()
   }
 
-  function open(bot: Bot, sections: string[], rawEvent?: unknown): void {
-    if (busy) return
+  function open(
+    bot: Bot,
+    sections: string[],
+    rawEvent?: unknown,
+    from?: HTMLElement,
+    isDisabled = false
+  ): void {
+    disabled = busy || isDisabled
+    trigger = from
+    items = []
     const event = rawEvent as MenuEvent | undefined
     event?.preventDefault?.()
     event?.stopPropagation?.()
-    const x = typeof event?.clientX === 'number' ? event.clientX : 24
-    const y = typeof event?.clientY === 'number' ? event.clientY : 80
+    const rect = trigger?.getBoundingClientRect?.()
+    const x = event?.clientX || rect?.left || 24
+    const y = event?.clientY || rect?.bottom || 80
     const pinItem = menuItem(
       bot.pinned ? 'Unpin' : 'Pin',
       () => void run({ botId: bot.id, action: 'pin', pinned: !bot.pinned })
@@ -195,6 +210,7 @@ export function createBotMenu(menu: HTMLElement, act: (input: BotAction) => Prom
       position(x, y)
     })
     const groupItem = menuItem('Group\u2026', () => {
+      items = []
       renderGroup(bot, sections)
       position(x, y)
     })
@@ -213,6 +229,7 @@ export function createBotMenu(menu: HTMLElement, act: (input: BotAction) => Prom
     menu.replaceChildren(pinItem, renameItem, groupItem, sep, deleteItem)
     menu.hidden = false
     position(x, y)
+    pinItem.focus()
   }
 
   document.addEventListener('click', (rawEvent) => {
@@ -224,7 +241,25 @@ export function createBotMenu(menu: HTMLElement, act: (input: BotAction) => Prom
     close()
   })
   document.addEventListener('keydown', (rawEvent) => {
-    if (!menu.hidden && (rawEvent as MenuEvent | undefined)?.key === 'Escape') close()
+    if (menu.hidden) return
+    const event = rawEvent as KeyboardEvent
+    if (event.key === 'Escape') {
+      event.preventDefault?.()
+      close(true)
+      return
+    }
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
+    const available = items.filter((item) => !item.disabled && menu.contains(item))
+    if (!available.length) return
+    event.preventDefault?.()
+    const index = available.indexOf(document.activeElement as HTMLButtonElement)
+    const next =
+      index < 0
+        ? event.key === 'ArrowDown'
+          ? 0
+          : available.length - 1
+        : (index + (event.key === 'ArrowDown' ? 1 : available.length - 1)) % available.length
+    available[next].focus()
   })
   window.addEventListener('blur', () => close())
   window.addEventListener('resize', () => close())

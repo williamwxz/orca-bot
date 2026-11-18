@@ -1054,6 +1054,7 @@ test('outdated owned server defers agent linking until updated when idle', async
     status = (await worker.request('status', {})) as any
     assert.equal(status.state, 'starting')
     assert.equal(status.message, `Updating OpenMausBot to ${testedVersion}…`)
+    await new Promise<void>((resolve) => setImmediate(resolve))
     release()
     await new Promise<void>((resolve) => setImmediate(resolve))
     status = (await worker.request('status', {})) as any
@@ -1279,6 +1280,194 @@ test('bot actions validate payloads before dependencies and remove deleted bots 
       /not in the roster/
     )
     assert.equal(actions.length, 2)
+  } finally {
+    await worker.deactivate()
+  }
+})
+
+test('corrupt preference files heal and failed background persistence never wedges status', async () => {
+  const { fileHostPrefs } = await import('./host-prefs.ts')
+  for (const corrupt of ['', '{']) {
+    const files = new Map<string, string>([['/fake/preferences.json', corrupt]])
+    let fail = false
+    const prefs = fileHostPrefs('/fake/preferences.json', {
+      readFileSync: (path) => files.get(String(path)) as never,
+      mkdirSync: () => undefined,
+      writeFileSync: (path, data) => {
+        if (fail) throw new Error('private failure')
+        files.set(String(path), String(data))
+      },
+      renameSync: (from, to) => {
+        files.set(String(to), files.get(String(from))!)
+        files.delete(String(from))
+      },
+      unlinkSync: (path) => {
+        files.delete(String(path))
+      }
+    })
+    const host = mockHost({
+      settings: { shareClaudeSetup: true },
+      storage: { setupAnswered: true }
+    })
+    const worker = await mountWorker(
+      { default: (api) => register(api, { ...setupDeps(), hostPrefs: prefs }) },
+      { host }
+    )
+    try {
+      fail = true
+      await worker.request('status', {})
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      assert.equal(((await worker.request('status', {})) as any).state, 'running')
+      await assert.rejects(
+        worker.request('prefs.set', { linkAgents: true }),
+        /Could not save bot permissions/
+      )
+      await assert.rejects(worker.request('server.install', {}), /Could not save bot permissions/)
+      fail = false
+      await worker.request('status', { retry: true })
+      assert.equal(prefs.read()?.shareTools, true)
+      assert.equal(prefs.read()?.stopped, false)
+    } finally {
+      await worker.deactivate()
+    }
+  }
+})
+
+test('restart uses persisted sync snapshot to distinguish native changes from remote changes', async () => {
+  let shared = {
+    shareTools: false,
+    linkAgents: false,
+    setupAnswered: true,
+    installConsent: false,
+    stopped: false
+  }
+  const prefs = {
+    read: () => ({ ...shared }),
+    write: (patch: object) => Object.assign(shared, patch)
+  }
+  const mount = async (data: any) => {
+    const host = mockHost(data)
+    const worker = await mountWorker(
+      { default: (api) => register(api, { ...setupDeps(), hostPrefs: prefs }) },
+      { host }
+    )
+    return { worker, host }
+  }
+  const first = await mount({})
+  await first.worker.request('prefs.get', {})
+  const saved = first.host.data()
+  await first.worker.deactivate()
+  // Native Settings was changed while the worker was closed.
+  saved.settings.shareClaudeSetup = true
+  const second = await mount(saved)
+  assert.equal(((await second.worker.request('prefs.get', {})) as any).shareTools, true)
+  assert.equal(shared.shareTools, true)
+  const synced = second.host.data()
+  await second.worker.deactivate()
+  // Native Settings is unchanged; the remote choice must win on the next startup.
+  shared.shareTools = false
+  shared.linkAgents = true
+  const third = await mount(synced)
+  try {
+    const result = (await third.worker.request('prefs.get', {})) as any
+    assert.equal(result.shareTools, false)
+    assert.equal(result.linkAgents, true)
+    assert.equal((third.host.data().storage.syncedHostPrefs as any).linkAgents, true)
+  } finally {
+    await third.worker.deactivate()
+  }
+})
+
+test('a stop persists across local and relay workers until explicit retry, installation, or import', async () => {
+  let saved: any = { installConsent: true }
+  let starts = 0
+  const prefs = {
+    read: () => ({ ...saved }),
+    write: (patch: object) => Object.assign(saved, patch)
+  }
+  const mount = () =>
+    mountWorker(
+      {
+        default: (api) =>
+          register(api, {
+            ...setupDeps(),
+            hostPrefs: prefs,
+            ensureServer: async () => {
+              starts++
+              return { port: 8799, version: testedVersion, started: true, startedByPlugin: true }
+            },
+            importTools: async () => ({ added: [], skipped: [] })
+          })
+      },
+      { host: mockHost() }
+    )
+  const owner = await mount()
+  await owner.request('status', {})
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  const observer = await mount()
+  await observer.request('status', {})
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  await owner.request('server.stop', {})
+  assert.equal(saved.stopped, true)
+  assert.match(((await observer.request('status', {})) as any).message, /was stopped/)
+  await observer.deactivate()
+  await owner.deactivate()
+  for (const resume of ['retry', 'server.install', 'tools.import']) {
+    const next = await mount()
+    try {
+      const before = starts
+      assert.match(((await next.request('status', {})) as any).message, /was stopped/)
+      assert.equal(starts, before)
+      if (resume === 'retry') await next.request('status', { retry: true })
+      else await next.request(resume, {})
+      await next.request('status', {})
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      assert.equal(saved.stopped, false)
+      assert.equal(starts, before + 1)
+      await next.request('server.stop', {})
+    } finally {
+      await next.deactivate()
+    }
+  }
+})
+
+test('idle restart rechecks host state under the lifecycle lock and skips an upgrade another worker finished', async () => {
+  let changed = false
+  let stops = 0
+  const worker = await mountWorker(
+    {
+      default: (api) =>
+        register(api, {
+          ...setupDeps(),
+          ensureServer: async () => ({
+            port: 8799,
+            version: changed ? testedVersion : '0.1.158',
+            started: false,
+            startedByPlugin: true
+          }),
+          claudeSetupStatus: async () => ({ restart: !changed, updating: !changed, message: '' }),
+          rosterBusy: async () => false,
+          withLifecycle: async (operation) => {
+            changed = true
+            return operation()
+          },
+          stopServer: async () => {
+            stops++
+            return { stopped: true, message: '' }
+          }
+        })
+    },
+    { host: mockHost({ storage: { openmausbotInstallConsent: true } }) }
+  )
+  try {
+    await worker.request('status', {})
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    await worker.request('status', {})
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    const status = (await worker.request('status', {})) as any
+    assert.equal(status.state, 'running')
+    assert.equal(status.version, testedVersion)
+    assert.equal(stops, 0)
   } finally {
     await worker.deactivate()
   }

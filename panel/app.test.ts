@@ -3,7 +3,9 @@ import { INSTALL_NOTICE } from '../shared/omb-version.ts'
 
 class Element {
   children: Element[] = []
-  events = new Map<string, (() => void)[]>()
+  events = new Map<string, ((event?: any) => void)[]>()
+  attributes = new Map<string, string>()
+  style: Record<string, string> = {}
   textContent = ''
   hidden = false
   disabled = false
@@ -17,17 +19,32 @@ class Element {
   replaceChildren(...children: Element[]) {
     this.children = children
   }
-  setAttribute() {}
+  setAttribute(name: string, value: string) {
+    this.attributes.set(name, value)
+  }
+  contains(node: Element): boolean {
+    return this === node || this.children.some((child) => child.contains(node))
+  }
+  getBoundingClientRect() {
+    return { left: 20, bottom: 100, width: 196, height: 180 }
+  }
+  querySelectorAll(): Element[] {
+    return this.children
+      .flatMap((child) => [child, ...child.querySelectorAll()])
+      .filter((child) => child.dataset.focus)
+  }
   get firstElementChild() {
     return this.children[0]
   }
-  addEventListener(name: string, fn: () => void) {
+  addEventListener(name: string, fn: (event?: any) => void) {
     this.events.set(name, [...(this.events.get(name) ?? []), fn])
   }
-  emit(name: string) {
-    for (const fn of this.events.get(name) ?? []) fn()
+  emit(name: string, event?: any) {
+    for (const fn of this.events.get(name) ?? []) fn(event)
   }
-  focus() {}
+  focus() {
+    ;(document as any).activeElement = this
+  }
 }
 const botNames = (root: Element): string[] =>
   root.children.flatMap((child) =>
@@ -55,6 +72,10 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
   let grouped = false
   let pinned = true
   let defaultBot = false
+  let holdAct = false
+  let finishAct: (() => void) | undefined
+  let holdOpen = false
+  let finishOpen: (() => void) | undefined
   let answered = false
   let reject!: (error: Error) => void
   let resolve!: () => void
@@ -145,7 +166,15 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
               modelLabel: 'Codex'
             }
           ]
+        if (name === 'chat.open' && holdOpen)
+          return new Promise((resolve) => {
+            finishOpen = () => resolve({ message: '' })
+          })
         if (name === 'chat.open') return { message: host === 'local' ? 'Opened.' : '' }
+        if (name === 'bots.act' && holdAct)
+          return new Promise((resolve) => {
+            finishAct = () => resolve({ ok: true })
+          })
         if (name === 'bots.act') return { ok: true }
         if (name === 'tools.import') return { added: ['fake'], skipped: [] }
         if (name === 'server.stop') return { stopped: true, message: 'Stopped.' }
@@ -289,7 +318,18 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
     assert.equal(get('pref-import').disabled, false)
     assert.equal(get('permissions-note').textContent, '')
     assert.equal(get('stop-server').hidden, false)
-    assert.match(get('pref-import-copy').textContent, /Mac Mini/)
+    assert.match(
+      get('pref-import-copy').textContent,
+      /apps such as Cursor and Claude Desktop on Mac Mini/
+    )
+    assert.match(
+      get('pref-share-tools-copy').textContent,
+      /Claude.*on Mac Mini.*Codex.*on Mac Mini/
+    )
+    assert.equal(get('pref-agent-host').textContent, ' on Mac Mini')
+    assert.match(get('import-tools-copy').textContent, /on Mac Mini to OpenMausBot/)
+    assert.match(get('share-tools-copy').textContent, /Claude.*on Mac Mini.*Codex.*on Mac Mini/)
+    assert.equal(get('agent-host').textContent, ' on Mac Mini')
     get('pref-share-tools').checked = false
     get('pref-share-tools').emit('change')
     await flush()
@@ -318,6 +358,33 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
     await flush()
     assert.equal(get('roster').children[0].textContent, 'Pinned')
     const menu = get('bot-menu')
+    holdOpen = true
+    get('open-page').emit('click')
+    await flush()
+    let row = get('roster').children.find((child) => child.className.startsWith('bot-row'))!
+    const trigger = row.children[0]
+    assert.equal(trigger.disabled, false)
+    assert.equal(trigger.attributes.get('aria-disabled'), 'true')
+    row.emit('keydown', { key: 'ContextMenu', preventDefault() {}, stopPropagation() {} })
+    assert.equal(menu.hidden, false)
+    assert.equal((doc as any).activeElement, menu.children[0])
+    assert.equal(menu.style.left, '20px')
+    assert.equal(menu.style.top, '100px')
+    doc.emit('keydown', { key: 'ArrowDown', preventDefault() {} })
+    assert.equal((doc as any).activeElement, menu.children[1])
+    doc.emit('keydown', { key: 'ArrowUp', preventDefault() {} })
+    assert.equal((doc as any).activeElement, menu.children[0])
+    doc.emit('keydown', { key: 'ArrowUp', preventDefault() {} })
+    assert.equal((doc as any).activeElement, menu.children.at(-1))
+    doc.emit('keydown', { key: 'Escape', preventDefault() {} })
+    assert.equal(menu.hidden, true)
+    assert.equal((doc as any).activeElement, trigger)
+    row.emit('keydown', { key: 'F10', shiftKey: true, preventDefault() {}, stopPropagation() {} })
+    assert.equal(menu.hidden, false)
+    doc.emit('keydown', { key: 'Escape', preventDefault() {} })
+    finishOpen!()
+    holdOpen = false
+    await flush()
     const openMenu = () => {
       get('roster')
         .children.find((child) => child.className.startsWith('bot-row'))!
@@ -332,7 +399,23 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
       button!.emit('click')
     }
     openMenu()
+    clickLabel(menu, 'Rename…')
+    clickLabel(menu, 'Cancel')
+    assert.equal(menu.hidden, true)
+    assert.equal((doc as any).activeElement?.className, 'bot-chat')
+    holdAct = true
+    openMenu()
     clickLabel(menu, 'Unpin')
+    await flush()
+    openMenu()
+    assert.equal(menu.children[0].disabled, true)
+    assert.equal(menu.children[1].disabled, true)
+    const actionCount = calls.filter((call) => call.name === 'bots.act').length
+    clickLabel(menu, 'Unpin')
+    assert.equal(calls.filter((call) => call.name === 'bots.act').length, actionCount)
+    doc.emit('keydown', { key: 'Escape', preventDefault() {} })
+    finishAct!()
+    holdAct = false
     await flush()
     assert.deepEqual(calls.filter((call) => call.name === 'bots.act').at(-1)?.input, {
       botId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',

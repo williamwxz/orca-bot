@@ -4,7 +4,12 @@ import { join } from 'node:path'
 import { CliFailure, cliOptions, defaultCliDeps, ombBinary } from './omb-cli.ts'
 import type { CliDeps } from './omb-cli.ts'
 
+export type PageStore = {
+  get(origin: string): string | undefined
+  set(origin: string, pageId: string | undefined): void
+}
 export type OpenInput = {
+  pageStore?: PageStore
   port: number
   startedByPlugin: boolean
   botId?: string
@@ -105,8 +110,12 @@ async function existingTab(origin: string, run: ReturnType<typeof browser>['run'
   return tab
 }
 
-async function existingClientTab(origin: string, run: ReturnType<typeof browser>['run']) {
-  const saved = clientPages.get(origin)
+async function existingClientTab(
+  origin: string,
+  run: ReturnType<typeof browser>['run'],
+  store: PageStore
+) {
+  const saved = store.get(origin)
   if (!saved) return undefined
   const listed = await run(['tab', 'list', '--worktree', 'all', '--json'])
   if (!Array.isArray(listed.tabs)) throw new Error('Invalid tab list')
@@ -114,7 +123,7 @@ async function existingClientTab(origin: string, run: ReturnType<typeof browser>
     (item: { url?: unknown; browserPageId?: unknown }) =>
       item?.browserPageId === saved && typeof item.url === 'string'
   ) as { browserPageId: string; url: string } | undefined
-  if (!tab) clientPages.delete(origin)
+  if (!tab) store.set(origin, undefined)
   return tab
 }
 
@@ -124,6 +133,13 @@ export async function openChat(
 ): Promise<OpenResult> {
   if (input.botId !== undefined && !validBotId(input.botId)) throw new Error('Invalid bot ID.')
   const { run, snapshot, defaultAnalyticsOff } = browser(deps)
+  const store: PageStore = input.pageStore ?? {
+    get: (origin) => clientPages.get(origin),
+    set: (origin, page) => {
+      if (page) clientPages.set(origin, page)
+      else clientPages.delete(origin)
+    }
+  }
   const origin = `http://127.0.0.1:${input.port}`
   let page: string
   let wanted = `${origin}/`
@@ -131,7 +147,7 @@ export async function openChat(
     wanted += `?${new URLSearchParams({ thread: input.activeTaskId, bot: input.botId })}`
   try {
     const tab = input.clientBrowser
-      ? await existingClientTab(origin, run)
+      ? await existingClientTab(origin, run, store)
       : await existingTab(origin, run)
     if (tab) {
       page = tab.browserPageId
@@ -154,7 +170,7 @@ export async function openChat(
       )
       if (typeof created.browserPageId !== 'string') throw new Error('Missing page')
       page = created.browserPageId
-      if (input.clientBrowser) clientPages.set(origin, page)
+      if (input.clientBrowser) store.set(origin, page)
       if (input.startedByPlugin) {
         await defaultAnalyticsOff(page)
         await run(['goto', '--url', wanted, '--page', page, '--json'])

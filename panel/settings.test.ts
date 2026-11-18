@@ -169,3 +169,22 @@ test('Settings offers explicit installation approval locally and on the remote h
   await element('settings-install-omb').click()
   assert.equal(requests.filter((name) => name === 'server.install').length, 2)
 })
+
+test('switching hosts updates all permission copy immediately before any preferences reply', () => {
+  const { settings, element } = fake()
+  settings.setStatus(undefined, 'Old host')
+  settings.beginHostChange('New host')
+  assert.match(
+    element('pref-import-copy').textContent,
+    /apps such as Cursor and Claude Desktop on New host/
+  )
+  assert.match(element('pref-import-copy').textContent, /Tokens saved in those apps on New host/)
+  assert.match(
+    element('pref-share-tools-copy').textContent,
+    /Claude.*on New host.*Codex.*on New host/
+  )
+  assert.equal(element('pref-agent-host').textContent, ' on New host')
+  settings.beginHostChange()
+  assert.match(element('pref-import-copy').textContent, /on this computer/)
+  assert.equal(element('pref-agent-host').textContent, ' on this computer')
+})

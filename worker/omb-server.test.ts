@@ -4,12 +4,13 @@ import { openChat } from './omb-open.ts'
 import type { CliDeps } from './omb-cli.ts'
 import { assert, test, mockHost, mountWorker } from 'orca/testing'
 import {
+  withServerLock,
   checkNode,
   validateInstallLock,
   ensureInstalled,
   ensureServer,
   findServer,
-  startServer,
+  startServer as actualStartServer,
   stopServer,
   serverHealthy,
   claudeSetupStatus
@@ -23,14 +24,23 @@ function fake() {
   const calls: { file: string; args: string[]; options: unknown }[] = []
   const signals: number[] = []
   const timers = new Set<() => void>()
+  let unique = 0
   const deps: ServerDeps = {
+    pid: 42,
+    uniqueId: () => String(++unique),
+    createExclusive: (path, content) => {
+      if (files.has(path)) return false
+      files.set(path, content)
+      return true
+    },
+    modifiedAt: () => 0,
     fetch: async () => {
       throw new Error('offline')
     },
     execFile: async (file, args, options) => {
       calls.push({ file, args, options })
       if (file === 'node') return 'v24.1.0\n'
-      files.set(`/fake/.orca-bot/openmausbot/${version}.staging/node_modules/.bin/openmausbot`, '')
+      files.set(`${args[args.indexOf('--prefix') + 1]}/node_modules/.bin/openmausbot`, '')
       return ''
     },
     spawn: async (file, args, options) => {
@@ -65,9 +75,11 @@ function fake() {
     remove: (path) => {
       files.delete(path)
     },
-    installAsset: (name) => readFileSync(new URL(`./install-assets/${name}`, import.meta.url), 'utf8'),
+    installAsset: (name) =>
+      readFileSync(new URL(`./install-assets/${name}`, import.meta.url), 'utf8'),
     removeTree: (path) => {
-      for (const key of files.keys()) if (key === path || key.startsWith(path + '/')) files.delete(key)
+      for (const key of files.keys())
+        if (key === path || key.startsWith(path + '/')) files.delete(key)
     },
     rename: (from, to) => {
       for (const [key, value] of [...files]) {
@@ -100,6 +112,27 @@ function fake() {
     env: { PATH: '/fake/bin' }
   }
   return { deps, files, calls, signals, timers }
+}
+
+// Startup fixtures describe health after spawning. The preflight must see no server.
+async function startServer(bin: string, port: number, deps: ServerDeps, share = false) {
+  const fetch = deps.fetch
+  const spawn = deps.spawn
+  let spawned = false
+  deps.fetch = async (...args) => {
+    if (!spawned) throw new Error('not started')
+    return fetch(...args)
+  }
+  deps.spawn = async (...args) => {
+    spawned = true
+    return spawn(...args)
+  }
+  try {
+    return await actualStartServer(bin, port, deps, share)
+  } finally {
+    deps.fetch = fetch
+    deps.spawn = spawn
+  }
 }
 
 function response(value: unknown) {
@@ -188,13 +221,13 @@ test('ensureInstalled runs npm with exact args and a five minute limit', async (
   assert.deepEqual(calls[0].args, [
     'ci',
     '--prefix',
-    `/fake/.orca-bot/openmausbot/${version}.staging`,
+    `/fake/.orca-bot/openmausbot/${version}.staging-42-2`,
     '--ignore-scripts',
     '--no-audit',
     '--no-fund',
     '--registry=https://registry.npmjs.org',
     '--cache',
-    `/fake/.orca-bot/openmausbot/${version}.staging/.npm-cache`
+    `/fake/.orca-bot/openmausbot/${version}.staging-42-2/.npm-cache`
   ])
   assert.equal((calls[0].options as { timeout: number }).timeout, 300000)
 })
@@ -278,12 +311,21 @@ test('ensureServer skips occupied ports and installs and starts once', async () 
   assert.equal(first, ensureServer(deps, false, true))
   assert.deepEqual(await first, { port: 18799, version, started: true, startedByPlugin: true })
   assert.equal(calls.length, 3)
-  assert.deepEqual(calls[2].args, ['serve', '--port', '18799', '--data-dir', '/fake/.orca-bot/data'])
+  assert.deepEqual(calls[2].args, [
+    'serve',
+    '--port',
+    '18799',
+    '--data-dir',
+    '/fake/.orca-bot/data'
+  ])
 })
 
 test('stopServer refuses a pid mismatch and only signals a matching OpenMausBot', async () => {
   const { deps, files, signals } = fake()
-  files.set('/fake/.orca-bot/server.pid', JSON.stringify({ port: 8799, launcherPid: 42, serverPid: 43 }))
+  files.set(
+    '/fake/.orca-bot/server.pid',
+    JSON.stringify({ port: 8799, launcherPid: 42, serverPid: 43 })
+  )
   deps.fetch = async () => healthy(99)
   assert.equal((await stopServer(deps)).stopped, false)
   assert.deepEqual(signals, [])
@@ -321,7 +363,10 @@ test('startup refuses health when its launcher has exited', async () => {
 
 test('stop keeps the pid file if health continues after signaling the launcher', async () => {
   const { deps, files, signals } = fake()
-  files.set('/fake/.orca-bot/server.pid', JSON.stringify({ launcherPid: 42, serverPid: 43, port: 8799 }))
+  files.set(
+    '/fake/.orca-bot/server.pid',
+    JSON.stringify({ launcherPid: 42, serverPid: 43, port: 8799 })
+  )
   deps.fetch = async () => healthy()
   const result = await stopServer(deps)
   assert.equal(result.stopped, false)
@@ -332,7 +377,10 @@ test('stop keeps the pid file if health continues after signaling the launcher',
 
 test('stop refuses a dead launcher and legacy pid records', async () => {
   const { deps, files, signals } = fake()
-  files.set('/fake/.orca-bot/server.pid', JSON.stringify({ launcherPid: 42, serverPid: 43, port: 8799 }))
+  files.set(
+    '/fake/.orca-bot/server.pid',
+    JSON.stringify({ launcherPid: 42, serverPid: 43, port: 8799 })
+  )
   deps.fetch = async () => healthy()
   deps.processAlive = () => false
   assert.equal((await stopServer(deps)).stopped, false)
@@ -469,8 +517,11 @@ test('selected-host accepts only an absolute contained directory ending in home,
       return read(path)
     }
     const result = await startServer('/fake/bin/omb', 8799, deps)
-    assert.equal((calls[0].options as any).env.CLAUDE_CONFIG_DIR, accepted ? selectedHome : undefined)
-    assert.deepEqual(reads, [`${profiles}/selected-host`])
+    assert.equal(
+      (calls[0].options as any).env.CLAUDE_CONFIG_DIR,
+      accepted ? selectedHome : undefined
+    )
+    assert.deepEqual(reads, [`${profiles}/selected-host`, '/fake/.orca-bot/server.lock'])
     assert.equal(JSON.stringify(result).includes(selectedHome), false)
     assert.equal(files.get('/fake/.orca-bot/server.pid')!.includes(selectedHome), false)
   }
@@ -495,7 +546,9 @@ test('server environment and pid flags cover home, sharing and explicit config c
           SHELL: '/fake/shell',
           LANG: 'en_US.UTF-8',
           PATH: '/fake/bin:/opt/homebrew/bin:/usr/local/bin:/fake/.local/bin:/fake/.volta/bin',
-          ...(preset || found ? { CLAUDE_CONFIG_DIR: preset ? '/explicit/config' : selectedHome } : {}),
+          ...(preset || found
+            ? { CLAUDE_CONFIG_DIR: preset ? '/explicit/config' : selectedHome }
+            : {}),
           ...(share ? { OMB_CLAUDE_INHERIT_USER_CONFIG: '1' } : {})
         })
         assert.deepEqual(JSON.parse(files.get('/fake/.orca-bot/server.pid')!), {
@@ -570,7 +623,10 @@ test('profile paths never reach errors, public results, pid records or plugin lo
 
 test('legacy flags require restart only for an owned healthy server', async () => {
   const { deps, files } = fake()
-  files.set('/fake/.orca-bot/server.pid', JSON.stringify({ launcherPid: 42, serverPid: 43, port: 8799 }))
+  files.set(
+    '/fake/.orca-bot/server.pid',
+    JSON.stringify({ launcherPid: 42, serverPid: 43, port: 8799 })
+  )
   deps.fetch = async () => healthy()
   assert.equal((await claudeSetupStatus(8799, true, deps)).restart, true)
   deps.fetch = async () => healthy(99)
@@ -626,12 +682,12 @@ test('outdated owned server requests an idle update while unowned or newer serve
   assert.deepEqual(await claudeSetupStatus(8799, false, deps), { restart: false, message: '' })
 })
 
-test('fresh status and direct install require consent before any process or file write', async () => {
+test('fresh status and direct install require consent before downloads or starting a process', async () => {
   const { deps, calls, files } = fake()
   await assert.rejects(ensureServer(deps), /Install openmausbot@0.1.169/)
   await assert.rejects(ensureInstalled(version, deps), /Install openmausbot/)
   assert.deepEqual(calls, [])
-  assert.equal(files.size, 0)
+  assert.deepEqual([...files.keys()], ['/fake/.orca-bot'])
 })
 
 test('existing installations and unowned servers work without download consent', async () => {
@@ -667,6 +723,118 @@ test('npm integrity mismatch refuses publication, cleans staging and never start
     [...files.keys()].some((key) => key.includes('.staging')),
     false
   )
-  assert.equal(files.has(`/fake/.orca-bot/openmausbot/${version}/node_modules/.bin/openmausbot`), false)
+  assert.equal(
+    files.has(`/fake/.orca-bot/openmausbot/${version}/node_modules/.bin/openmausbot`),
+    false
+  )
   assert.deepEqual(calls, [])
+})
+
+test('lifecycle locks wait for live owners, recover dead or truncated stale locks, and release on failure', async () => {
+  const path = '/fake/.orca-bot/server.lock'
+  const { deps, files } = fake()
+  files.set(path, JSON.stringify({ pid: 99, createdAt: 0, token: 'other' }))
+  deps.processAlive = (pid) => pid === 99
+  let entered = false
+  await assert.rejects(
+    withServerLock(deps, async () => {
+      entered = true
+    }),
+    /in progress/
+  )
+  assert.equal(entered, false)
+  assert.ok(files.has(path))
+  deps.processAlive = () => false
+  await withServerLock(deps, async () => {
+    assert.equal(JSON.parse(files.get(path)!).pid, 42)
+    await withServerLock(deps, async () => {
+      entered = true
+    })
+  })
+  assert.equal(entered, true)
+  assert.equal(files.has(path), false)
+  files.set(path, '{')
+  deps.modifiedAt = () => -40000
+  await assert.rejects(
+    withServerLock(deps, async () => {
+      throw new Error('operation failed')
+    }),
+    /operation failed/
+  )
+  assert.equal(files.has(path), false)
+})
+
+test('a contender rechecks installation and server health after the other owner releases the lock', async () => {
+  const { deps, files, calls } = fake()
+  const lock = '/fake/.orca-bot/server.lock'
+  const bin = `/fake/.orca-bot/openmausbot/${version}/node_modules/.bin/openmausbot`
+  files.set(lock, JSON.stringify({ pid: 99, createdAt: 0, token: 'other' }))
+  deps.processAlive = () => true
+  const sleep = deps.sleep
+  deps.sleep = async (ms) => {
+    await sleep(ms)
+    files.set(bin, '')
+    files.delete(lock)
+  }
+  assert.equal(await ensureInstalled(version, deps, true), bin)
+  assert.equal(calls.length, 0)
+  files.set(lock, JSON.stringify({ pid: 99, createdAt: 0, token: 'other' }))
+  deps.sleep = async (ms) => {
+    await sleep(ms)
+    deps.fetch = async () => healthy(99)
+    files.delete(lock)
+  }
+  assert.equal((await ensureServer(deps)).started, false)
+  assert.equal(calls.length, 0)
+  assert.equal((await actualStartServer(bin, 8799, deps)).port, 8799)
+  assert.equal(calls.length, 0)
+})
+
+test('installation cleans only dead-owner staging directories and respects persisted stop intent', async () => {
+  const { deps, files } = fake()
+  const root = '/fake/.orca-bot/openmausbot/'
+  const dead = `${version}.staging-99-old`
+  const live = `${version}.staging-42-live`
+  files.set(root + dead, '')
+  files.set(root + live, '')
+  deps.readdir = () => [dead, live, 'unrelated', `${version}.staging`]
+  await ensureInstalled(version, deps, true)
+  assert.equal(files.has(root + dead), false)
+  assert.equal(files.has(root + live), true)
+  files.set('/fake/.orca-bot/preferences.json', '{"stopped":true}')
+  await assert.rejects(ensureServer(deps), /was stopped/)
+})
+
+test('independent lifecycle callers serialize while nested operations reuse their own lock', async () => {
+  const { deps, files } = fake()
+  let releaseOwner!: () => void
+  let releaseWaiter!: () => void
+  const gate = new Promise<void>((resolve) => {
+    releaseOwner = resolve
+  })
+  deps.sleep = async () =>
+    new Promise<void>((resolve) => {
+      releaseWaiter = resolve
+    })
+  deps.fetch = async () => healthy(99)
+  const order: string[] = []
+  const owner = withServerLock(deps, async () => {
+    order.push('owner')
+    await gate
+    // An external ensureServer is already waiting: do not join its lock-blocked promise.
+    await ensureServer(deps)
+    order.push('nested')
+  })
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  const waiter = ensureServer(deps).then(() => {
+    order.push('waiter')
+  })
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  assert.deepEqual(order, ['owner'])
+  releaseOwner()
+  await owner
+  assert.equal(files.has('/fake/.orca-bot/server.lock'), false)
+  releaseWaiter()
+  await waiter
+  assert.deepEqual(order, ['owner', 'nested', 'waiter'])
 })

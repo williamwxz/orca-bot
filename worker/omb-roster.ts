@@ -6,7 +6,7 @@ import { validBotId } from './omb-open.ts'
 import { addableMausBot, visibleBot } from '../shared/appearance.ts'
 
 export async function listBots(
-  input: { port: number },
+  input: { port: number; includeAvatars?: boolean },
   deps: HttpDeps = defaultHttpDeps()
 ): Promise<Bot[]> {
   try {
@@ -32,7 +32,11 @@ export async function listBots(
       if (typeof selection?.instanceId !== 'string' || typeof selection.model !== 'string')
         throw new Error('Invalid model')
       let avatar: string | undefined
-      if (typeof bot.avatarUrl === 'string' && bot.avatarCrop !== 'mascot') {
+      if (
+        input.includeAvatars !== false &&
+        typeof bot.avatarUrl === 'string' &&
+        bot.avatarCrop !== 'mascot'
+      ) {
         try {
           avatar = await deps.avatar(input.port, bot.avatarUrl)
         } catch {
@@ -120,7 +124,7 @@ export async function actOnBot(
 ): Promise<void> {
   validateBotAction(input)
 
-  const bots = await listBots({ port: input.port }, deps)
+  const bots = await listBots({ port: input.port, includeAvatars: false }, deps)
   const target = bots.find((bot) => bot.id === input.botId && !bot.addable)
   if (!target) throw new Error('This bot is no longer in the roster. Refresh the roster.')
 
@@ -155,7 +159,9 @@ export async function actOnBot(
     await deps.request(input.port, `/api/bots/${input.botId}`, undefined, 'DELETE')
   } catch (error) {
     if (error instanceof HttpStatusError && error.status === 409 && input.action === 'group') {
-      throw new Error('That group already has a Chief of Staff.')
+      throw new Error(
+        'Could not move this bot right now. It may be busy, or that group already has a Chief of Staff.'
+      )
     }
     const verb =
       input.action === 'pin'

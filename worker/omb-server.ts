@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from 'node:async_hooks'
+import { randomUUID } from 'node:crypto'
 import { execFile, spawn } from 'node:child_process'
 import * as fs from 'node:fs'
 import { homedir, userInfo } from 'node:os'
@@ -5,12 +7,20 @@ import { ombBinary } from './omb-cli.ts'
 import { childEnvironment } from './child-environment.ts'
 import { join, posix, win32 } from 'node:path'
 import { createServer } from 'node:net'
-import { TESTED_OPENMAUSBOT_VERSION, compareVersions, INSTALL_NOTICE } from '../shared/omb-version.ts'
+import {
+  TESTED_OPENMAUSBOT_VERSION,
+  compareVersions,
+  INSTALL_NOTICE
+} from '../shared/omb-version.ts'
 
 export type Server = { port: number; version: string }
 export type ServerResult = Server & { started: boolean; startedByPlugin: boolean }
 export type StopResult = { stopped: boolean; message: string }
 export type ServerDeps = {
+  pid: number
+  uniqueId(): string
+  createExclusive(path: string, content: string): boolean
+  modifiedAt(path: string): number
   fetch: (
     url: string,
     options: { signal: AbortSignal }
@@ -63,6 +73,24 @@ let defaults: ServerDeps | undefined
 export function defaultServerDeps(): ServerDeps {
   if (process.env.NODE_TEST_CONTEXT) throw new Error('Tests must inject server dependencies')
   defaults ??= {
+    pid: process.pid,
+    uniqueId: randomUUID,
+    createExclusive: (path, content) => {
+      let fd: number
+      try {
+        fd = fs.openSync(path, 'wx', 0o600)
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false
+        throw error
+      }
+      try {
+        fs.writeFileSync(fd, content)
+      } finally {
+        fs.closeSync(fd)
+      }
+      return true
+    },
+    modifiedAt: (path) => fs.statSync(path).mtimeMs,
     fetch: (url, options) => fetch(url, options),
     execFile: (file, args, options) =>
       new Promise((resolve, reject) => {
@@ -122,10 +150,71 @@ export function defaultServerDeps(): ServerDeps {
   return defaults
 }
 
+// Async context makes nested lifecycle operations reentrant without admitting another request.
+const heldLocks = new AsyncLocalStorage<Set<string>>()
+export async function withServerLock<T>(deps: ServerDeps, operation: () => Promise<T>): Promise<T> {
+  const path = join(deps.home, '.orca-bot/server.lock')
+  if (heldLocks.getStore()?.has(path)) return operation()
+  const token = deps.uniqueId()
+  const record = JSON.stringify({ pid: deps.pid, createdAt: deps.now(), token })
+  const deadline = deps.now() + 10000
+  try {
+    deps.mkdir(join(deps.home, '.orca-bot'))
+  } catch {
+    throw new ServerError('start_failed', 'Could not lock the bot lifecycle on this host.')
+  }
+  for (;;) {
+    try {
+      if (deps.createExclusive(path, record)) break
+    } catch {
+      throw new ServerError('start_failed', 'Could not lock the bot lifecycle on this host.')
+    }
+    try {
+      const text = deps.read(path)
+      let stale = false
+      try {
+        const owner = JSON.parse(text)
+        stale =
+          Number.isSafeInteger(owner.pid) && owner.pid > 0
+            ? !deps.processAlive(owner.pid)
+            : deps.now() - deps.modifiedAt(path) > 30000
+      } catch {
+        stale = deps.now() - deps.modifiedAt(path) > 30000
+      }
+      // Never steal a live install's lock, even when npm takes several minutes.
+      if (stale && deps.read(path) === text) {
+        deps.remove(path)
+        continue
+      }
+    } catch {
+      /* Another process may have released the lock. */
+    }
+    if (deps.now() >= deadline)
+      throw new ServerError(
+        'start_failed',
+        'Another bot lifecycle operation is in progress. Please retry shortly.'
+      )
+    await deps.sleep(100)
+  }
+  try {
+    return await heldLocks.run(new Set([...(heldLocks.getStore() ?? []), path]), operation)
+  } finally {
+    try {
+      if (deps.read(path) === record) deps.remove(path)
+    } catch {
+      /* Already removed. */
+    }
+  }
+}
+
 const ENV_VERSION = 2
 const ports = [8799, 18799, 28799]
 type Health = { app: 'openmausbot'; version: string; pid?: number }
-async function health(port: number, deps: ServerDeps, timeoutMs = 1500): Promise<Health | undefined> {
+async function health(
+  port: number,
+  deps: ServerDeps,
+  timeoutMs = 1500
+): Promise<Health | undefined> {
   const controller = new AbortController()
   let timer: unknown
   try {
@@ -161,7 +250,9 @@ export async function serverHealthy(
   return !!(await health(port, deps, 1000))
 }
 
-export async function findServer(deps: ServerDeps = defaultServerDeps()): Promise<Server | undefined> {
+export async function findServer(
+  deps: ServerDeps = defaultServerDeps()
+): Promise<Server | undefined> {
   for (const port of ports) {
     const result = await health(port, deps)
     if (result) return { port, version: result.version }
@@ -171,7 +262,10 @@ export async function findServer(deps: ServerDeps = defaultServerDeps()): Promis
 
 // Only this private helper handles the selected path; public results contain flags only.
 export function claudeEnvironment(
-  deps: Pick<ServerDeps, 'platform' | 'home' | 'env' | 'read' | 'realpath' | 'isDirectory' | 'userInfo'>,
+  deps: Pick<
+    ServerDeps,
+    'platform' | 'home' | 'env' | 'read' | 'realpath' | 'isDirectory' | 'userInfo'
+  >,
   share: boolean
 ) {
   const path = deps.platform === 'win32' ? win32 : posix
@@ -298,7 +392,7 @@ export function validateInstallLock(manifest: string, source: string, version: s
   }
 }
 
-export async function ensureInstalled(
+async function installUnlocked(
   version: string,
   deps: ServerDeps = defaultServerDeps(),
   allowInstall = false
@@ -309,7 +403,19 @@ export async function ensureInstalled(
   const bin = join(folder, 'node_modules/.bin/openmausbot')
   if (deps.exists(bin)) return bin
   if (!allowInstall) throw new ServerError('needs_install', INSTALL_NOTICE)
-  const staging = `${folder}.staging`
+  const staging = `${folder}.staging-${deps.pid}-${deps.uniqueId()}`
+  // Only dead owners' unique staging directories are eligible for cleanup.
+  let stagingEntries: string[] = []
+  try {
+    stagingEntries = deps.readdir?.(join(deps.home, '.orca-bot/openmausbot')) ?? []
+  } catch {
+    /* First install. */
+  }
+  for (const name of stagingEntries) {
+    const match = name.match(/^[0-9.]+\.staging-(\d+)-[a-zA-Z0-9-]+$/)
+    if (match && !deps.processAlive(Number(match[1])))
+      deps.removeTree(join(deps.home, '.orca-bot/openmausbot', name))
+  }
   try {
     const manifest = deps.installAsset('package.json')
     const lock = deps.installAsset('package-lock.json')
@@ -354,7 +460,7 @@ export async function ensureInstalled(
   }
 }
 
-export async function startServer(
+async function startUnlocked(
   bin: string,
   port: number,
   deps: ServerDeps = defaultServerDeps(),
@@ -425,11 +531,28 @@ export function ensureServer(
   allowInstall = false
 ): Promise<ServerResult> {
   const existing = attempts.get(deps)
-  if (existing) return existing
+  if (existing && !heldLocks.getStore()?.has(join(deps.home, '.orca-bot/server.lock')))
+    return existing
   const attempt = async (): Promise<ServerResult> => {
+    let stopped = false
+    try {
+      stopped =
+        JSON.parse(deps.read(join(deps.home, '.orca-bot/preferences.json'))).stopped === true
+    } catch {
+      /* No saved stop choice. */
+    }
+    if (stopped)
+      throw new ServerError(
+        'start_failed',
+        'OpenMausBot was stopped. Press Retry to start it again.'
+      )
     const running = await findServer(deps)
     if (running)
-      return { ...running, started: false, startedByPlugin: await isPluginServer(running.port, deps) }
+      return {
+        ...running,
+        started: false,
+        startedByPlugin: await isPluginServer(running.port, deps)
+      }
     const existingBin = ombBinary(deps)
     if (!allowInstall && !deps.exists(existingBin))
       throw new ServerError('needs_install', INSTALL_NOTICE)
@@ -440,19 +563,24 @@ export function ensureServer(
         : await ensureInstalled(TESTED_OPENMAUSBOT_VERSION, deps, allowInstall)
     for (const port of ports) {
       if (!(await deps.portFree(port))) continue
-      return { ...(await startServer(bin, port, deps, share)), started: true, startedByPlugin: true }
+      return {
+        ...(await startUnlocked(bin, port, deps, share)),
+        started: true,
+        startedByPlugin: true
+      }
     }
     throw new ServerError(
       'start_failed',
       'Ports 8799, 18799 and 28799 are in use. Free one of these ports, then press Retry.'
     )
   }
-  const promise = attempt().finally(() => attempts.delete(deps))
+  if (heldLocks.getStore()?.has(join(deps.home, '.orca-bot/server.lock'))) return attempt()
+  const promise = withServerLock(deps, attempt).finally(() => attempts.delete(deps))
   attempts.set(deps, promise)
   return promise
 }
 
-export async function stopServer(deps: ServerDeps = defaultServerDeps()): Promise<StopResult> {
+async function stopUnlocked(deps: ServerDeps = defaultServerDeps()): Promise<StopResult> {
   const path = join(deps.home, '.orca-bot/server.pid')
   try {
     const record = JSON.parse(deps.read(path)) as {
@@ -480,7 +608,10 @@ export async function stopServer(deps: ServerDeps = defaultServerDeps()): Promis
       const remaining = await health(record.port, deps, Math.min(1500, deadline - deps.now()))
       if (!remaining) {
         deps.remove(path)
-        return { stopped: true, message: 'Stopped the OpenMausBot server started by Bot Team for Orca.' }
+        return {
+          stopped: true,
+          message: 'Stopped the OpenMausBot server started by Bot Team for Orca.'
+        }
       }
       await deps.sleep(Math.min(250, Math.max(0, deadline - deps.now())))
     }
@@ -499,3 +630,25 @@ export async function stopServer(deps: ServerDeps = defaultServerDeps()): Promis
 }
 
 export { INSTALL_NOTICE } from '../shared/omb-version.ts'
+
+export function ensureInstalled(
+  version: string,
+  deps = defaultServerDeps(),
+  allowInstall = false
+): Promise<string> {
+  return withServerLock(deps, () => installUnlocked(version, deps, allowInstall))
+}
+export function startServer(
+  bin: string,
+  port: number,
+  deps = defaultServerDeps(),
+  share = false
+): Promise<Server> {
+  return withServerLock(deps, async () => {
+    const existing = await findServer(deps)
+    return existing ?? startUnlocked(bin, port, deps, share)
+  })
+}
+export function stopServer(deps = defaultServerDeps()): Promise<StopResult> {
+  return withServerLock(deps, () => stopUnlocked(deps))
+}

@@ -106,7 +106,11 @@ auto-pair. Keep Orca connected with remote server browsing hosted on this device
 Permissions and installation consent persist in `~/.orca-bot/preferences.json`
 on the bot host, shared by its local plugin and paired clients. Existing host
 preferences take precedence over a stale `paired-client.json` cache on startup;
-subsequent explicit changes in either Settings view sync on the next request.
+a persisted sync snapshot also preserves native Settings changes made while the
+worker was closed. Subsequent changes in either Settings view sync on the next
+request. Stopping the server persists across reconnects until Retry, installation
+or a tool import explicitly starts it again. Lifecycle operations share a host
+lock, and installation uses unique staging directories.
 These paths have fake-dependency coverage; two-computer live verification is pending.
 
 Right-click a bot row to pin, rename, assign or create a group, or delete with

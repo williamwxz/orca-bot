@@ -200,3 +200,52 @@ test('restart safety includes hidden bots and fails closed on roster errors', as
   }
   assert.equal(await rosterBusy(18799, deps), true)
 })
+
+test('bot actions skip avatar downloads and group conflicts explain busy and Chief of Staff cases', async () => {
+  const { deps } = fake([{ ...bot, avatarUrl: '/api/attachments/avatar.png' }])
+  deps.avatar = async () => {
+    throw new Error('Avatar must never be requested by actions')
+  }
+  let avatars = 0
+  deps.avatar = async () => {
+    avatars++
+    return undefined
+  }
+  await actOnBot({ port: 18799, botId: id, action: 'pin', pinned: true }, deps)
+  assert.equal(avatars, 0)
+  const request = deps.request
+  deps.request = async (...args) => {
+    if (args[3] === 'POST') throw new HttpStatusError(409)
+    return request(...args)
+  }
+  await assert.rejects(
+    actOnBot({ port: 18799, botId: id, action: 'group', section: 'Ops' }, deps),
+    /busy.*Chief of Staff/
+  )
+})
+
+test('custom Pinned and Bots sections have distinct headings without losing membership order', () => {
+  const common = {
+    id,
+    name: 'Bot',
+    title: '',
+    main: false,
+    state: 'idle' as const,
+    unread: false,
+    modelLabel: ''
+  }
+  const grouped = groupRoster([
+    { ...common, id: '1', pinned: true },
+    { ...common, id: '2', section: 'Pinned' },
+    { ...common, id: '3', section: 'Bots' },
+    { ...common, id: '4' }
+  ])
+  assert.deepEqual(
+    grouped.groups.map((group) => group.title),
+    ['Pinned (automatic)', 'Pinned', 'Bots', 'Bots (automatic)']
+  )
+  assert.deepEqual(
+    grouped.groups.flatMap((group) => group.bots.map((bot) => bot.id)),
+    ['1', '2', '3', '4']
+  )
+})

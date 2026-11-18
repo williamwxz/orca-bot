@@ -48,8 +48,11 @@ export function createSettings(frame: FrameApi, element: Elements, changed: () =
 
   function renderImportCopy(): void {
     const target = remote ?? 'this computer'
+    element('pref-share-tools-copy').textContent =
+      `Claude bots use the Claude connectors, MCP servers, skills and instructions on ${target}. Codex bots always use the Codex setup on ${target}.`
+    element('pref-agent-host').textContent = ` on ${target}`
     element('pref-import-copy').textContent =
-      `Adds tools from apps such as Cursor and Claude Desktop to OpenMausBot, switched off. Tokens saved in those apps are copied to OpenMausBot on ${target}.`
+      `Adds tools from apps such as Cursor and Claude Desktop on ${target} to OpenMausBot, switched off. Tokens saved in those apps on ${target} are copied to OpenMausBot there.`
   }
 
   function renderServer(): void {
@@ -224,7 +227,8 @@ export function createSettings(frame: FrameApi, element: Elements, changed: () =
   })
 
   return {
-    beginHostChange(): void {
+    beginHostChange(nextRemote?: string): void {
+      remote = nextRemote
       ++preferencesGeneration
       renderPreferences(undefined, 'Changing where bots run\u2026')
       note('Connecting\u2026')

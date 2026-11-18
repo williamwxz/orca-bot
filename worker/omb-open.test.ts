@@ -474,3 +474,42 @@ test('background repair waits for enabled Connect before clicking', async () => 
   assert.equal(calls.filter((args) => args[0] === 'click').length, 1)
   assert.ok(reads >= 3)
 })
+
+test('a persisted client page survives relay memory reset and stale pages are replaced', async () => {
+  const pages = new Map<string, string>()
+  const pageStore = {
+    get: (origin: string) => pages.get(origin),
+    set: (origin: string, page: string | undefined) => {
+      if (page) pages.set(origin, page)
+      else pages.delete(origin)
+    }
+  }
+  const { deps, calls } = fake(true, '1')
+  const exec = deps.execFile
+  let exists = false
+  deps.execFile = async (file, args, options) => {
+    if (args[0] === 'open-url') exists = true
+    if (args[1] === 'list') {
+      calls.push(args)
+      return JSON.stringify({
+        ok: true,
+        result: { tabs: exists ? [{ browserPageId: 'page-1', url: origin + '/' }] : [] }
+      })
+    }
+    return exec(file, args, options)
+  }
+  await openChat({ ...input, clientBrowser: true, pageStore }, deps)
+  assert.equal(pages.get(origin), 'page-1')
+  resetClientPages()
+  calls.length = 0
+  await openChat({ ...input, clientBrowser: true, pageStore }, deps)
+  assert.equal(
+    calls.some((args) => args[0] === 'open-url'),
+    false
+  )
+  assert.ok(calls.some((args) => args[1] === 'switch'))
+  exists = false
+  calls.length = 0
+  await openChat({ ...input, clientBrowser: true, pageStore }, deps)
+  assert.equal(calls.filter((args) => args[0] === 'open-url').length, 1)
+})
