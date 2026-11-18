@@ -1,8 +1,11 @@
 import { createSetup, agentNames } from './setup.ts'
 import { createChatView } from './chat-view.ts'
 import { createSettings } from './settings.ts'
+import { createBotMenu } from './bot-menu.ts'
+import { INSTALL_NOTICE } from '../shared/omb-version.ts'
+import { groupRoster } from '../shared/roster.ts'
 import type { FrameApi } from './chat-view.ts'
-import type { Bot } from '../shared/roster.ts'
+import type { Bot, BotAction } from '../shared/roster.ts'
 import type { Hosts } from '../worker/paired-host.ts'
 import { avatarSvg } from '../shared/appearance.ts'
 
@@ -21,16 +24,28 @@ const setup = createSetup(
 const shareTools = element<HTMLInputElement>('share-tools')
 const importTools = element<HTMLInputElement>('import-tools')
 const linkAgents = element<HTMLInputElement>('link-agents')
+
+const hostSelect = element<HTMLSelectElement>('host')
+let hosts: Hosts | undefined
+const hostChosen = () =>
+  !hosts || hosts.selected === 'local' || hosts.hosts.some((host) => host.id === hosts!.selected)
+const remoteName = () =>
+  hosts && hosts.selected !== 'local'
+    ? hosts.hosts.find((host) => host.id === hosts!.selected)?.name
+    : undefined
+
 function renderSetup(): void {
   const state = setup.state
+  const target = remoteName() ?? 'this computer'
   element('setup').hidden = element('list-header').hidden || !state.loaded || state.answered
   element('link-agents-label').hidden = !agentNames(state.agents)
   element('agent-names').textContent = agentNames(state.agents)
   element('import-tools-label').hidden = state.tools.length === 0
   element('import-tools-copy').textContent =
-    `Adds ${state.tools.length} ${state.tools.length === 1 ? 'tool' : 'tools'} from ${[...new Set(state.tools.map((t) => t.source))].join(', ')} to OpenMausBot, switched off. Turn them on per bot in the Bot Dashboard. Tokens saved in those apps are copied to OpenMausBot on this computer.`
+    `Adds ${state.tools.length} ${state.tools.length === 1 ? 'tool' : 'tools'} from ${[...new Set(state.tools.map((t) => t.source))].join(', ')} to OpenMausBot, switched off. Turn them on per bot in the Bot Dashboard. Tokens saved in those apps are copied to OpenMausBot on ${target}.`
   element('setup-message').textContent = state.message
-  for (const id of ['setup-allow', 'setup-skip']) element<HTMLButtonElement>(id).disabled = state.busy
+  for (const id of ['setup-allow', 'setup-skip'])
+    element<HTMLButtonElement>(id).disabled = state.busy
   importTools.disabled = shareTools.disabled = linkAgents.disabled = state.busy
 }
 async function answerSetup(allow: boolean): Promise<void> {
@@ -44,14 +59,11 @@ async function answerSetup(allow: boolean): Promise<void> {
   renderSetup()
   await refreshAfterChange()
 }
-const hostSelect = element<HTMLSelectElement>('host')
-let hosts: Hosts | undefined
-const hostChosen = () =>
-  !hosts || hosts.selected === 'local' || hosts.hosts.some((host) => host.id === hosts!.selected)
+
 function renderHosts(): void {
   if (!hosts) return
   const choices = [
-    ...(hostChosen() ? [] : [['', 'Choose…']]),
+    ...(hostChosen() ? [] : [['', 'Choose\u2026']]),
     ['local', 'This computer'],
     ...hosts.hosts.map((host) => [host.id, host.name])
   ]
@@ -80,6 +92,7 @@ let hostGeneration = 0
 async function chooseHost(id: string): Promise<void> {
   if (!id) return
   hostGeneration++
+  botMenu.close()
   hostSelect.disabled = true
   settings.beginHostChange()
   setup.state.loaded = false
@@ -94,7 +107,7 @@ async function chooseHost(id: string): Promise<void> {
   running.hidden = true
   result.textContent = ''
   message.hidden = false
-  message.textContent = 'Connecting…'
+  message.textContent = 'Connecting\u2026'
   try {
     hosts = await frame.plugin.request('hosts.select', { id })
   } catch (error) {
@@ -109,14 +122,11 @@ async function chooseHost(id: string): Promise<void> {
   await settings.hostChanged(hostProblem)
 }
 hostSelect.addEventListener('change', () => void chooseHost(hostSelect.value))
-const remoteName = () =>
-  hosts && hosts.selected !== 'local'
-    ? hosts.hosts.find((host) => host.id === hosts!.selected)?.name
-    : undefined
 const settings = createSettings(frame, element, () => refreshAfterChange())
 let settingsShown = false
 function showSettings(show: boolean): void {
   settingsShown = show
+  botMenu.close()
   element('main-view').hidden = show
   element('settings-view').hidden = !show
   if (show) void settings.open()
@@ -143,6 +153,24 @@ const changing = new Set<string>()
 const readBots = new Set<string>()
 const previews = new Map<string, string>()
 const rosterView = element<HTMLElement>('roster-view')
+
+const botMenu = createBotMenu(element('bot-menu'), async (input: BotAction) => {
+  if (changing.has(input.botId)) return
+  changing.add(input.botId)
+  renderBots()
+  try {
+    result.textContent = ''
+    await frame.plugin.request('bots.act', input)
+    if (input.action === 'delete' && selected === input.botId) selected = undefined
+    await refreshAfterChange()
+  } catch (error) {
+    result.textContent = error instanceof Error ? error.message : 'Could not update this bot.'
+  } finally {
+    changing.delete(input.botId)
+    renderBots()
+  }
+})
+
 const chatView = createChatView(
   element('bot-view'),
   frame,
@@ -161,6 +189,7 @@ const chatView = createChatView(
   }
 )
 function showBot(bot: Bot): void {
+  botMenu.close()
   readBots.add(bot.id)
   rosterView.hidden = true
   element('list-header').hidden = true
@@ -209,7 +238,7 @@ async function open(botId?: string): Promise<void> {
   element<HTMLButtonElement>('open-page').disabled = true
   selected = botId
   renderBots()
-  result.textContent = 'Opening…'
+  result.textContent = 'Opening\u2026'
   try {
     result.textContent = (await frame.plugin.request('chat.open', botId ? { botId } : {})).message
   } catch (error) {
@@ -237,13 +266,63 @@ async function addMausBot(bot: Bot): Promise<void> {
   }
 }
 
+function makeBotRow(bot: Bot, sections: string[]): HTMLElement {
+  const row = document.createElement('div')
+  row.className = `bot-row${selected === bot.id ? ' selected' : ''}`
+  const chat = document.createElement('button')
+  chat.type = 'button'
+  chat.className = 'bot-chat'
+  chat.dataset.focus = `${bot.id}-chat`
+  chat.disabled = opening || changing.has(bot.id)
+  chat.title = bot.title || `Open ${bot.name}'s chat`
+  chat.setAttribute('aria-label', `Open ${bot.name}'s chat`)
+  const avatar = makeAvatar(bot)
+  const name = document.createElement('span')
+  name.className = 'bot-name'
+  name.textContent = bot.name
+  const copy = document.createElement('span')
+  copy.className = 'bot-copy'
+  const heading = document.createElement('span')
+  heading.className = 'bot-heading'
+  heading.append(name)
+  copy.append(heading)
+  chat.append(avatar, copy)
+  if (bot.main) {
+    const main = document.createElement('span')
+    main.className = 'main-badge'
+    main.append(icon('crown'), document.createTextNode('Chief of Staff'))
+    heading.append(main)
+  }
+  chat.addEventListener('click', () => showBot(bot))
+  row.addEventListener('click', (event) => {
+    if (!(event?.target as Element | undefined)?.closest?.('button')) showBot(bot)
+  })
+  row.addEventListener('contextmenu', (event) => botMenu.open(bot, sections, event))
+  const model = document.createElement('span')
+  model.className = 'model'
+  model.textContent = previews.get(bot.id) ?? bot.modelLabel
+  copy.append(model)
+  const state = document.createElement('span')
+  state.className = 'state'
+  if (bot.unread && !readBots.has(bot.id)) {
+    const unread = document.createElement('span')
+    unread.className = 'unread-dot'
+    unread.setAttribute('aria-label', 'Unread')
+    unread.title = 'Unread'
+    state.append(unread)
+  }
+  row.append(chat, state)
+  return row
+}
+
 function renderBots(): void {
   const key = JSON.stringify([bots, selected, opening, [...changing], [...readBots], [...previews]])
   if (key === rosterKey) return
   rosterKey = key
   const focused = (document.activeElement as HTMLElement)?.dataset.focus
   roster.replaceChildren()
-  if (!bots.some((bot) => !bot.addable)) {
+  const grouped = groupRoster(bots)
+  if (!grouped.ungroupedTop.length && !grouped.groups.length) {
     const empty = document.createElement('p')
     empty.className = 'empty'
     empty.textContent = 'No bots yet.'
@@ -255,62 +334,26 @@ function renderBots(): void {
     openButton.addEventListener('click', () => void open())
     roster.append(openButton)
   }
-  for (const bot of bots) {
-    if (bot.addable) {
-      const add = document.createElement('button')
-      add.className = 'add-mausbot'
-      add.type = 'button'
-      add.append(icon('plus'), document.createTextNode('Add MausBot'))
-      add.disabled = changing.has(bot.id)
-      add.addEventListener('click', () => void addMausBot(bot))
-      roster.append(add)
-      continue
+  for (const bot of grouped.ungroupedTop) {
+    roster.append(makeBotRow(bot, grouped.sections))
+  }
+  for (const group of grouped.groups) {
+    const heading = document.createElement('div')
+    heading.className = 'roster-group-title'
+    heading.textContent = group.title
+    roster.append(heading)
+    for (const bot of group.bots) {
+      roster.append(makeBotRow(bot, grouped.sections))
     }
-    const row = document.createElement('div')
-    row.className = `bot-row${selected === bot.id ? ' selected' : ''}`
-    const chat = document.createElement('button')
-    chat.type = 'button'
-    chat.className = 'bot-chat'
-    chat.dataset.focus = `${bot.id}-chat`
-    chat.disabled = opening
-    chat.title = bot.title || `Open ${bot.name}'s chat`
-    chat.setAttribute('aria-label', `Open ${bot.name}'s chat`)
-    const avatar = makeAvatar(bot)
-    const name = document.createElement('span')
-    name.className = 'bot-name'
-    name.textContent = bot.name
-    const copy = document.createElement('span')
-    copy.className = 'bot-copy'
-    const heading = document.createElement('span')
-    heading.className = 'bot-heading'
-    heading.append(name)
-    copy.append(heading)
-    chat.append(avatar, copy)
-    if (bot.main) {
-      const main = document.createElement('span')
-      main.className = 'main-badge'
-      main.append(icon('crown'), document.createTextNode('Chief of Staff'))
-      heading.append(main)
-    }
-    chat.addEventListener('click', () => showBot(bot))
-    row.addEventListener('click', (event) => {
-      if (!(event.target as Element).closest('button')) showBot(bot)
-    })
-    const model = document.createElement('span')
-    model.className = 'model'
-    model.textContent = previews.get(bot.id) ?? bot.modelLabel
-    copy.append(model)
-    const state = document.createElement('span')
-    state.className = 'state'
-    if (bot.unread && !readBots.has(bot.id)) {
-      const unread = document.createElement('span')
-      unread.className = 'unread-dot'
-      unread.setAttribute('aria-label', 'Unread')
-      unread.title = 'Unread'
-      state.append(unread)
-    }
-    row.append(chat, state)
-    roster.append(row)
+  }
+  for (const bot of grouped.addable) {
+    const add = document.createElement('button')
+    add.className = 'add-mausbot'
+    add.type = 'button'
+    add.append(icon('plus'), document.createTextNode('Add MausBot'))
+    add.disabled = changing.has(bot.id)
+    add.addEventListener('click', () => void addMausBot(bot))
+    roster.append(add)
   }
   if (focused)
     Array.from(roster.querySelectorAll<HTMLElement>('[data-focus]'))
@@ -357,8 +400,15 @@ async function refreshNow(explicitRetry: boolean): Promise<void> {
     if (!current()) return
     settings.setStatus(status, remoteName())
     element<HTMLButtonElement>('open-page').disabled = opening || status.state !== 'running'
-    message.textContent = status.message
-    message.hidden = !status.message
+    // Avoid duplicating the install notice in both #message and #install-card.
+    const installShown = !element('install-card').hidden
+    const headerMessage = installShown
+      ? status.state === 'needs_install'
+        ? ''
+        : status.message.replace(INSTALL_NOTICE, '').trim()
+      : status.message
+    message.textContent = headerMessage
+    message.hidden = !headerMessage
     running.hidden = status.state !== 'running'
     // While servers are listed, choosing one is the way forward; Retry is for failures.
     retry.hidden =

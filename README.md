@@ -60,13 +60,13 @@ Good to know:
 
 ## Settings
 
-The sliders button next to **Jump to Bot Dashboard** opens Settings:
+The gear button next to **Jump to Bot Dashboard** opens Settings:
 
 - **Bots run on**: this computer or a paired Orca server (see below).
 - **Permissions**: the choices from the setup card, which you can change at any
   time: whether bots can use your Claude tools, whether your Orca agents can
   talk to the bots, and bringing in tools from your other AI apps. They apply to
-  bots on this computer; for a paired server, change them in Orca there.
+  the selected bot host. Remote changes also sync with Orca on that host.
 - **Updates**: the version you have and whether a newer one is out. By default
   the panel shows a banner and asks before updating; **Install updates
   automatically** updates by itself, once per new version. An update that asks
@@ -84,9 +84,9 @@ you only want the server's bots. With no paired servers the picker stays hidden
 and the bots run on this computer.
 
 The server needs Orca, Node.js 24 or newer, and at least one project added in
-Orca there, and an existing OpenMausBot installation or running server.
-Approve any initial installation on that server itself; the paired client
-cannot approve or download it. It does not need Bot Team for Orca installed.
+Orca there. It does not need Bot Team for Orca installed. Use **Install
+OpenMausBot** in the panel to approve a download on the selected server;
+connecting or polling alone never grants installation consent.
 When you choose the server, the plugin opens a terminal named **Bot Team for Orca** in that
 project, through Orca's existing pairing. It copies the plugin's own worker
 code to `~/.orca-bot/relay` on the server and runs it there. It closes that
@@ -94,15 +94,24 @@ terminal after 10 minutes without use and opens a new one, in a few seconds,
 the next time the panel needs it. OpenMausBot keeps running on the server.
 
 The server keeps its files, bots and chat history, and starts OpenMausBot there
-if it is not running yet. The client does not install OpenMausBot, copy model
-logins, create SSH connections, expose a bot port or ask for a second pairing
+if it is not running yet. The client does not copy model logins, create SSH
+connections, expose a bot port or ask for a second pairing
 code. An unavailable server never falls back to a different bot team on this
 computer.
 
-From a paired client you can list bots, read and send messages, and add
-MausBot. Setup, tool imports, the Bot Dashboard and stopping OpenMausBot stay
-in Orca on the server. A paired client never changes the server's Claude setup
-or agent links, and never restarts or stops OpenMausBot there.
+From a paired client you can manage bots, change permissions, import tools from
+apps on the server, and install or stop OpenMausBot. The Bot Dashboard opens
+in the paired desktop's Orca browser and reuses its tab; plugin-owned servers
+auto-pair. Keep Orca connected with remote server browsing hosted on this device.
+Permissions and installation consent persist in `~/.orca-bot/preferences.json`
+on the bot host, shared by its local plugin and paired clients. Existing host
+preferences take precedence over a stale `paired-client.json` cache on startup;
+subsequent explicit changes in either Settings view sync on the next request.
+These paths have fake-dependency coverage; two-computer live verification is pending.
+
+Right-click a bot row to pin, rename, assign or create a group, or delete with
+inline confirmation. MausBot offers **Hide from list** instead of deletion.
+Pinned bots and named groups get headings; an ungrouped roster stays flat.
 
 ## Security review
 

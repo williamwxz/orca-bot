@@ -7,8 +7,18 @@ import { join } from 'node:path'
 import type { OrcaWorkerApi } from 'orca/worker'
 import { defaultWorkerDeps, register } from './worker.ts'
 import type { WorkerDeps } from './worker.ts'
-import { defaultServerDeps, ensureServer } from './omb-server.ts'
+import {
+  defaultServerDeps,
+  ensureInstalled,
+  ensureServer,
+  isPluginServer,
+  stopServer
+} from './omb-server.ts'
 import type { ServerDeps } from './omb-server.ts'
+import { defaultCliDeps } from './omb-cli.ts'
+import type { CliDeps } from './omb-cli.ts'
+import { openChat } from './omb-open.ts'
+import { TESTED_OPENMAUSBOT_VERSION } from '../shared/omb-version.ts'
 import { NEXT, PING, RELAYED, WINDOW, frames, lineReader, unpack } from './relay-frames.ts'
 
 type Store = { storage: Record<string, unknown>; settings: Record<string, unknown> }
@@ -20,26 +30,33 @@ export type RelayIo = {
 }
 
 /**
- * The server's own Orca (and its copy of the plugin, if any) owns OpenMausBot's setup. A paired
- * client only finds or starts it and chats: it never relinks agents, restarts the server for a
- * Claude setup, re-signs the dashboard, imports tools or stops it.
+ * Runs the same worker capabilities on the paired server, using detached launcher processes
+ * so OpenMausBot survives terminal idle disconnects and `open-url` so the Bot Dashboard opens
+ * inside the paired client desktop's Orca browser.
  */
 export function pairedClientDeps(
   base: WorkerDeps = defaultWorkerDeps(),
-  server: ServerDeps = { ...defaultServerDeps(), spawn: orphanSpawn }
+  server: ServerDeps = { ...defaultServerDeps(), spawn: orphanSpawn },
+  cli?: CliDeps
 ): WorkerDeps {
   return {
     ...base,
-    ensureServer: (share) => ensureServer(server, share),
-    findTools: undefined,
-    importTools: undefined,
-    findAgents: undefined,
-    syncAgentLinks: undefined,
-    claudeSetupStatus: undefined,
-    repairChat: undefined,
-    prepareServer: undefined,
-    stopServer: async () => ({ stopped: false, message: 'Stop OpenMausBot in Orca on this server.' }),
-    openChat: async () => ({ message: 'Open the Bot Dashboard in Orca on this server.' })
+    ensureServer: (share, allowInstall) => ensureServer(server, share, allowInstall),
+    prepareServer: (allowInstall) =>
+      ensureInstalled(TESTED_OPENMAUSBOT_VERSION, server, allowInstall),
+    stopServer: () => stopServer(server),
+    openChat: async (input) => {
+      const resolvedCli = cli ?? defaultCliDeps()
+      return openChat(
+        {
+          ...input,
+          clientBrowser: true,
+          startedByPlugin: input.startedByPlugin && (await isPluginServer(input.port, server))
+        },
+        resolvedCli
+      )
+    },
+    repairChat: undefined
   }
 }
 

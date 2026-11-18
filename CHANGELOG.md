@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- One installation notice card, a gear Settings icon, and a right-click bot
+  menu for pinning, renaming, grouping, deleting or hiding the default MausBot.
+  Grouped rosters show Pinned and named section headings.
+- Paired clients can change host permissions, import host tools, approve
+  installation and stop the host server. Host preferences sync with local Orca
+  settings, and stale paired-client caches defer to persisted host choices.
+- Remote Bot Dashboard opens and auto-pairs in the client browser, reuses its
+  page ID and leaves no success message under the panel. Cross-device live
+  verification remains pending.
+
 ## 0.1.4 (17 November 2026)
 
 - **OpenMausBot 0.1.169**: updates the tested OpenMausBot version from 0.1.158

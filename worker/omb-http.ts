@@ -1,5 +1,15 @@
+export class HttpStatusError extends Error {
+  status: number
+  constructor(status: number) {
+    super('OpenMausBot request failed.')
+    this.status = status
+  }
+}
+
+export type HttpMethod = 'GET' | 'PATCH' | 'POST' | 'DELETE'
+
 export type HttpDeps = {
-  request: (port: number, path: string, patch?: object) => Promise<unknown>
+  request: (port: number, path: string, body?: object, method?: HttpMethod) => Promise<unknown>
   avatar: (port: number, path: string) => Promise<string | undefined>
 }
 
@@ -10,16 +20,17 @@ export function defaultHttpDeps(): HttpDeps {
 
 export function httpDeps(fetcher: typeof fetch): HttpDeps {
   return {
-    request: async (port, path, patch) => {
+    request: async (port, path, body, method = body ? 'PATCH' : 'GET') => {
       const response = await fetcher(`http://127.0.0.1:${port}${path}`, {
-        method: patch ? 'PATCH' : 'GET',
-        headers: patch ? { 'content-type': 'application/json' } : {},
-        body: patch ? JSON.stringify(patch) : undefined,
+        method,
+        headers: body ? { 'content-type': 'application/json' } : {},
+        body: body ? JSON.stringify(body) : undefined,
         redirect: 'error',
         signal: AbortSignal.timeout(10000)
       })
-      if (!response.ok) throw new Error('OpenMausBot request failed.')
-      return response.json()
+      if (!response.ok) throw new HttpStatusError(response.status)
+      const text = await response.text()
+      return text ? JSON.parse(text) : {}
     },
     avatar: async (port, path) => {
       if (!/^\/api\/attachments\/[A-Za-z0-9-]+\.(png|jpg|gif|webp)$/.test(path)) return undefined
@@ -28,7 +39,11 @@ export function httpDeps(fetcher: typeof fetch): HttpDeps {
         signal: AbortSignal.timeout(5000)
       })
       const type = response.headers.get('content-type')?.split(';')[0]
-      if (!response.ok || !type || !['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(type))
+      if (
+        !response.ok ||
+        !type ||
+        !['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(type)
+      )
         return undefined
       const reader = response.body?.getReader()
       if (!reader) return undefined

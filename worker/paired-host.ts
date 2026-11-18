@@ -2,6 +2,7 @@ import type { OrcaWorkerApi } from 'orca/worker'
 import type { CliDeps } from './omb-cli.ts'
 import { defaultCliDeps } from './omb-cli.ts'
 import { TESTED_OPENMAUSBOT_VERSION } from '../shared/omb-version.ts'
+import { importMessage } from './import-tools.ts'
 import { callOrca } from './orca-cli.ts'
 import { RELAYED } from './relay-frames.ts'
 import { createTerminalLink, defaultLinkDeps } from './terminal-link.ts'
@@ -28,7 +29,7 @@ async function listHosts(deps: BridgeDeps): Promise<Host[]> {
       (host: any) => typeof host?.id !== 'string' || typeof host?.name !== 'string'
     )
   )
-    throw new Error('Could not read Orca’s paired servers.')
+    throw new Error('Could not read Orca\u2019s paired servers.')
   return result.environments.map((host: Host) => ({ id: host.id, name: host.name }))
 }
 
@@ -48,7 +49,7 @@ export async function readHosts(saved: unknown, deps: BridgeDeps): Promise<Hosts
       selected: saved,
       hosts,
       message: failed
-        ? 'Could not read Orca’s paired servers. Check that Orca’s command line tool is installed, then retry.'
+        ? 'Could not read Orca\u2019s paired servers. Check that Orca\u2019s command line tool is installed, then retry.'
         : 'The chosen Orca server is no longer paired. Choose where your bots run.'
     }
   }
@@ -57,7 +58,7 @@ export async function readHosts(saved: unknown, deps: BridgeDeps): Promise<Hosts
     return {
       selected: '',
       hosts,
-      message: 'Could not read Orca’s paired servers. Choose This computer, or press Retry.'
+      message: 'Could not read Orca\u2019s paired servers. Choose This computer, or press Retry.'
     }
   // Ask once instead of guessing: starting bots here downloads OpenMausBot.
   return hosts.length
@@ -71,7 +72,10 @@ export function registerPairedHost(
   deps: BridgeDeps = bridgeDeps()
 ): void {
   const handlers = new Map<string, (input: any, context: any) => unknown>()
-  const link = createTerminalLink({ ...defaultLinkDeps(deps.call, orca.storage), ...deps.link?.(orca) })
+  const link = createTerminalLink({
+    ...defaultLinkDeps(deps.call, orca.storage),
+    ...deps.link?.(orca)
+  })
   let cached: Promise<Hosts> | undefined
   const read = () => orca.storage.get('botHost').then((saved) => readHosts(saved, deps))
   const current = () => (cached ??= read())
@@ -81,18 +85,8 @@ export function registerPairedHost(
     if (state.selected === LOCAL) return handlers.get(name)?.(input, context)
     const host = state.hosts.find((item) => item.id === state.selected)
     if (!host) throw new Error(state.message)
-    if (name === 'setup.get') return { answered: true, agents: { claude: false, codex: false } }
-    if (name === 'tools.find') return { tools: [] }
-    if (name === 'chat.open')
-      return { message: `The Bot Dashboard runs on ${host.name}. Open it in Orca there.` }
-    if (!relayed.has(name))
-      throw new Error(`Manage setup, tool imports and the server in Orca on ${host.name}.`)
+    if (!relayed.has(name)) throw new Error(`Unsupported request on ${host.name}.`)
     const output = await link.request(host, name, input)
-    if (name === 'status' && output?.state === 'needs_install')
-      return {
-        ...output,
-        message: `Install OpenMausBot with approval in Orca on ${host.name}, then retry.`
-      }
     if (name === 'status' && output?.state === 'running')
       return {
         ...output,
@@ -113,7 +107,8 @@ export function registerPairedHost(
             if (name !== 'status') throw error
             return {
               state: 'start_failed',
-              message: error instanceof Error ? error.message : 'Could not connect to the bot host.',
+              message:
+                error instanceof Error ? error.message : 'Could not connect to the bot host.',
               testedVersion: TESTED_OPENMAUSBOT_VERSION
             }
           }
@@ -126,7 +121,10 @@ export function registerPairedHost(
         orca.commands.register(id, async (args, context) => {
           if ((await current()).selected === LOCAL) return handler(args, context)
           if (id === 'orcabot.open') return request('chat.open', {}, context)
-          throw new Error('Manage the bot server and its tools in Orca on the bot host.')
+          if (id === 'orcabot.stopServer') return request('server.stop', {}, context)
+          if (id === 'orcabot.importTools')
+            return { message: importMessage(await request('tools.import', {}, context)) }
+          throw new Error('Unsupported command on the bot host.')
         })
     }
   } as OrcaWorkerApi

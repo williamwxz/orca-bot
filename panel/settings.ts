@@ -30,10 +30,11 @@ export function createSettings(frame: FrameApi, element: Elements, changed: () =
     const available = updates?.state === 'available'
     const show =
       !!bannerFeedback ||
-      (!!updates && ['available', 'updating', 'updated', 'approval_required'].includes(updates.state))
+      (!!updates &&
+        ['available', 'updating', 'updated', 'approval_required'].includes(updates.state))
     element('update-status').textContent = updates
       ? `Version ${updates.version}. ${updates.message}`
-      : 'Checking for updates…'
+      : 'Checking for updates\u2026'
     for (const id of ['update-install', 'update-banner-install']) {
       button(id).hidden = !available
       button(id).disabled = installing || !available
@@ -41,31 +42,44 @@ export function createSettings(frame: FrameApi, element: Elements, changed: () =
     input('update-auto').checked = !!updates?.autoUpdate
     input('update-auto').disabled = !updates || updates.state === 'dev'
     element('update-banner').hidden = !show
-    element('update-banner-text').textContent = bannerFeedback || (show ? (updates?.message ?? '') : '')
+    element('update-banner-text').textContent =
+      bannerFeedback || (show ? (updates?.message ?? '') : '')
+  }
+
+  function renderImportCopy(): void {
+    const target = remote ?? 'this computer'
+    element('pref-import-copy').textContent =
+      `Adds tools from apps such as Cursor and Claude Desktop to OpenMausBot, switched off. Tokens saved in those apps are copied to OpenMausBot on ${target}.`
   }
 
   function renderServer(): void {
     const where = remote ? ` on ${remote}` : ''
+    renderImportCopy()
     element('omb-status').textContent =
       status?.state === 'running'
         ? `Running${where}${status.version ? `, version ${status.version}` : ''}.`
         : status
           ? `Not running${where}.`
           : ''
-    const needsInstall = !remote && (status?.state === 'needs_install' || status?.needsInstall)
+    const needsInstall = status?.state === 'needs_install' || !!status?.needsInstall
+    const installCopy = remote
+      ? INSTALL_NOTICE.replace('into ~/.orca-bot.', `into ~/.orca-bot on ${remote}.`)
+      : INSTALL_NOTICE
     for (const id of ['install-card', 'settings-install-card']) {
       element(id).hidden = !needsInstall
-      element(`${id}-notice`).textContent = INSTALL_NOTICE
+      element(`${id}-notice`).textContent = installCopy
     }
-    if (needsInstall) element('omb-status').textContent = 'Installation needs your approval.'
+    if (needsInstall)
+      element('omb-status').textContent = `Installation${where} needs your approval.`
     else if (status && status.state !== 'running')
       element('omb-status').textContent = status.message || `Not running${where}.`
-    button('stop-server').hidden = !!remote
+    button('stop-server').hidden = false
     button('stop-server').disabled = status?.state !== 'running'
   }
 
   function renderPreferences(prefs: Preferences | undefined, problem = ''): void {
     element('permissions-note').textContent = problem
+    renderImportCopy()
     for (const id of ['pref-share-tools', 'pref-link-agents']) input(id).disabled = !prefs
     button('pref-import').disabled = !prefs
     if (!prefs) {
@@ -84,7 +98,6 @@ export function createSettings(frame: FrameApi, element: Elements, changed: () =
       const prefs = await frame.plugin.request('prefs.get', {})
       if (generation === preferencesGeneration) renderPreferences(prefs)
     } catch (error) {
-      // On a paired server, these are set in Orca there.
       if (generation === preferencesGeneration)
         renderPreferences(undefined, failure(error, 'Could not read your permissions.'))
     }
@@ -130,7 +143,7 @@ export function createSettings(frame: FrameApi, element: Elements, changed: () =
     if (installing || updates?.state !== 'available') return
     installing = true
     ++updateGeneration
-    bannerFeedback = 'Updating…'
+    bannerFeedback = 'Updating\u2026'
     renderUpdates()
     try {
       updates = await frame.plugin.request('updates.install', {})
@@ -169,7 +182,7 @@ export function createSettings(frame: FrameApi, element: Elements, changed: () =
   )
   button('pref-import').addEventListener('click', async () => {
     button('pref-import').disabled = true
-    note('Bringing in tools…')
+    note('Bringing in tools\u2026')
     try {
       const result = await frame.plugin.request('tools.import', {})
       const added = result.added.length
@@ -186,7 +199,7 @@ export function createSettings(frame: FrameApi, element: Elements, changed: () =
   })
   button('update-check').addEventListener('click', async () => {
     button('update-check').disabled = true
-    element('update-status').textContent = 'Checking for updates…'
+    element('update-status').textContent = 'Checking for updates\u2026'
     await loadUpdates(true)
     button('update-check').disabled = false
   })
@@ -213,8 +226,8 @@ export function createSettings(frame: FrameApi, element: Elements, changed: () =
   return {
     beginHostChange(): void {
       ++preferencesGeneration
-      renderPreferences(undefined, 'Changing where bots run…')
-      note('Connecting…')
+      renderPreferences(undefined, 'Changing where bots run\u2026')
+      note('Connecting\u2026')
     },
     async hostChanged(problem = ''): Promise<void> {
       const generation = preferencesGeneration + 1

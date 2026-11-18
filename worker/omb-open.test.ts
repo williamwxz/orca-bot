@@ -1,5 +1,6 @@
 import { assert, test } from 'orca/testing'
-import { openChat, repairChat } from './omb-open.ts'
+import { openChat, repairChat, resetClientPages } from './omb-open.ts'
+import { CliFailure } from './omb-cli.ts'
 import type { CliDeps } from './omb-cli.ts'
 
 const origin = 'http://127.0.0.1:18799'
@@ -31,7 +32,9 @@ test('pairing screen triggers a fresh pair, exact snapshot/click arrays, then re
   const { deps, calls } = fake()
   const botId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
   const wanted = `${origin}/?thread=thread-1&bot=${botId}`
-  assert.deepEqual(await openChat({ ...input, botId, activeTaskId: 'thread-1' }, deps), { message: '' })
+  assert.deepEqual(await openChat({ ...input, botId, activeTaskId: 'thread-1' }, deps), {
+    message: ''
+  })
   assert.deepEqual(calls, [
     ['tab', 'list', '--json'],
     ['tab', 'create', '--url', `${origin}/api/health`, '--json'],
@@ -58,6 +61,61 @@ test('pairing screen triggers a fresh pair, exact snapshot/click arrays, then re
     ['goto', '--url', wanted, '--page', 'page-1', '--json'],
     ['snapshot', '--page', 'page-1']
   ])
+})
+
+test('clientBrowser opens on the paired client via open-url, auto-pairs, and reuses the client tab', async () => {
+  resetClientPages()
+  const { deps, calls } = fake(false, '1')
+  const run = deps.execFile
+  let clientTabs: { browserPageId: string; url: string }[] = []
+  deps.execFile = async (file, args, options) => {
+    if (args[0] === 'open-url') {
+      calls.push(args)
+      clientTabs = [{ browserPageId: 'client-page-1', url: `${origin}/` }]
+      return JSON.stringify({ ok: true, result: { browserPageId: 'client-page-1' } })
+    }
+    if (args[0] === 'tab' && args[1] === 'list') {
+      calls.push(args)
+      return JSON.stringify({ ok: true, result: { tabs: clientTabs } })
+    }
+    return run(file, args, options)
+  }
+
+  assert.deepEqual(await openChat({ ...input, clientBrowser: true }, deps), { message: '' })
+  assert.deepEqual(calls[0], [
+    'open-url',
+    '--worktree',
+    'active',
+    '--url',
+    `${origin}/api/health`,
+    '--json'
+  ])
+
+  calls.length = 0
+  assert.deepEqual(await openChat({ ...input, clientBrowser: true }, deps), { message: '' })
+  assert.deepEqual(calls[0], ['tab', 'list', '--worktree', 'all', '--json'])
+  assert.ok(
+    calls.some(
+      (args) =>
+        args[0] === 'tab' &&
+        args[1] === 'switch' &&
+        !args.includes('--worktree') &&
+        args.includes('client-page-1')
+    )
+  )
+
+  resetClientPages()
+  const unavailable = fake()
+  unavailable.deps.execFile = async () => {
+    throw new CliFailure(
+      1,
+      JSON.stringify({ ok: false, error: { code: 'browser_host_unavailable', message: secret } })
+    )
+  }
+  await assert.rejects(
+    openChat({ ...input, clientBrowser: true }, unavailable.deps),
+    /Remote server workspaces set to This device/
+  )
 })
 
 test('no pairing on a signed-in tab, preserving its conversation', async () => {
@@ -137,7 +195,11 @@ test('waiting for Connect and confirmation is bounded, no retry of click', async
 
 test('ordinary open failures and malformed tab lists are sanitized', async () => {
   const { deps } = fake()
-  for (const text of ['not json FAKE-SECRET', '{"ok":false}', '{"ok":true,"result":{"tabs":null}}']) {
+  for (const text of [
+    'not json FAKE-SECRET',
+    '{"ok":false}',
+    '{"ok":true,"result":{"tabs":null}}'
+  ]) {
     deps.execFile = async () => text
     await assert.rejects(openChat(input, deps), {
       message: 'Could not open chat. Check Orca and OpenMausBot, then try again.'
@@ -212,7 +274,10 @@ test('existing owned tab defaults analytics off and reloads the conversation or 
       const run = deps.execFile
       deps.execFile = async (file, args, options) =>
         args[1] === 'list'
-          ? JSON.stringify({ ok: true, result: { tabs: [{ browserPageId: 'existing', url: current }] } })
+          ? JSON.stringify({
+              ok: true,
+              result: { tabs: [{ browserPageId: 'existing', url: current }] }
+            })
           : run(file, args, options)
       await openChat({ ...input, ...(requested ? { botId, activeTaskId: 'task-1' } : {}) }, deps)
       const wanted = requested
@@ -221,7 +286,16 @@ test('existing owned tab defaults analytics off and reloads the conversation or 
           ? `${origin}/`
           : current
       assert.deepEqual(calls.slice(0, 4), [
-        ['storage', 'local', 'get', '--key', 'omb-analytics-opt-out', '--page', 'existing', '--json'],
+        [
+          'storage',
+          'local',
+          'get',
+          '--key',
+          'omb-analytics-opt-out',
+          '--page',
+          'existing',
+          '--json'
+        ],
         [
           'storage',
           'local',
@@ -266,7 +340,9 @@ test('storage failures on new or existing owned tabs fail closed with a generic 
         false
       )
       assert.equal(
-        calls.some((args) => args[0] === 'tab' && args[1] === 'create' && args[3] !== `${origin}/api/health`),
+        calls.some(
+          (args) => args[0] === 'tab' && args[1] === 'create' && args[3] !== `${origin}/api/health`
+        ),
         false
       )
     }
@@ -297,7 +373,11 @@ test('unowned new and existing tabs never access storage', async () => {
   }
 })
 
-function existingFake(paired = false, url = `${origin}/?thread=current`, value: string | null = '1') {
+function existingFake(
+  paired = false,
+  url = `${origin}/?thread=current`,
+  value: string | null = '1'
+) {
   const f = fake(paired, value)
   const run = f.deps.execFile
   f.deps.execFile = async (file, args, options) => {
@@ -344,10 +424,15 @@ test('background repair does nothing for absent, foreign, signed-in or unowned t
     const { deps, calls } =
       mode === 'absent'
         ? fake()
-        : existingFake(mode === 'signed-in', mode === 'foreign' ? 'http://127.0.0.1:9999/' : `${origin}/`)
+        : existingFake(
+            mode === 'signed-in',
+            mode === 'foreign' ? 'http://127.0.0.1:9999/' : `${origin}/`
+          )
     assert.equal(await repairChat({ ...input, startedByPlugin: mode !== 'unowned' }, deps), true)
     assert.equal(
-      calls.some((args) => ['goto', 'pair', 'click', 'storage'].includes(args[0]) || args[1] === 'create'),
+      calls.some(
+        (args) => ['goto', 'pair', 'click', 'storage'].includes(args[0]) || args[1] === 'create'
+      ),
       false
     )
     if (mode === 'unowned') assert.equal(calls.length, 0)
@@ -381,7 +466,8 @@ test('background repair waits for enabled Connect before clicking', async () => 
   deps.execFile = async (file, args, options) => {
     const result = await run(file, args, options)
     if (args[0] === 'pair') pairing = true
-    if (pairing && args[0] === 'snapshot' && ++reads < 3) return 'button "Connect" [disabled ref=e11]'
+    if (pairing && args[0] === 'snapshot' && ++reads < 3)
+      return 'button "Connect" [disabled ref=e11]'
     return result
   }
   assert.equal(await repairChat(input, deps), true)

@@ -1,4 +1,5 @@
 import { test, assert } from 'orca/testing'
+import { INSTALL_NOTICE } from '../shared/omb-version.ts'
 
 class Element {
   children: Element[] = []
@@ -50,6 +51,10 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
   const win = new Element()
   const calls: { name: string; input: unknown }[] = []
   let installed = false
+  let needsInstall = false
+  let grouped = false
+  let pinned = true
+  let defaultBot = false
   let answered = false
   let reject!: (error: Error) => void
   let resolve!: () => void
@@ -85,6 +90,8 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
             {
               id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
               name: 'Remote bot',
+              defaultBot,
+              ...(grouped ? { pinned, section: 'Research', knownSections: ['Research'] } : {}),
               state: 'idle',
               modelLabel: 'Claude'
             }
@@ -113,8 +120,6 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
             message: 'Updated. Orca restarts Bot Team for Orca with the new version.',
             autoUpdate: true
           }
-        if (name === 'prefs.get' && host !== 'local')
-          throw new Error('Manage permissions on the paired server.')
         if (name === 'prefs.get') return { ...prefs, agents: { claude: true, codex: false } }
         if (name === 'prefs.set') {
           Object.assign(prefs, input)
@@ -128,7 +133,8 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
         }
         if (name === 'status' && !installed)
           return { state: 'needs_install', message: 'Install OpenMausBot with approval.' }
-        if (name === 'status') return { state: 'running', message: '' }
+        if (name === 'status')
+          return { state: 'running', needsInstall, message: needsInstall ? INSTALL_NOTICE : '' }
         if (name === 'bots.list')
           return [
             {
@@ -139,7 +145,10 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
               modelLabel: 'Codex'
             }
           ]
-        if (name === 'chat.open') return { message: 'Opened.' }
+        if (name === 'chat.open') return { message: host === 'local' ? 'Opened.' : '' }
+        if (name === 'bots.act') return { ok: true }
+        if (name === 'tools.import') return { added: ['fake'], skipped: [] }
+        if (name === 'server.stop') return { stopped: true, message: 'Stopped.' }
         if (name === 'thread.read') return { messages: [], hasMore: false }
         if (name === 'setup.answer')
           return new Promise<void>((ok, fail) => {
@@ -161,8 +170,13 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
     await import('./app.ts')
     await flush()
     assert.equal(get('install-card').hidden, false)
+    assert.equal(get('message').textContent, '')
+    assert.equal(get('message').hidden, true)
     assert.equal(get('settings-install-card').hidden, false)
-    assert.match(get('install-card-notice').textContent, /openmausbot@0.1.169.*npm.*75 MB.*~\/.orca-bot/)
+    assert.match(
+      get('install-card-notice').textContent,
+      /openmausbot@0.1.169.*npm.*75 MB.*~\/.orca-bot/
+    )
     assert.equal(
       calls.some((call) => call.name === 'server.install'),
       false
@@ -237,7 +251,10 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
       ]
     )
     assert.equal(get('host').value, 'local')
-    assert.deepEqual([get('pref-share-tools').checked, get('pref-link-agents').checked], [true, false])
+    assert.deepEqual(
+      [get('pref-share-tools').checked, get('pref-link-agents').checked],
+      [true, false]
+    )
     assert.equal(get('pref-agent-names').textContent, 'Claude')
     assert.equal(get('update-install').hidden, false)
     assert.match(get('omb-status').textContent, /^Running/)
@@ -268,9 +285,118 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
     assert.equal(get('host').disabled, false)
     assert.equal(calls.filter((call) => call.name === 'bots.list').length, listed + 1)
     assert.deepEqual(botNames(get('roster')), ['Remote bot'])
-    assert.equal(get('pref-share-tools').disabled, true)
-    assert.equal(get('pref-import').disabled, true)
-    assert.match(get('permissions-note').textContent, /paired server/)
+    assert.equal(get('pref-share-tools').disabled, false)
+    assert.equal(get('pref-import').disabled, false)
+    assert.equal(get('permissions-note').textContent, '')
+    assert.equal(get('stop-server').hidden, false)
+    assert.match(get('pref-import-copy').textContent, /Mac Mini/)
+    get('pref-share-tools').checked = false
+    get('pref-share-tools').emit('change')
+    await flush()
+    assert.deepEqual(calls.filter((call) => call.name === 'prefs.set').at(-1)?.input, {
+      shareTools: false
+    })
+    get('pref-import').emit('click')
+    await flush()
+    assert.ok(calls.some((call) => call.name === 'tools.import'))
+    get('open-page').emit('click')
+    await flush()
+    assert.equal(get('result').textContent, '')
+    // The same single install card handles an existing server that needs an update.
+    for (const target of ['local', 'mini-1']) {
+      host = target
+      needsInstall = true
+      win.emit('pageshow')
+      await flush()
+      assert.equal(get('install-card').hidden, false)
+      assert.equal(get('message').textContent, '')
+      assert.equal(get('message').hidden, true)
+    }
+    needsInstall = false
+    grouped = true
+    win.emit('pageshow')
+    await flush()
+    assert.equal(get('roster').children[0].textContent, 'Pinned')
+    const menu = get('bot-menu')
+    const openMenu = () => {
+      get('roster')
+        .children.find((child) => child.className.startsWith('bot-row'))!
+        .emit('contextmenu')
+      assert.equal(menu.hidden, false)
+    }
+    const clickLabel = (root: Element, label: string) => {
+      const find = (node: Element): Element | undefined =>
+        node.textContent === label ? node : node.children.map(find).find(Boolean)
+      const button = find(root)
+      assert.ok(button)
+      button!.emit('click')
+    }
+    openMenu()
+    clickLabel(menu, 'Unpin')
+    await flush()
+    assert.deepEqual(calls.filter((call) => call.name === 'bots.act').at(-1)?.input, {
+      botId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      action: 'pin',
+      pinned: false
+    })
+    openMenu()
+    clickLabel(menu, 'Rename…')
+    menu.children[1].value = 'New name'
+    clickLabel(menu, 'Save')
+    await flush()
+    assert.equal(
+      (calls.filter((call) => call.name === 'bots.act').at(-1)?.input as any).name,
+      'New name'
+    )
+    openMenu()
+    clickLabel(menu, 'Group…')
+    clickLabel(menu, '✓ Research')
+    await flush()
+    assert.equal(
+      (calls.filter((call) => call.name === 'bots.act').at(-1)?.input as any).section,
+      'Research'
+    )
+    openMenu()
+    clickLabel(menu, 'Group…')
+    menu.children.at(-1)!.children[0].value = 'New group'
+    clickLabel(menu, 'Add')
+    await flush()
+    assert.equal(
+      (calls.filter((call) => call.name === 'bots.act').at(-1)?.input as any).section,
+      'New group'
+    )
+    openMenu()
+    const beforeDelete = calls.filter((call) => call.name === 'bots.act').length
+    clickLabel(menu, 'Delete…')
+    assert.equal(calls.filter((call) => call.name === 'bots.act').length, beforeDelete)
+    clickLabel(menu, 'Delete')
+    await flush()
+    assert.equal(
+      (calls.filter((call) => call.name === 'bots.act').at(-1)?.input as any).action,
+      'delete'
+    )
+    pinned = false
+    defaultBot = true
+    win.emit('pageshow')
+    await flush()
+    assert.equal(get('roster').children[0].textContent, 'Research')
+    openMenu()
+    clickLabel(menu, 'Group…')
+    clickLabel(menu, 'Remove from group')
+    await flush()
+    assert.equal(
+      (calls.filter((call) => call.name === 'bots.act').at(-1)?.input as any).section,
+      null
+    )
+    openMenu()
+    clickLabel(menu, 'Hide from list')
+    await flush()
+    assert.equal(
+      (calls.filter((call) => call.name === 'bots.act').at(-1)?.input as any).action,
+      'delete'
+    )
+    grouped = false
+
     get('open-settings').emit('click')
     await flush()
     selectionFails = true

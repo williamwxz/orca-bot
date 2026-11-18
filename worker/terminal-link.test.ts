@@ -15,7 +15,13 @@ function fakeServer(
 ) {
   const terminals = new Map<
     string,
-    { lines: string[]; dropped: number; status: string; feed?: (chunk: string) => void; command: string }
+    {
+      lines: string[]
+      dropped: number
+      status: string
+      feed?: (chunk: string) => void
+      command: string
+    }
   >()
   const calls: string[][] = []
   let count = 0
@@ -146,7 +152,11 @@ test('requests reach the host worker through one terminal, with long messages an
   })
   const store: { saved?: Saved } = {}
   const link = createTerminalLink(linkDeps(server, store))
-  assert.deepEqual(await link.request(host, 'status', {}), { state: 'running', message: '', port: 8799 })
+  assert.deepEqual(await link.request(host, 'status', {}), {
+    state: 'running',
+    message: '',
+    port: 8799
+  })
   assert.deepEqual(await link.request(host, 'message.send', { botId: 'b', text: big }), {
     sendId: 'remote-1'
   })
@@ -202,7 +212,9 @@ test('a server without a project or without Node explains what to do and leaves 
   deps.call = async (args) => {
     const result = await call(args)
     if (args[1] === 'create')
-      noNode.terminals.get(result.terminal.handle)!.lines.splice(1, 1, 'zsh: command not found: node')
+      noNode.terminals
+        .get(result.terminal.handle)!
+        .lines.splice(1, 1, 'zsh: command not found: node')
     return result
   }
   await assert.rejects(createTerminalLink(deps).request(host, 'status', {}), /Node.js 24 or newer/)
@@ -210,11 +222,16 @@ test('a server without a project or without Node explains what to do and leaves 
 })
 
 test('the host refuses requests a paired client may not make', async () => {
-  const server = fakeServer({ 'server.stop': () => ({ stopped: true }) })
-  await assert.rejects(
-    createTerminalLink(linkDeps(server)).request(host, 'server.stop', {}),
-    /Unsupported bot request/
-  )
+  const server = fakeServer({
+    'updates.install': () => ({ state: 'updated' }),
+    'hosts.select': () => ({ selected: 'local' })
+  })
+  for (const forbidden of ['updates.install', 'hosts.select']) {
+    await assert.rejects(
+      createTerminalLink(linkDeps(server)).request(host, forbidden, {}),
+      /Unsupported bot request/
+    )
+  }
 })
 
 test('the bundle is the worker and shared source without tests, and the loader is plain JavaScript in single quotes', async () => {

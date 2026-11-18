@@ -209,7 +209,11 @@ test('bot chat resolves its thread from the last worker roster, never panel inpu
   try {
     await worker.request('status', {})
     await new Promise<void>((resolve) => setImmediate(resolve))
-    await worker.request('chat.open', { botId, activeTaskId: 'panel-thread', threadId: 'panel-thread' })
+    await worker.request('chat.open', {
+      botId,
+      activeTaskId: 'panel-thread',
+      threadId: 'panel-thread'
+    })
     assert.deepEqual(calls[0], { port: 18799, startedByPlugin: true, botId })
     await worker.request('bots.list', {})
     await worker.request('chat.open', { botId, activeTaskId: 'panel-thread' })
@@ -352,7 +356,10 @@ test('status restarts owned mismatched setup only after idle, reflects setting c
         stops = 0,
         inspections = 0
       let release!: () => void
-      const host = mockHost({ storage: { setupAnswered: true }, settings: { shareClaudeSetup: true } })
+      const host = mockHost({
+        storage: { setupAnswered: true },
+        settings: { shareClaudeSetup: true }
+      })
       let api: any
       const choices: boolean[] = []
       const worker = await mountWorker(
@@ -375,7 +382,10 @@ test('status restarts owned mismatched setup only after idle, reflects setting c
               },
               claudeSetupStatus: async (_port, share) => {
                 inspections++
-                return { restart: mismatch, message: share ? 'Claude tools on.' : 'Claude tools off.' }
+                return {
+                  restart: mismatch,
+                  message: share ? 'Claude tools on.' : 'Claude tools off.'
+                }
               },
               rosterBusy: async () => busy,
               stopServer: async () => {
@@ -693,7 +703,10 @@ test('setup answers bypass a previous link backoff but failed answers do not cau
     calls++
     if (fail) throw new Error('Could not add Bot Team for Orca to Claude.')
   }
-  const worker = await mountWorker({ default: (orca) => register(orca, deps) }, { host: mockHost() })
+  const worker = await mountWorker(
+    { default: (orca) => register(orca, deps) },
+    { host: mockHost() }
+  )
   try {
     await worker.request('status', {})
     await new Promise<void>((resolve) => setImmediate(resolve))
@@ -800,7 +813,10 @@ test('background repair uses owned health checks, throttles 30s and silently bac
         return true
       }
     }
-    const worker = await mountWorker({ default: (orca) => register(orca, deps) }, { host: mockHost() })
+    const worker = await mountWorker(
+      { default: (orca) => register(orca, deps) },
+      { host: mockHost() }
+    )
     try {
       await worker.request('status', {})
       await flushRepair()
@@ -856,7 +872,10 @@ test('background repair and explicit opens share the guard in both directions', 
       return { message: 'Opened' }
     }
   }
-  const worker = await mountWorker({ default: (orca) => register(orca, deps) }, { host: mockHost() })
+  const worker = await mountWorker(
+    { default: (orca) => register(orca, deps) },
+    { host: mockHost() }
+  )
   try {
     await worker.request('status', {})
     await flushRepair()
@@ -915,7 +934,10 @@ test('own setup restart checks again immediately despite the 30s throttle', asyn
       return true
     }
   }
-  const worker = await mountWorker({ default: (orca) => register(orca, deps) }, { host: mockHost() })
+  const worker = await mountWorker(
+    { default: (orca) => register(orca, deps) },
+    { host: mockHost() }
+  )
   try {
     await worker.request('status', {})
     await flushRepair()
@@ -952,7 +974,10 @@ test('health recovery checks immediately after starting our replacement server',
       return true
     }
   }
-  const worker = await mountWorker({ default: (orca) => register(orca, deps) }, { host: mockHost() })
+  const worker = await mountWorker(
+    { default: (orca) => register(orca, deps) },
+    { host: mockHost() }
+  )
   try {
     await worker.request('status', {})
     await flushRepair()
@@ -1184,6 +1209,77 @@ test('an in-flight send prevents idle restart even before the server reports bus
     assert.equal(stops, 1)
   } finally {
     finish?.()
+    await worker.deactivate()
+  }
+})
+
+test('bot actions validate payloads before dependencies and remove deleted bots from the worker roster', async () => {
+  const botId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+  const actions: unknown[] = []
+  const worker = await mountWorker(
+    {
+      default: (orca) =>
+        register(orca, {
+          checkHealth: async () => true,
+          now: () => 0,
+          ensureServer: async () => ({
+            port: 18799,
+            version: testedVersion,
+            started: false,
+            startedByPlugin: true
+          }),
+          stopServer: async () => ({ stopped: true, message: '' }),
+          openChat: async () => ({ message: '' }),
+          readThread: async () => ({ messages: [], hasMore: false }),
+          sendMessage: async () => ({ sendId: 'fake' }),
+          addMausBot: async () => {},
+          actOnBot: async (input) => {
+            actions.push(input)
+          },
+          listBots: async () => [
+            {
+              id: botId,
+              name: 'Bot',
+              title: '',
+              main: false,
+              state: 'idle',
+              unread: false,
+              modelLabel: 'Codex'
+            }
+          ]
+        })
+    },
+    { host: mockHost() }
+  )
+  try {
+    await assert.rejects(worker.request('bots.act', { botId, action: 'delete' }), /not running/)
+    await worker.request('status', {})
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    await worker.request('bots.list', {})
+    for (const input of [
+      { action: 'pin', pinned: 'true' },
+      { action: 'rename', name: ' ' },
+      { action: 'rename', name: 'x'.repeat(81) },
+      { action: 'group', section: 4 },
+      { action: 'group', section: 'x'.repeat(61) },
+      { action: 'unknown' }
+    ])
+      await assert.rejects(worker.request('bots.act', { botId, ...input }))
+    await assert.rejects(
+      worker.request('bots.act', { botId: 'invalid', action: 'delete' }),
+      /Invalid bot ID/
+    )
+    assert.equal(actions.length, 0)
+    await worker.request('bots.act', { botId, action: 'pin', pinned: true, port: 9999 })
+    assert.deepEqual(actions, [{ botId, action: 'pin', pinned: true, port: 18799 }])
+    await worker.request('bots.act', { botId, action: 'delete' })
+    await assert.rejects(worker.request('thread.read', { botId }), /not in the roster/)
+    await assert.rejects(
+      worker.request('bots.act', { botId, action: 'delete' }),
+      /not in the roster/
+    )
+    assert.equal(actions.length, 2)
+  } finally {
     await worker.deactivate()
   }
 })

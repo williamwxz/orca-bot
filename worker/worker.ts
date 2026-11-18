@@ -1,5 +1,7 @@
 import { registerPairedHost } from './paired-host.ts'
 import { registerUpdates } from './updates.ts'
+import { defaultHostPrefs } from './host-prefs.ts'
+import type { HostPrefs, StoredPrefs } from './host-prefs.ts'
 import { linkError } from '../shared/agents.ts'
 import type { FoundAgents } from '../shared/agents.ts'
 import { defaultImportDeps, findTools, importTools, importMessage } from './import-tools.ts'
@@ -10,10 +12,10 @@ import { readThread, sendMessage, newSendId } from './omb-chat.ts'
 import type { OrcaWorkerApi } from 'orca/worker'
 import { openChat, repairChat, validBotId } from './omb-open.ts'
 import type { OpenInput, OpenResult } from './omb-open.ts'
-import { listBots, addMausBot, rosterBusy } from './omb-roster.ts'
+import { listBots, addMausBot, actOnBot, validateBotAction, rosterBusy } from './omb-roster.ts'
 import { defaultHttpDeps } from './omb-http.ts'
 import { defaultCliDeps } from './omb-cli.ts'
-import type { Bot } from '../shared/roster.ts'
+import type { Bot, BotAction } from '../shared/roster.ts'
 import type { Status } from './protocol.ts'
 import {
   ensureServer,
@@ -34,6 +36,7 @@ export type WorkerDeps = {
   importTools?: (port: number) => Promise<ImportResult>
   findAgents?: () => FoundAgents
   syncAgentLinks?: (input: { enabled: boolean; owned: boolean; port: number }) => Promise<void>
+  hostPrefs?: HostPrefs
   checkHealth: (port: number) => Promise<boolean>
   now: () => number
   ensureServer: (share: boolean, allowInstall?: boolean) => Promise<ServerResult>
@@ -47,6 +50,7 @@ export type WorkerDeps = {
   openChat: (input: OpenInput) => Promise<OpenResult>
   repairChat?: (input: OpenInput) => Promise<boolean>
   addMausBot: (input: { port: number; botId: string }) => Promise<void>
+  actOnBot?: (input: { port: number } & BotAction) => Promise<void>
   readThread: typeof readThread
   sendMessage: typeof sendMessage
   listBots: (input: { port: number }) => Promise<Bot[]>
@@ -68,24 +72,33 @@ export function defaultWorkerDeps(): WorkerDeps {
         { ...input, owned: input.owned && (await isPluginServer(input.port, deps)) },
         links
       ),
+    hostPrefs: defaultHostPrefs(),
     checkHealth: (port) => serverHealthy(port, deps),
     now: Date.now,
     ensureServer: (share, allowInstall) => ensureServer(deps, share, allowInstall),
     claudeSetupStatus: (port, share) => claudeSetupStatus(port, share, deps),
     rosterBusy: (port) => rosterBusy(port, http),
-    prepareServer: (allowInstall) => ensureInstalled(TESTED_OPENMAUSBOT_VERSION, deps, allowInstall),
+    prepareServer: (allowInstall) =>
+      ensureInstalled(TESTED_OPENMAUSBOT_VERSION, deps, allowInstall),
     stopServer: () => stopServer(deps),
     openChat: async (input) =>
       openChat(
-        { ...input, startedByPlugin: input.startedByPlugin && (await isPluginServer(input.port, deps)) },
+        {
+          ...input,
+          startedByPlugin: input.startedByPlugin && (await isPluginServer(input.port, deps))
+        },
         cli
       ),
     repairChat: async (input) =>
       repairChat(
-        { ...input, startedByPlugin: input.startedByPlugin && (await isPluginServer(input.port, deps)) },
+        {
+          ...input,
+          startedByPlugin: input.startedByPlugin && (await isPluginServer(input.port, deps))
+        },
         cli
       ),
     addMausBot: (input) => addMausBot(input, http),
+    actOnBot: (input) => actOnBot(input, http),
     readThread: (input) => readThread(input, cli),
     sendMessage: (input) => sendMessage(input, cli),
     listBots: (input) => listBots(input, http)
@@ -114,6 +127,86 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
   let opening: Promise<OpenResult> | undefined
   let repairAt = -Infinity
   let repairFailedUntil = -Infinity
+  let seenPrefs: Required<StoredPrefs> | undefined
+
+  const syncPrefs = async (): Promise<Required<StoredPrefs>> => {
+    let shareTools = (await orca.settings.get('shareClaudeSetup')) === true
+    let linkAgents = (await orca.settings.get('linkAgents')) === true
+    let setupAnswered = (await orca.storage.get('setupAnswered')) === true
+    let installConsent = (await orca.storage.get('openmausbotInstallConsent')) === true
+    const shared = deps.hostPrefs?.read()
+    if (deps.hostPrefs) {
+      if (!shared) {
+        if (setupAnswered || installConsent || shareTools || linkAgents) {
+          deps.hostPrefs.write({ shareTools, linkAgents, setupAnswered, installConsent })
+        }
+      } else {
+        const patch: Partial<StoredPrefs> = {}
+        if (seenPrefs && shareTools !== seenPrefs.shareTools) patch.shareTools = shareTools
+        else if (typeof shared.shareTools === 'boolean' && shared.shareTools !== shareTools) {
+          shareTools = shared.shareTools
+          await orca.settings.set('shareClaudeSetup', shareTools)
+        }
+        if (seenPrefs && linkAgents !== seenPrefs.linkAgents) patch.linkAgents = linkAgents
+        else if (typeof shared.linkAgents === 'boolean' && shared.linkAgents !== linkAgents) {
+          linkAgents = shared.linkAgents
+          await orca.settings.set('linkAgents', linkAgents)
+        }
+        if (seenPrefs && setupAnswered !== seenPrefs.setupAnswered)
+          patch.setupAnswered = setupAnswered
+        else if (
+          typeof shared.setupAnswered === 'boolean' &&
+          shared.setupAnswered !== setupAnswered
+        ) {
+          setupAnswered = shared.setupAnswered
+          await orca.storage.set('setupAnswered', setupAnswered)
+        }
+        if (seenPrefs && installConsent !== seenPrefs.installConsent)
+          patch.installConsent = installConsent
+        else if (
+          typeof shared.installConsent === 'boolean' &&
+          shared.installConsent !== installConsent
+        ) {
+          installConsent = shared.installConsent
+          await orca.storage.set('openmausbotInstallConsent', installConsent)
+        }
+        if (Object.keys(patch).length) deps.hostPrefs.write(patch)
+      }
+    }
+    seenPrefs = { shareTools, linkAgents, setupAnswered, installConsent }
+    return seenPrefs
+  }
+
+  const writePrefs = async (patch: Partial<StoredPrefs>): Promise<void> => {
+    // Persist first: a failed disk write must not look like a successful permission change.
+    deps.hostPrefs?.write(patch)
+    if (patch.shareTools !== undefined)
+      await orca.settings.set('shareClaudeSetup', patch.shareTools)
+    if (patch.linkAgents !== undefined) await orca.settings.set('linkAgents', patch.linkAgents)
+    if (patch.setupAnswered !== undefined)
+      await orca.storage.set('setupAnswered', patch.setupAnswered)
+    if (patch.installConsent !== undefined)
+      await orca.storage.set('openmausbotInstallConsent', patch.installConsent)
+    seenPrefs = {
+      shareTools:
+        patch.shareTools ??
+        seenPrefs?.shareTools ??
+        (await orca.settings.get('shareClaudeSetup')) === true,
+      linkAgents:
+        patch.linkAgents ??
+        seenPrefs?.linkAgents ??
+        (await orca.settings.get('linkAgents')) === true,
+      setupAnswered:
+        patch.setupAnswered ??
+        seenPrefs?.setupAnswered ??
+        (await orca.storage.get('setupAnswered')) === true,
+      installConsent:
+        patch.installConsent ??
+        seenPrefs?.installConsent ??
+        (await orca.storage.get('openmausbotInstallConsent')) === true
+    }
+  }
+
   const repair = (immediate = false): void => {
     if (!deps.repairChat || !startedByPlugin || status?.state !== 'running' || opening) return
     if (deps.now() < repairFailedUntil || (!immediate && deps.now() < repairAt)) return
@@ -151,22 +244,24 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
       throw new Error(linkMessage)
     }
   }
-  orca.panels.handle('setup.get', async () => ({
-    shareTools: (await orca.settings.get('shareClaudeSetup')) === true,
-    linkAgents: (await orca.settings.get('linkAgents')) === true,
-    answered: (await orca.storage.get('setupAnswered')) === true,
-    agents: deps.findAgents?.() ?? { claude: false, codex: false }
-  }))
+  orca.panels.handle('setup.get', async () => {
+    const prefs = await syncPrefs()
+    return {
+      shareTools: prefs.shareTools,
+      linkAgents: prefs.linkAgents,
+      answered: prefs.setupAnswered,
+      agents: deps.findAgents?.() ?? { claude: false, codex: false }
+    }
+  })
   orca.panels.handle('setup.answer', (input: SetupAnswer) => {
     if (!input || typeof input.shareTools !== 'boolean' || typeof input.linkAgents !== 'boolean')
       throw new Error('Choose your setup options.')
     answering ??= (async (): Promise<{ answered: true }> => {
-      if ((await orca.storage.get('setupAnswered')) === true) return { answered: true }
+      if ((await syncPrefs()).setupAnswered) return { answered: true }
       try {
         linkRetryAt = -Infinity
         lastHealthCheck = -Infinity
-        await orca.settings.set('shareClaudeSetup', input.shareTools)
-        await orca.settings.set('linkAgents', input.linkAgents)
+        await writePrefs({ shareTools: input.shareTools, linkAgents: input.linkAgents })
         linkSetting = input.linkAgents
         if (status?.state === 'running' && startedByPlugin) {
           await checking
@@ -178,7 +273,7 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
           )
             await updateLinks(input.linkAgents, status.port!)
         }
-        await orca.storage.set('setupAnswered', true)
+        await writePrefs({ setupAnswered: true })
         lastHealthCheck = -Infinity
         return { answered: true }
       } catch {
@@ -189,11 +284,14 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
     })
     return answering
   })
-  const preferences = async (): Promise<Preferences> => ({
-    shareTools: (await orca.settings.get('shareClaudeSetup')) === true,
-    linkAgents: (await orca.settings.get('linkAgents')) === true,
-    agents: deps.findAgents?.() ?? { claude: false, codex: false }
-  })
+  const preferences = async (): Promise<Preferences> => {
+    const prefs = await syncPrefs()
+    return {
+      shareTools: prefs.shareTools,
+      linkAgents: prefs.linkAgents,
+      agents: deps.findAgents?.() ?? { claude: false, codex: false }
+    }
+  }
   orca.panels.handle('prefs.get', preferences)
   // The next status check applies a change, as it does for a change in Orca's Settings.
   orca.panels.handle('prefs.set', async (input: Partial<SetupAnswer>) => {
@@ -201,15 +299,19 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
     for (const key of ['shareTools', 'linkAgents'] as const)
       if (input[key] !== undefined && typeof input[key] !== 'boolean')
         throw new Error('Choose a setting.')
-    if (input.shareTools !== undefined) await orca.settings.set('shareClaudeSetup', input.shareTools)
-    if (input.linkAgents !== undefined) await orca.settings.set('linkAgents', input.linkAgents)
-    // A choice made here answers the setup card too.
-    await orca.storage.set('setupAnswered', true)
+    await syncPrefs()
+    await writePrefs({
+      ...(input.shareTools !== undefined ? { shareTools: input.shareTools } : {}),
+      ...(input.linkAgents !== undefined ? { linkAgents: input.linkAgents } : {}),
+      // A choice made here answers the setup card too.
+      setupAnswered: true
+    })
     lastHealthCheck = -Infinity
     return preferences()
   })
   orca.panels.handle('server.install', async () => {
-    await orca.storage.set('openmausbotInstallConsent', true)
+    await syncPrefs()
+    await writePrefs({ installConsent: true })
     await pending
     if (status?.state !== 'running') status = undefined
     stopped = false
@@ -217,10 +319,11 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
     return { accepted: true }
   })
   orca.panels.handle('status', async (input: { retry?: boolean } = {}): Promise<Status> => {
-    const allowInstall = (await orca.storage.get('openmausbotInstallConsent')) === true
-    const answered = (await orca.storage.get('setupAnswered')) === true
-    const share = answered && (await orca.settings.get('shareClaudeSetup')) === true
-    const nextLinkSetting = (await orca.settings.get('linkAgents')) === true
+    const prefs = await syncPrefs()
+    const allowInstall = prefs.installConsent
+    const answered = prefs.setupAnswered
+    const share = answered && prefs.shareTools
+    const nextLinkSetting = prefs.linkAgents
     if (linkSetting !== nextLinkSetting) {
       linkSetting = nextLinkSetting
       linkRetryAt = -Infinity
@@ -243,7 +346,8 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
             }
             if (!startedByPlugin || answering) return
             const wantLinks = answered && nextLinkSetting
-            const outdated = (compareVersions(checked.version!, TESTED_OPENMAUSBOT_VERSION) ?? 0) < 0
+            const outdated =
+              (compareVersions(checked.version!, TESTED_OPENMAUSBOT_VERSION) ?? 0) < 0
             if ((!wantLinks || !outdated) && deps.now() >= linkRetryAt) {
               try {
                 await updateLinks(wantLinks, checked.port!)
@@ -284,8 +388,8 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
               ...checked,
               state: 'starting',
               message: setup.updating
-                ? `Updating OpenMausBot to ${TESTED_OPENMAUSBOT_VERSION}…`
-                : 'Restarting OpenMausBot to apply your Claude setup…'
+                ? `Updating OpenMausBot to ${TESTED_OPENMAUSBOT_VERSION}\u2026`
+                : 'Restarting OpenMausBot to apply your Claude setup\u2026'
             }
             pending = Promise.resolve()
               .then(async () => {
@@ -349,7 +453,7 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
     if (!status && !pending && !stopped) {
       status = {
         state: 'starting',
-        message: 'Checking OpenMausBot…',
+        message: 'Checking OpenMausBot\u2026',
         testedVersion: TESTED_OPENMAUSBOT_VERSION
       }
       pending = Promise.resolve()
@@ -393,11 +497,10 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
         await checking
         await pending
         if (status?.state !== 'running') {
-          const share =
-            (await orca.storage.get('setupAnswered')) === true &&
-            (await orca.settings.get('shareClaudeSetup')) === true
+          const prefs = await syncPrefs()
+          const share = prefs.setupAnswered && prefs.shareTools
           pending = deps
-            .ensureServer(share, (await orca.storage.get('openmausbotInstallConsent')) === true)
+            .ensureServer(share, prefs.installConsent)
             .then((server) => {
               startedByPlugin = server.startedByPlugin
               stopped = false
@@ -444,7 +547,11 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
   }))
   const chat = (input: { botId?: string } = {}): Promise<OpenResult> => {
     const port = runningPort()
-    if (!input || typeof input !== 'object' || (input.botId !== undefined && !validBotId(input.botId)))
+    if (
+      !input ||
+      typeof input !== 'object' ||
+      (input.botId !== undefined && !validBotId(input.botId))
+    )
       throw new Error('Invalid bot ID.')
     // Coalesce rapid clicks so a first-open pairing link is not replaced by another click.
     if (opening) return opening
@@ -477,7 +584,12 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
     const port = knownBot(input)
     sends++
     try {
-      return await deps.sendMessage({ port, botId: input.botId, text: input.text, sendId: newSendId() })
+      return await deps.sendMessage({
+        port,
+        botId: input.botId,
+        text: input.text,
+        sendId: newSendId()
+      })
     } finally {
       sends--
     }
@@ -494,6 +606,16 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
     if (!input || !validBotId(input.botId)) throw new Error('Invalid bot ID.')
     await deps.addMausBot({ port, botId: input.botId })
     return { message: 'MausBot added.' }
+  })
+  orca.panels.handle('bots.act', async (input: BotAction) => {
+    const port = knownBot(input)
+    validateBotAction(input)
+    if (!deps.actOnBot) throw new Error('Bot actions are unavailable.')
+    await deps.actOnBot({ ...input, port })
+    if (input.action === 'delete') {
+      lastRoster = lastRoster.filter((bot) => bot.id !== input.botId)
+    }
+    return { ok: true }
   })
   orca.commands.register('orcabot.open', () => chat())
   const stop = async (): Promise<StopResult> => {
