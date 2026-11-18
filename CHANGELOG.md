@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.7 (18 November 2026)
+
+- **Clean MCP connector toggles & auto-purge on disable**: turning off (or using
+  **All off** on) a locally backed MCP connector imported by this plugin now
+  disables it, removes bot assignments, and deletes its copied credentials from
+  OpenMausBot automatically, eliminating noisy inline **Remove** buttons on
+  local provider rows while preserving **Remove** confirmation for servers
+  created directly in OpenMausBot or orphaned from local configs.
+- **Offline connector icons & UI polish**: adds rounded-square vector icons for
+  popular services and MCP tool categories across **Settings → MCP Connectors**
+  (**Providers** and **By Bot**) and the **Connectors** capability popover,
+  replaces the text **Refresh** button with an accessible circular refresh icon,
+  and removes the redundant **Cancel** item from capability popovers.
+
 ## 0.1.6 (18 November 2026)
 
 - **In-panel bot model switching**: switch a bot's AI model directly from the
