@@ -114,6 +114,7 @@ test('MCP menu provides host-aware groups, zero-bot prompt, assignments, loading
     assert.ok(nodes.some((n) => n.textContent.includes('Codex setup on Remote workstation')))
     nodes.find((n) => n.textContent === 'All on')!.emit()
     assert.equal(get('mcp-refresh').disabled, true)
+    assert.equal(get('mcp-refresh').attrs.get('aria-busy'), 'true')
     assert.ok(
       all(get('mcp-groups'))
         .filter((n) => n.type === 'checkbox')
@@ -121,6 +122,7 @@ test('MCP menu provides host-aware groups, zero-bot prompt, assignments, loading
     )
     complete!()
     await flush()
+    assert.equal(get('mcp-refresh').attrs.get('aria-busy'), 'false')
     nodes = all(get('mcp-groups'))
     assert.ok(nodes.some((n) => n.textContent === 'No bots assigned'))
     nodes.find((n) => n.dataset.focus === 'mail-access')!.emit()

@@ -265,7 +265,9 @@ export function createMcpView(frame: FrameApi, element: (id: string) => HTMLElem
     const target = remote ?? 'this computer'
     element('mcp-security').textContent =
       `Credentials on ${target} are copied only for connectors you turn on. Only selected bots can use them in OpenMausBot. Provider CLI settings can give bots additional access.`
-    button('mcp-refresh').disabled = busy()
+    const refreshButton = button('mcp-refresh')
+    refreshButton.disabled = busy()
+    refreshButton.setAttribute('aria-busy', String(refreshButton.disabled))
     element('mcp-summary').textContent = data
       ? `${data.connectors.filter((c) => c.enabled).length} enabled · ${data.connectors.length} available on ${target}`
       : `MCP connectors unavailable on ${target}. Start OpenMausBot with this plugin, then refresh.`

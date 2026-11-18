@@ -198,10 +198,6 @@ export function createCapabilityPicker(
           })
         )
       }
-      children.push(
-        node('div', '', 'bot-menu-sep'),
-        item('Cancel', () => close(true))
-      )
       root.replaceChildren(...children)
       position()
       if (wasInside) {
