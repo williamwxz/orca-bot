@@ -8,10 +8,30 @@
 </head>
 <body>
   <main>
-    <header><div id="list-header"><h1 id="list-title">Bot Team for Orca</h1><button id="open-page" type="button" disabled>Jump to Bot Dashboard</button></div><label id="host-row" hidden><span>Bots run on</span><select id="host"></select></label><p id="message" role="status">Starting…</p></header>
+    <div id="main-view">
+    <header>
+      <div id="list-header">
+        <h1 id="list-title">Bot Team for Orca</h1>
+        <div class="header-actions">
+          <button id="open-page" type="button" disabled>Jump to Bot Dashboard</button>
+          <button id="open-settings" type="button" aria-label="Settings" title="Settings">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M2 5h7M13 5h1M2 11h1M7 11h7" />
+              <circle cx="11" cy="5" r="2" />
+              <circle cx="5" cy="11" r="2" />
+            </svg>
+          </button>
+        </div>
+      </div>
+      <p id="message" role="status">Starting…</p>
+      <div id="update-banner" hidden>
+        <span id="update-banner-text"></span>
+        <button id="update-banner-install" type="button">Update</button>
+      </div>
+    </header>
     <section id="setup" aria-labelledby="setup-title" hidden>
       <h2 id="setup-title">Set up Bot Team for Orca</h2>
-      <p class="setup-lead">Choose what to allow. You can change this later in Orca's Settings.</p>
+      <p class="setup-lead">Choose what to allow. You can change this later in Settings.</p>
       <label class="setup-option">
         <span class="setup-copy"><strong>Bots can use my tools</strong><small>Claude bots get your Claude connectors, MCP servers, skills and instructions. Codex bots always use your Codex setup.</small></span>
         <input id="share-tools" class="switch" type="checkbox" role="switch" checked />
@@ -39,6 +59,52 @@
       <p id="result" role="status" aria-live="polite"></p>
     </section>
     <button id="retry" type="button" hidden>Retry</button>
+    </div>
+    <section id="settings-view" aria-labelledby="settings-title" hidden>
+      <div class="settings-header">
+        <button id="settings-back" type="button" aria-label="Back to bots" title="Back to bots">←</button>
+        <h2 id="settings-title">Settings</h2>
+      </div>
+      <div class="settings-group">
+        <h3>Bots run on</h3>
+        <select id="host" aria-label="Bots run on"></select>
+        <p class="settings-note">This computer, or an Orca server paired with it in Orca.</p>
+      </div>
+      <div class="settings-group">
+        <h3>Permissions</h3>
+        <p id="permissions-note" class="settings-note"></p>
+        <label class="setup-option">
+          <span class="setup-copy"><strong>Bots can use my tools</strong><small>Claude bots get your Claude connectors, MCP servers, skills and instructions. Codex bots always use your Codex setup.</small></span>
+          <input id="pref-share-tools" class="switch" type="checkbox" role="switch" />
+        </label>
+        <label class="setup-option" id="pref-link-agents-label">
+          <span class="setup-copy"><strong>My Orca agents can talk to the bots</strong><small>Adds Bot Team for Orca's tools to <span id="pref-agent-names">Claude and Codex</span>, so an agent can message a bot or read its replies.</small></span>
+          <input id="pref-link-agents" class="switch" type="checkbox" role="switch" />
+        </label>
+        <div class="setup-option">
+          <span class="setup-copy"><strong>Bring in tools from my AI apps</strong><small>Adds tools from apps such as Cursor and Claude Desktop to OpenMausBot, switched off. Tokens saved in those apps are copied to OpenMausBot on this computer.</small></span>
+          <button id="pref-import" type="button">Bring in</button>
+        </div>
+      </div>
+      <div class="settings-group">
+        <h3>Updates</h3>
+        <p id="update-status" class="settings-note"></p>
+        <div class="settings-actions">
+          <button id="update-check" type="button">Check now</button>
+          <button id="update-install" type="button" hidden>Update</button>
+        </div>
+        <label class="setup-option">
+          <span class="setup-copy"><strong>Install updates automatically</strong><small>Otherwise the panel asks when a new version is out. An update that asks for new access always waits for your approval.</small></span>
+          <input id="update-auto" class="switch" type="checkbox" role="switch" />
+        </label>
+      </div>
+      <div class="settings-group">
+        <h3>OpenMausBot</h3>
+        <p id="omb-status" class="settings-note"></p>
+        <button id="stop-server" type="button">Stop OpenMausBot</button>
+      </div>
+      <p id="settings-message" role="status" aria-live="polite"></p>
+    </section>
   </main>
   <script type="module" src="app.ts"></script>
 </body>

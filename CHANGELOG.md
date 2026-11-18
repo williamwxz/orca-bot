@@ -5,6 +5,11 @@
 - **OpenMausBot 0.1.169**: updates the tested OpenMausBot version from 0.1.158
   to 0.1.169, and switches an existing plugin-started server to the new version
   once bots are idle.
+- **Settings** in the panel: where the bots run, the setup card's permissions
+  (now changeable at any time), updates, and stopping OpenMausBot.
+- **Updates**: a banner asks when a new version is out, or turn on **Install
+  updates automatically**. Checks GitHub at most every six hours while the
+  panel is open.
 - **Bots run on**: pick this computer or a paired Orca server in the panel.
   The server needs Orca, Node.js 24 or newer and one project in Orca; it does
   not need this plugin. Chat and the bot list work from the client; setup,

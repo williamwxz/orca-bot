@@ -1,6 +1,25 @@
 import { join } from 'node:path'
 import type { CliDeps } from './omb-cli.ts'
-import { cliOptions } from './omb-cli.ts'
+import { CliFailure, cliOptions } from './omb-cli.ts'
+
+/** An Orca CLI failure. Only Orca's error code is kept: its message can contain a pairing URL. */
+export class OrcaCliError extends Error {
+  code: string | undefined
+  constructor(message: string, code: string | undefined) {
+    super(message)
+    this.code = code
+  }
+}
+
+function errorCode(error: unknown): string | undefined {
+  if (!(error instanceof CliFailure)) return undefined
+  try {
+    const code = JSON.parse(error.stdout)?.error?.code
+    return typeof code === 'string' && /^[a-z_]{1,40}$/.test(code) ? code : undefined
+  } catch {
+    return undefined
+  }
+}
 
 export function orcaBinary(deps: CliDeps): string {
   if (deps.env.ORCA_CLI_COMMAND) {
@@ -23,16 +42,19 @@ export function orcaBinary(deps: CliDeps): string {
   throw new Error('Orca CLI was not found.')
 }
 
-export async function callOrca(args: string[], deps: CliDeps): Promise<any> {
-  const options = cliOptions(deps, 20000)
+export async function callOrca(args: string[], deps: CliDeps, timeout = 20000): Promise<any> {
+  const options = cliOptions(deps, timeout)
   // Always select the target explicitly, never inherit a terminal's routing.
   delete options.env.ORCA_ENVIRONMENT
   delete options.env.ORCA_PAIRING_CODE
   delete options.env.ORCA_REMOTE_PAIRING
   let output: string
   // Orca's output can contain a pairing URL, so its errors are never shown.
-  try { output = await deps.execFile(orcaBinary(deps), args, options) }
-  catch { throw new Error('Could not reach the selected Orca server. Check its connection in Orca.') }
+  try {
+    output = await deps.execFile(orcaBinary(deps), args, options)
+  } catch (error) {
+    throw new OrcaCliError('Could not reach the selected Orca server. Check its connection in Orca.', errorCode(error))
+  }
   try {
     const value = JSON.parse(output)
     if (value?.ok !== true) throw new Error()
