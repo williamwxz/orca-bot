@@ -15,10 +15,9 @@
         <div class="header-actions">
           <button id="open-page" type="button" disabled>Jump to Bot Dashboard</button>
           <button id="open-settings" type="button" aria-label="Settings" title="Settings">
-            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M2 5h7M13 5h1M2 11h1M7 11h7" />
-              <circle cx="11" cy="5" r="2" />
-              <circle cx="5" cy="11" r="2" />
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M6.8 1.3h2.4l.3 1.5a5.1 5.1 0 0 1 1.1.5l1.3-.9 1.7 1.7-.9 1.3a5.1 5.1 0 0 1 .5 1.1l1.5.3v2.4l-1.5.3a5.1 5.1 0 0 1-.5 1.1l.9 1.3-1.7 1.7-1.3-.9a5.1 5.1 0 0 1-1.1.5l-.3 1.5H6.8l-.3-1.5a5.1 5.1 0 0 1-1.1-.5l-1.3.9-1.7-1.7.9-1.3a5.1 5.1 0 0 1-.5-1.1L1.3 9.2V6.8l1.5-.3a5.1 5.1 0 0 1 .5-1.1l-.9-1.3 1.7-1.7 1.3.9a5.1 5.1 0 0 1 1.1-.5Z" />
+              <circle cx="8" cy="8" r="2.2" />
             </svg>
           </button>
         </div>
@@ -37,11 +36,11 @@
       <h2 id="setup-title">Set up Bot Team for Orca</h2>
       <p class="setup-lead">Choose what to allow. You can change this later in Settings.</p>
       <label class="setup-option">
-        <span class="setup-copy"><strong>Bots can use my tools</strong><small>Claude bots get your Claude connectors, MCP servers, skills and instructions. Codex bots always use your Codex setup.</small></span>
+        <span class="setup-copy"><strong>Bots can use my tools</strong><small id="share-tools-copy"></small></span>
         <input id="share-tools" class="switch" type="checkbox" role="switch" />
       </label>
       <label class="setup-option" id="link-agents-label">
-        <span class="setup-copy"><strong>My Orca agents can talk to the bots</strong><small>Adds Bot Team for Orca's tools to <span id="agent-names">Claude, Codex, opencode and Antigravity</span>, so an agent can message a bot or read its replies.</small></span>
+        <span class="setup-copy"><strong>My Orca agents can talk to the bots</strong><small>Adds Bot Team for Orca's tools to <span id="agent-names">Claude, Codex, opencode and Antigravity</span><span id="agent-host"></span>, so an agent can message a bot or read its replies.</small></span>
         <input id="link-agents" class="switch" type="checkbox" role="switch" />
       </label>
       <label class="setup-option" id="import-tools-label" hidden>
@@ -78,15 +77,15 @@
         <h3>Permissions</h3>
         <p id="permissions-note" class="settings-note"></p>
         <label class="setup-option">
-          <span class="setup-copy"><strong>Bots can use my tools</strong><small>Claude bots get your Claude connectors, MCP servers, skills and instructions. Codex bots always use your Codex setup.</small></span>
+          <span class="setup-copy"><strong>Bots can use my tools</strong><small id="pref-share-tools-copy"></small></span>
           <input id="pref-share-tools" class="switch" type="checkbox" role="switch" />
         </label>
         <label class="setup-option" id="pref-link-agents-label">
-          <span class="setup-copy"><strong>My Orca agents can talk to the bots</strong><small>Adds Bot Team for Orca's tools to <span id="pref-agent-names">Claude, Codex, opencode and Antigravity</span>, so an agent can message a bot or read its replies.</small></span>
+          <span class="setup-copy"><strong>My Orca agents can talk to the bots</strong><small>Adds Bot Team for Orca's tools to <span id="pref-agent-names">Claude, Codex, opencode and Antigravity</span><span id="pref-agent-host"></span>, so an agent can message a bot or read its replies.</small></span>
           <input id="pref-link-agents" class="switch" type="checkbox" role="switch" />
         </label>
         <div class="setup-option">
-          <span class="setup-copy"><strong>Bring in tools from my AI apps</strong><small>Adds tools from apps such as Cursor and Claude Desktop to OpenMausBot, switched off. Tokens saved in those apps are copied to OpenMausBot on this computer.</small></span>
+          <span class="setup-copy"><strong>Bring in tools from my AI apps</strong><small id="pref-import-copy">Adds tools from apps such as Cursor and Claude Desktop to OpenMausBot, switched off. Tokens saved in those apps are copied to OpenMausBot on this computer.</small></span>
           <button id="pref-import" type="button">Bring in</button>
         </div>
       </div>
@@ -113,6 +112,7 @@
       </div>
       <p id="settings-message" role="status" aria-live="polite"></p>
     </section>
+    <div id="bot-menu" class="bot-menu" role="menu" hidden></div>
   </main>
   <script type="module" src="app.ts"></script>
 </body>

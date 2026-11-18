@@ -1,18 +1,35 @@
 import { assert, test } from 'orca/testing'
-import { httpDeps } from './omb-http.ts'
+import { httpDeps, HttpStatusError } from './omb-http.ts'
 
 test('HTTP requests are fixed loopback routes with bounded time and no redirects', async () => {
   const calls: unknown[] = []
   const deps = httpDeps(async (url, init) => {
     calls.push([url, init?.method, init?.body, init?.redirect, init?.signal instanceof AbortSignal])
+    if (init?.method === 'DELETE') return new Response(null, { status: 204 })
     return new Response('{"bots":[]}', { headers: { 'content-type': 'application/json' } })
   })
   assert.deepEqual(await deps.request(18799, '/api/bots?messages=0'), { bots: [] })
   await deps.request(18799, '/api/bots/fake', { sidebarHidden: false })
+  await deps.request(18799, '/api/sidebar-sections', { name: 'Core', botIds: ['fake'] }, 'POST')
+  assert.deepEqual(await deps.request(18799, '/api/bots/fake', undefined, 'DELETE'), {})
   assert.deepEqual(calls, [
     ['http://127.0.0.1:18799/api/bots?messages=0', 'GET', undefined, 'error', true],
-    ['http://127.0.0.1:18799/api/bots/fake', 'PATCH', '{"sidebarHidden":false}', 'error', true]
+    ['http://127.0.0.1:18799/api/bots/fake', 'PATCH', '{"sidebarHidden":false}', 'error', true],
+    [
+      'http://127.0.0.1:18799/api/sidebar-sections',
+      'POST',
+      '{"name":"Core","botIds":["fake"]}',
+      'error',
+      true
+    ],
+    ['http://127.0.0.1:18799/api/bots/fake', 'DELETE', undefined, 'error', true]
   ])
+
+  const failing = httpDeps(async () => new Response('{"error":"conflict"}', { status: 409 }))
+  await assert.rejects(
+    failing.request(18799, '/api/sidebar-sections', { name: 'Core', botIds: ['fake'] }, 'POST'),
+    (error: unknown) => error instanceof HttpStatusError && error.status === 409
+  )
 })
 
 test('avatars accept only stored raster paths and keep data URLs below 64 KB', async () => {

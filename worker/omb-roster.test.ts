@@ -1,7 +1,11 @@
 import { assert, test } from 'orca/testing'
-import { listBots, addMausBot, rosterBusy } from './omb-roster.ts'
+import { listBots, addMausBot, actOnBot, rosterBusy } from './omb-roster.ts'
+import { HttpStatusError } from './omb-http.ts'
+import { groupRoster } from '../shared/roster.ts'
 import type { HttpDeps } from './omb-http.ts'
+
 const id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+const secondId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
 const bot = {
   id,
   name: 'Helper',
@@ -10,12 +14,13 @@ const bot = {
   busy: false,
   modelSelection: { instanceId: 'codex', model: 'gpt-6' }
 }
-function fake(bots: unknown[]) {
+
+function fake(bots: unknown[], sections?: string[]) {
   const calls: unknown[] = []
   const deps: HttpDeps = {
-    request: async (port, path, patch) => {
-      calls.push({ port, path, patch })
-      return { bots }
+    request: async (port, path, patch, method) => {
+      calls.push({ port, path, patch, ...(method ? { method } : {}) })
+      return { bots, ...(sections ? { sections } : {}) }
     },
     avatar: async () => 'data:image/png;base64,ZmFrZQ=='
   }
@@ -35,28 +40,46 @@ test('roster uses explicit visibility, not missing activity or main badge', asyn
     result.filter((item) => !item.addable).map((item) => item.name),
     ['Visible main', 'Helper']
   )
+  assert.equal(result.find((item) => item.name === 'Visible main')?.defaultBot, true)
   assert.equal(result.find((item) => item.name === 'MausBot')?.addable, true)
 })
 
-test('raw fleet route carries thread, activity states and bounded avatar data', async () => {
-  const { deps, calls } = fake([
-    {
-      ...bot,
-      busy: true,
-      waitingForTeammates: true,
-      threadId: 'thread',
-      avatarUrl: '/api/attachments/fake.png'
-    },
-    { ...bot, activity: 'waiting-on-you' }
-  ])
+test('raw fleet route carries thread, activity states, pin/section fields and bounded avatar data', async () => {
+  const { deps, calls } = fake(
+    [
+      {
+        ...bot,
+        busy: true,
+        waitingForTeammates: true,
+        threadId: 'thread',
+        pinned: true,
+        section: ' Ops ',
+        avatarUrl: '/api/attachments/fake.png'
+      },
+      { ...bot, id: secondId, activity: 'waiting-on-you' }
+    ],
+    ['Ops', 'EmptyGroup']
+  )
   const result = await listBots({ port: 18799 }, deps)
   assert.deepEqual(calls, [{ port: 18799, path: '/api/bots?messages=0', patch: undefined }])
   assert.equal(result[0].state, 'working')
   assert.equal(result[1].state, 'waiting')
   assert.equal(result[0].activeTaskId, 'thread')
+  assert.equal(result[0].pinned, true)
+  assert.equal(result[0].section, 'Ops')
+  assert.deepEqual(result[0].knownSections, ['Ops', 'EmptyGroup'])
   assert.match(result[0].avatar!, /^data:image\/png/)
   assert.equal(result[0].model, 'codex/gpt-6')
   assert.equal(result[0].modelLabel, 'GPT-6')
+  const grouped = groupRoster(result)
+  assert.deepEqual(grouped.sections, ['Ops', 'EmptyGroup'])
+  assert.deepEqual(
+    grouped.groups.map((group) => [group.title, group.bots.length]),
+    [
+      ['Pinned', 1],
+      ['Bots', 1]
+    ]
+  )
   deps.avatar = async () => {
     throw new Error('missing')
   }
@@ -74,6 +97,70 @@ test('Add MausBot rechecks hidden default and sends the exact UI welcome patch o
   const visible = fake([bot])
   await assert.rejects(addMausBot({ port: 18799, botId: id }, visible.deps), /no longer hidden/)
   assert.equal(visible.calls.length, 1)
+})
+
+test('actOnBot pins, renames, groups, ungroups, deletes normal bots and hides default MausBot', async () => {
+  const normal = fake([bot])
+  await actOnBot({ port: 18799, botId: id, action: 'pin', pinned: true }, normal.deps)
+  assert.deepEqual(normal.calls[1], {
+    port: 18799,
+    path: `/api/bots/${id}`,
+    patch: { pinned: true }
+  })
+
+  await actOnBot({ port: 18799, botId: id, action: 'rename', name: '  Scout  ' }, normal.deps)
+  assert.deepEqual(normal.calls[3], {
+    port: 18799,
+    path: `/api/bots/${id}`,
+    patch: { name: 'Scout' }
+  })
+
+  await actOnBot({ port: 18799, botId: id, action: 'group', section: ' Research ' }, normal.deps)
+  assert.deepEqual(normal.calls[5], {
+    port: 18799,
+    path: '/api/sidebar-sections',
+    patch: { name: 'Research', botIds: [id] },
+    method: 'POST'
+  })
+
+  await actOnBot({ port: 18799, botId: id, action: 'group', section: null }, normal.deps)
+  assert.deepEqual(normal.calls[7], {
+    port: 18799,
+    path: `/api/bots/${id}`,
+    patch: { section: null }
+  })
+
+  await actOnBot({ port: 18799, botId: id, action: 'delete' }, normal.deps)
+  assert.deepEqual(normal.calls[9], {
+    port: 18799,
+    path: `/api/bots/${id}`,
+    patch: undefined,
+    method: 'DELETE'
+  })
+
+  const defaultMaus = fake([{ ...bot, defaultBot: {}, sidebarHidden: false }])
+  await actOnBot({ port: 18799, botId: id, action: 'delete' }, defaultMaus.deps)
+  assert.deepEqual(defaultMaus.calls[1], {
+    port: 18799,
+    path: `/api/bots/${id}`,
+    patch: { sidebarHidden: true }
+  })
+
+  const conflict = fake([bot])
+  const baseRequest = conflict.deps.request
+  conflict.deps.request = async (port, path, patch, method) => {
+    if (method === 'POST') throw new HttpStatusError(409)
+    return baseRequest(port, path, patch, method)
+  }
+  await assert.rejects(
+    actOnBot({ port: 18799, botId: id, action: 'group', section: 'Exec' }, conflict.deps),
+    /already has a Chief of Staff/
+  )
+
+  await assert.rejects(
+    actOnBot({ port: 18799, botId: id, action: 'rename', name: '   ' }, normal.deps),
+    /between 1 and 80/
+  )
 })
 
 test('malformed and failed roster responses show a plain error', async () => {
@@ -99,7 +186,11 @@ test('model labels prefer supplied labels, remove instance prefix and only capit
 })
 
 test('restart safety includes hidden bots and fails closed on roster errors', async () => {
-  for (const activity of [{ busy: true }, { waitingForTeammates: true }, { activity: 'waiting-on-you' }]) {
+  for (const activity of [
+    { busy: true },
+    { waitingForTeammates: true },
+    { activity: 'waiting-on-you' }
+  ]) {
     assert.equal(await rosterBusy(18799, fake([{ ...bot, hidden: true, ...activity }]).deps), true)
   }
   assert.equal(await rosterBusy(18799, fake([bot]).deps), false)
@@ -108,4 +199,53 @@ test('restart safety includes hidden bots and fails closed on roster errors', as
     throw new Error('offline')
   }
   assert.equal(await rosterBusy(18799, deps), true)
+})
+
+test('bot actions skip avatar downloads and group conflicts explain busy and Chief of Staff cases', async () => {
+  const { deps } = fake([{ ...bot, avatarUrl: '/api/attachments/avatar.png' }])
+  deps.avatar = async () => {
+    throw new Error('Avatar must never be requested by actions')
+  }
+  let avatars = 0
+  deps.avatar = async () => {
+    avatars++
+    return undefined
+  }
+  await actOnBot({ port: 18799, botId: id, action: 'pin', pinned: true }, deps)
+  assert.equal(avatars, 0)
+  const request = deps.request
+  deps.request = async (...args) => {
+    if (args[3] === 'POST') throw new HttpStatusError(409)
+    return request(...args)
+  }
+  await assert.rejects(
+    actOnBot({ port: 18799, botId: id, action: 'group', section: 'Ops' }, deps),
+    /busy.*Chief of Staff/
+  )
+})
+
+test('custom Pinned and Bots sections have distinct headings without losing membership order', () => {
+  const common = {
+    id,
+    name: 'Bot',
+    title: '',
+    main: false,
+    state: 'idle' as const,
+    unread: false,
+    modelLabel: ''
+  }
+  const grouped = groupRoster([
+    { ...common, id: '1', pinned: true },
+    { ...common, id: '2', section: 'Pinned' },
+    { ...common, id: '3', section: 'Bots' },
+    { ...common, id: '4' }
+  ])
+  assert.deepEqual(
+    grouped.groups.map((group) => group.title),
+    ['Pinned (automatic)', 'Pinned', 'Bots', 'Bots (automatic)']
+  )
+  assert.deepEqual(
+    grouped.groups.flatMap((group) => group.bots.map((bot) => bot.id)),
+    ['1', '2', '3', '4']
+  )
 })

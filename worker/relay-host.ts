@@ -1,14 +1,27 @@
 // Runs on a paired Orca server, inside a terminal the client opened there. It hosts the same
 // worker the plugin runs locally and answers the client's requests over the terminal.
+import { randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import * as fs from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import type { OrcaWorkerApi } from 'orca/worker'
 import { defaultWorkerDeps, register } from './worker.ts'
 import type { WorkerDeps } from './worker.ts'
-import { defaultServerDeps, ensureServer } from './omb-server.ts'
+import {
+  defaultServerDeps,
+  ensureInstalled,
+  ensureServer,
+  isPluginServer,
+  stopServer,
+  withServerLock
+} from './omb-server.ts'
 import type { ServerDeps } from './omb-server.ts'
+import { defaultCliDeps } from './omb-cli.ts'
+import type { CliDeps } from './omb-cli.ts'
+import type { PageStore } from './omb-open.ts'
+import { openChat } from './omb-open.ts'
+import { TESTED_OPENMAUSBOT_VERSION } from '../shared/omb-version.ts'
 import { NEXT, PING, RELAYED, WINDOW, frames, lineReader, unpack } from './relay-frames.ts'
 
 type Store = { storage: Record<string, unknown>; settings: Record<string, unknown> }
@@ -20,26 +33,36 @@ export type RelayIo = {
 }
 
 /**
- * The server's own Orca (and its copy of the plugin, if any) owns OpenMausBot's setup. A paired
- * client only finds or starts it and chats: it never relinks agents, restarts the server for a
- * Claude setup, re-signs the dashboard, imports tools or stops it.
+ * Runs the same worker capabilities on the paired server, using detached launcher processes
+ * so OpenMausBot survives terminal idle disconnects and `open-url` so the Bot Dashboard opens
+ * inside the paired client desktop's Orca browser.
  */
 export function pairedClientDeps(
   base: WorkerDeps = defaultWorkerDeps(),
-  server: ServerDeps = { ...defaultServerDeps(), spawn: orphanSpawn }
+  server: ServerDeps = { ...defaultServerDeps(), spawn: orphanSpawn },
+  cli?: CliDeps,
+  pageStore?: PageStore
 ): WorkerDeps {
   return {
     ...base,
-    ensureServer: (share) => ensureServer(server, share),
-    findTools: undefined,
-    importTools: undefined,
-    findAgents: undefined,
-    syncAgentLinks: undefined,
-    claudeSetupStatus: undefined,
-    repairChat: undefined,
-    prepareServer: undefined,
-    stopServer: async () => ({ stopped: false, message: 'Stop OpenMausBot in Orca on this server.' }),
-    openChat: async () => ({ message: 'Open the Bot Dashboard in Orca on this server.' })
+    withLifecycle: (operation) => withServerLock(server, operation),
+    ensureServer: (share, allowInstall) => ensureServer(server, share, allowInstall),
+    prepareServer: (allowInstall) =>
+      ensureInstalled(TESTED_OPENMAUSBOT_VERSION, server, allowInstall),
+    stopServer: () => stopServer(server),
+    openChat: async (input) => {
+      const resolvedCli = cli ?? defaultCliDeps()
+      return openChat(
+        {
+          ...input,
+          clientBrowser: true,
+          pageStore,
+          startedByPlugin: input.startedByPlugin && (await isPluginServer(input.port, server))
+        },
+        resolvedCli
+      )
+    },
+    repairChat: undefined
   }
 }
 
@@ -80,7 +103,8 @@ export function orphanSpawn(
 
 export function createRelay(
   io: RelayIo,
-  host: (api: OrcaWorkerApi) => void = (api) => register(api, pairedClientDeps())
+  host: (api: OrcaWorkerApi, pageStore: PageStore) => void = (api, pages) =>
+    register(api, pairedClientDeps(undefined, undefined, undefined, pages))
 ): (chunk: string) => void {
   const handlers = new Map<string, (input: unknown, context: unknown) => unknown>()
   const store: Store = io.load() ?? { storage: {}, settings: {} }
@@ -91,24 +115,40 @@ export function createRelay(
     io.save(store)
     return Promise.resolve()
   }
-  const disposable = { dispose() {} }
-  host({
-    panels: {
-      handle: (name: string, handler: (input: unknown, context: unknown) => unknown) => {
-        handlers.set(name, handler)
-        return disposable
-      }
+  const pages: PageStore = {
+    get: (origin) => {
+      const saved = store.storage.clientPages as Record<string, unknown> | undefined
+      return typeof saved?.[origin] === 'string' ? (saved[origin] as string) : undefined
     },
-    commands: { register: () => disposable },
-    storage: {
-      get: (key: string) => value(store.storage, key),
-      set: (key: string, next: unknown) => set(store.storage, key, next)
-    },
-    settings: {
-      get: (key: string) => value(store.settings, key),
-      set: (key: string, next: unknown) => set(store.settings, key, next)
+    set: (origin, pageId) => {
+      const saved = { ...((store.storage.clientPages as Record<string, string>) ?? {}) }
+      if (pageId) saved[origin] = pageId
+      else delete saved[origin]
+      store.storage.clientPages = saved
+      io.save(store)
     }
-  } as unknown as OrcaWorkerApi)
+  }
+  const disposable = { dispose() {} }
+  host(
+    {
+      panels: {
+        handle: (name: string, handler: (input: unknown, context: unknown) => unknown) => {
+          handlers.set(name, handler)
+          return disposable
+        }
+      },
+      commands: { register: () => disposable },
+      storage: {
+        get: (key: string) => value(store.storage, key),
+        set: (key: string, next: unknown) => set(store.storage, key, next)
+      },
+      settings: {
+        get: (key: string) => value(store.settings, key),
+        set: (key: string, next: unknown) => set(store.settings, key, next)
+      }
+    } as unknown as OrcaWorkerApi,
+    pages
+  )
 
   let reply: { lines: string[]; at: number } | undefined
   const flush = () => {
@@ -155,6 +195,30 @@ export function createRelay(
   })
 }
 
+/** Atomically replace relay state without exposing filesystem details to the panel. */
+export function saveRelayStore(
+  file: string,
+  store: Store,
+  injectedIo?: Pick<typeof fs, 'mkdirSync' | 'writeFileSync' | 'renameSync' | 'unlinkSync'>
+): void {
+  if (!injectedIo && process.env.NODE_TEST_CONTEXT)
+    throw new Error('Tests must inject relay storage dependencies')
+  const io = injectedIo ?? fs
+  const temporary = `${file}.${randomUUID()}.tmp`
+  try {
+    io.mkdirSync(dirname(file), { recursive: true })
+    io.writeFileSync(temporary, JSON.stringify(store), { mode: 0o600, flag: 'wx' })
+    io.renameSync(temporary, file)
+  } catch {
+    try {
+      io.unlinkSync(temporary)
+    } catch {
+      /* Not created or already renamed. */
+    }
+    throw new Error('Could not save paired-client state on this host.')
+  }
+}
+
 /** Called by the loader the client typed into this terminal, with any input it already read. */
 export function start(rest: string, hash: string): void {
   const folder = join(homedir(), '.orca-bot')
@@ -180,10 +244,7 @@ export function start(rest: string, hash: string): void {
         return undefined
       }
     },
-    save: (store) => {
-      fs.mkdirSync(folder, { recursive: true })
-      fs.writeFileSync(file, JSON.stringify(store), { mode: 0o600 })
-    }
+    save: (store) => saveRelayStore(file, store)
   })
   process.stdin.setEncoding('utf8')
   process.stdin.on('data', feed)

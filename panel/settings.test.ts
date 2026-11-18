@@ -34,7 +34,11 @@ function fake() {
   const requests: string[] = []
   const state = {
     updates: available,
-    install: async (): Promise<Updates> => ({ ...available, state: 'updated', message: 'Updated.' }),
+    install: async (): Promise<Updates> => ({
+      ...available,
+      state: 'updated',
+      message: 'Updated.'
+    }),
     preferences: async () => ({ shareTools: false, linkAgents: false, agents: { claude: true } })
   }
   const frame = {
@@ -111,7 +115,11 @@ test('host changes reload permissions, clear stale errors and discard replies fr
   assert.equal(element('pref-share-tools').disabled, true)
   assert.match(element('permissions-note').textContent, /Choose where/)
   settings.beginHostChange()
-  state.preferences = async () => ({ shareTools: true, linkAgents: false, agents: { claude: true } })
+  state.preferences = async () => ({
+    shareTools: true,
+    linkAgents: false,
+    agents: { claude: true }
+  })
   await settings.hostChanged()
   assert.equal(element('pref-share-tools').disabled, false)
   assert.equal(element('pref-share-tools').checked, true)
@@ -135,7 +143,7 @@ test('host changes reload permissions, clear stale errors and discard replies fr
   assert.equal(element('settings-message').textContent, 'Host selection failed.')
 })
 
-test('Settings offers installation only locally and shows remote installation guidance', async () => {
+test('Settings offers explicit installation approval locally and on the remote host', async () => {
   const { settings, element, requests, changed } = fake()
   settings.setStatus(
     { state: 'needs_install', message: 'Install with approval.', testedVersion: '0.1.169' },
@@ -155,6 +163,28 @@ test('Settings offers installation only locally and shows remote installation gu
     },
     'Server'
   )
-  assert.equal(element('settings-install-card').hidden, true)
-  assert.match(element('omb-status').textContent, /Install OpenMausBot in Orca on Server/)
+  assert.equal(element('settings-install-card').hidden, false)
+  assert.match(element('omb-status').textContent, /Installation on Server needs your approval/)
+  assert.match(element('settings-install-card-notice').textContent, /on Server/)
+  await element('settings-install-omb').click()
+  assert.equal(requests.filter((name) => name === 'server.install').length, 2)
+})
+
+test('switching hosts updates all permission copy immediately before any preferences reply', () => {
+  const { settings, element } = fake()
+  settings.setStatus(undefined, 'Old host')
+  settings.beginHostChange('New host')
+  assert.match(
+    element('pref-import-copy').textContent,
+    /apps such as Cursor and Claude Desktop on New host/
+  )
+  assert.match(element('pref-import-copy').textContent, /Tokens saved in those apps on New host/)
+  assert.match(
+    element('pref-share-tools-copy').textContent,
+    /Claude.*on New host.*Codex.*on New host/
+  )
+  assert.equal(element('pref-agent-host').textContent, ' on New host')
+  settings.beginHostChange()
+  assert.match(element('pref-import-copy').textContent, /on this computer/)
+  assert.equal(element('pref-agent-host').textContent, ' on this computer')
 })
