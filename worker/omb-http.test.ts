@@ -56,3 +56,26 @@ test('avatars accept only stored raster paths and keep data URLs below 64 KB', a
   type = 'text/html'
   assert.equal(await deps.avatar(18799, '/api/attachments/fake.png'), undefined)
 })
+
+test('HTTP failures expose only allowlisted public error codes and safe messages', async () => {
+  for (const body of [
+    { errorKey: 'serverError.department.duplicate', error: '/private/secret token' },
+    { code: 'serverError.department.renameBusy', message: 'SQL internals' },
+    { errorKey: 'unknown', error: 'password=secret' },
+    null
+  ]) {
+    const deps = httpDeps(async () => new Response(JSON.stringify(body), { status: 409 }))
+    await assert.rejects(deps.request(18799, '/api/sidebar-sections'), (error: unknown) => {
+      assert.ok(error instanceof HttpStatusError)
+      const failure = error as HttpStatusError
+      assert.equal(failure.status, 409)
+      assert.doesNotMatch(failure.message, /secret|SQL|password/)
+      if (body?.errorKey === 'serverError.department.duplicate') assert.match(failure.message, /already exists/)
+      else if (body?.code) assert.match(failure.message, /active work/)
+      else assert.equal(failure.code, undefined)
+      return true
+    })
+  }
+  const deps = httpDeps(async () => new Response('<html>proxy error</html>', { status: 500 }))
+  await assert.rejects(deps.request(18799, '/api/sidebar-sections'), /OpenMausBot request failed/)
+})

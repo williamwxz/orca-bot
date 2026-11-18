@@ -1,8 +1,21 @@
+const safeErrors: Record<string, string> = {
+  'serverError.department.duplicate': 'A group with that name already exists.',
+  'serverError.department.renameBusy': 'Stop this group’s active work before renaming it.',
+  'serverError.department.nameLength': 'Enter a group name between 1 and 60 characters.',
+  'serverError.department.nameRule': 'Group names must be 1 to 60 characters without control characters.',
+  'serverError.department.notFound': 'This group no longer exists. Refresh the roster.'
+}
+
 export class HttpStatusError extends Error {
   status: number
-  constructor(status: number) {
-    super('OpenMausBot request failed.')
+  code?: string
+  constructor(status: number, details?: unknown) {
+    const body = details && typeof details === 'object' ? details as Record<string, unknown> : {}
+    const key = body.errorKey ?? body.code
+    const code = typeof key === 'string' && Object.hasOwn(safeErrors, key) ? key : undefined
+    super(code ? safeErrors[code] : 'OpenMausBot request failed.')
     this.status = status
+    this.code = code
   }
 }
 
@@ -28,7 +41,11 @@ export function httpDeps(fetcher: typeof fetch): HttpDeps {
         redirect: 'error',
         signal: AbortSignal.timeout(10000)
       })
-      if (!response.ok) throw new HttpStatusError(response.status)
+      if (!response.ok) {
+        // Only recognized public error codes reach the UI; raw messages may contain internals.
+        const details: unknown = await response.json().catch(() => undefined)
+        throw new HttpStatusError(response.status, details)
+      }
       const text = await response.text()
       return text ? JSON.parse(text) : {}
     },

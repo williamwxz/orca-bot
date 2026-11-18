@@ -1217,6 +1217,7 @@ test('an in-flight send prevents idle restart even before the server reports bus
 test('bot actions validate payloads before dependencies and remove deleted bots from the worker roster', async () => {
   const botId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
   const actions: unknown[] = []
+  const renames: unknown[] = []
   const worker = await mountWorker(
     {
       default: (orca) =>
@@ -1234,6 +1235,7 @@ test('bot actions validate payloads before dependencies and remove deleted bots 
           readThread: async () => ({ messages: [], hasMore: false }),
           sendMessage: async () => ({ sendId: 'fake' }),
           addMausBot: async () => {},
+          renameGroup: async (input) => { renames.push(input) },
           actOnBot: async (input) => {
             actions.push(input)
           },
@@ -1257,6 +1259,12 @@ test('bot actions validate payloads before dependencies and remove deleted bots 
     await worker.request('status', {})
     await new Promise<void>((resolve) => setImmediate(resolve))
     await worker.request('bots.list', {})
+    for (const name of ['', 'bad\nname', 'x'.repeat(61)])
+      await assert.rejects(worker.request('groups.rename', { section: 'Ops', name }))
+    await worker.request('groups.rename', { section: 'Ops', name: ' Ops ' })
+    assert.equal(renames.length, 0)
+    await worker.request('groups.rename', { section: ' Ops ', name: ' New ', port: 9999 })
+    assert.deepEqual(renames, [{ port: 18799, section: 'Ops', name: 'New' }])
     for (const input of [
       { action: 'pin', pinned: 'true' },
       { action: 'rename', name: ' ' },

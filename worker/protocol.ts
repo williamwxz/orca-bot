@@ -1,7 +1,7 @@
 import type { FoundAgents } from '../shared/agents.ts'
 import type { Tool, ImportResult } from './import-tools.ts'
 import type { Thread } from '../shared/chat.ts'
-import type { Bot, BotAction } from '../shared/roster.ts'
+import type { Bot, BotAction, GroupRename } from '../shared/roster.ts'
 import type { Hosts } from './paired-host.ts'
 import type { Updates } from './updates.ts'
 
@@ -27,6 +27,7 @@ export type Requests = {
   'message.send': { input: { botId: string; text: string }; output: { sendId: string } }
   'chat.open': { input: { botId?: string }; output: { message: string } }
   'bots.addMausBot': { input: { botId: string }; output: { message: string } }
+  'groups.rename': { input: GroupRename; output: { ok: true } }
   'bots.act': { input: BotAction; output: { ok: true } }
   'bots.list': { input: Record<string, never>; output: Bot[] }
   status: { input: { retry?: boolean }; output: Status }

@@ -1,5 +1,5 @@
 import { assert, test } from 'orca/testing'
-import { listBots, addMausBot, actOnBot, rosterBusy } from './omb-roster.ts'
+import { listBots, addMausBot, actOnBot, rosterBusy, renameGroup } from './omb-roster.ts'
 import { HttpStatusError } from './omb-http.ts'
 import { groupRoster } from '../shared/roster.ts'
 import type { HttpDeps } from './omb-http.ts'
@@ -248,4 +248,42 @@ test('custom Pinned and Bots sections have distinct headings without losing memb
     grouped.groups.flatMap((group) => group.bots.map((bot) => bot.id)),
     ['1', '2', '3', '4']
   )
+})
+
+test('group rename trims, encodes its query, skips no-ops and explains refusals', async () => {
+  const { deps, calls } = fake([])
+  await renameGroup({ port: 18799, section: ' R&D / 产品 ', name: ' Operations ' }, deps)
+  assert.deepEqual(calls, [{ port: 18799, path: '/api/sidebar-sections?section=R%26D%20%2F%20%E4%BA%A7%E5%93%81', patch: { name: 'Operations' }, method: 'PATCH' }])
+  await renameGroup({ port: 18799, section: ' Ops ', name: 'Ops' }, deps)
+  assert.equal(calls.length, 1)
+  for (const invalid of ['', ' ', 'x'.repeat(61), 'bad\nname', null, 42]) {
+    for (const field of ['section', 'name']) {
+      await assert.rejects(renameGroup({ port: 18799, section: 'Ops', name: 'New', [field]: invalid } as any, deps))
+    }
+  }
+  assert.equal(calls.length, 1)
+  for (const [status, message] of [[404, /no longer exists/], [409, /refused.*busy/], [400, /valid group name/], [500, /Try again/]] as const) {
+    deps.request = async () => { throw new HttpStatusError(status) }
+    await assert.rejects(renameGroup({ port: 18799, section: 'Ops', name: 'New' }, deps), message)
+  }
+})
+
+test('Pinned is a real group name and public rename refusals stay distinct', async () => {
+  const { deps, calls } = fake([bot])
+  await actOnBot({ port: 18799, botId: id, action: 'group', section: 'Pinned' }, deps)
+  await renameGroup({ port: 18799, section: 'Pinned', name: 'Ops' }, deps)
+  await renameGroup({ port: 18799, section: 'Ops', name: 'Pinned' }, deps)
+  assert.equal(calls.length, 4)
+  for (const value of ['a\u0000b', 'a\u001fb', 'a\u007fb', '\tOps', 'Ops\n']) {
+    await assert.rejects(renameGroup({ port: 18799, section: 'Ops', name: value }, deps), /control characters/)
+    await assert.rejects(actOnBot({ port: 18799, botId: id, action: 'group', section: value }, deps), /control characters/)
+  }
+  for (const [status, errorKey, message] of [
+    [409, 'serverError.department.duplicate', /already exists/],
+    [409, 'serverError.department.renameBusy', /active work/],
+    [400, 'serverError.department.nameRule', /control characters/]
+  ] as const) {
+    deps.request = async () => { throw new HttpStatusError(status, { errorKey }) }
+    await assert.rejects(renameGroup({ port: 18799, section: 'Ops', name: 'New' }, deps), message)
+  }
 })

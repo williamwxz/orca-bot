@@ -16,6 +16,16 @@ export type Bot = {
   knownSections?: string[]
 }
 
+export type GroupRename = { section: string; name: string }
+
+export function validateGroupName(value: unknown): string {
+  const name = typeof value === 'string' ? value.trim() : ''
+  if (!name || name.length > 60) throw new Error('Enter a group name between 1 and 60 characters.')
+  if (typeof value === 'string' && /[\u0000-\u001f\u007f]/.test(value))
+    throw new Error('Group names cannot contain control characters.')
+  return name
+}
+
 export type BotAction =
   | { botId: string; action: 'pin'; pinned: boolean }
   | { botId: string; action: 'rename'; name: string }
