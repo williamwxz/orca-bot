@@ -56,9 +56,25 @@ Good to know:
 - If an OpenMausBot server is already running on port 8799, 18799 or 28799, Orca
   Bot uses it as it is and never changes or stops it.
 
+## Settings
+
+The sliders button next to **Jump to Bot Dashboard** opens Settings:
+
+- **Bots run on**: this computer or a paired Orca server (see below).
+- **Permissions**: the choices from the setup card, which you can change at any
+  time: whether bots can use your Claude tools, whether your Orca agents can
+  talk to the bots, and bringing in tools from your other AI apps. They apply to
+  bots on this computer; for a paired server, change them in Orca there.
+- **Updates**: the version you have and whether a newer one is out. By default
+  the panel shows a banner and asks before updating; **Install updates
+  automatically** updates by itself, once per new version. An update that asks
+  for new access always waits for your approval in Orca. A development folder
+  updates with git instead.
+- **OpenMausBot**: whether it is running, and a button to stop it.
+
 ## Use bots on a paired Orca server
 
-When this computer has a server saved in Orca's Remote Orca Servers, the panel
+When this computer has a server saved in Orca's Remote Orca Servers, Settings
 shows **Bots run on** with **This computer** and each paired server. Choose one
 and the panel switches at once; the choice is remembered. The first time, the
 panel asks before it starts anything, so OpenMausBot is not installed here when
@@ -96,10 +112,11 @@ the plugin does; OpenMausBot and the model providers have their own terms.
 | Messages, replies, files a bot reads | To the model provider of that bot (Anthropic, OpenAI or xAI), under your own account. This is how any bot works. |
 | Chat history, bot settings, memory | Stays on this computer in `~/.orca-bot/data`, readable only by your user account. |
 | Anything a tool or connector touches | To that service (for example Gmail or Linear) when a bot uses the tool. |
-| Bot Team for Orca itself | Sends nothing anywhere. It has no analytics, no account and no server. |
+| Bot Team for Orca itself | No analytics, no account and no server. It asks GitHub for the newest public release, at most every six hours while its panel is open; the request carries nothing about you. |
 
 The panel cannot reach the network at all. In local mode the worker talks to
-`127.0.0.1`, npm to download OpenMausBot, and Orca's CLI. With a paired server
+`127.0.0.1`, npm to download OpenMausBot, Orca's CLI, and GitHub's API to
+check for a newer release. With a paired server
 it uses Orca's CLI to type requests into its terminal there, through the
 already-authorized pairing. Message text then appears briefly in the arguments
 of that `orca` command on this computer.

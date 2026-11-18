@@ -1,10 +1,11 @@
 import { registerPairedHost } from './paired-host.ts'
+import { registerUpdates } from './updates.ts'
 import { linkError } from '../shared/agents.ts'
 import type { FoundAgents } from '../shared/agents.ts'
 import { defaultImportDeps, findTools, importTools, importMessage } from './import-tools.ts'
 import type { Tool, ImportResult } from './import-tools.ts'
 import { defaultLinkDeps, findAgents, syncAgentLinks } from './agent-link.ts'
-import type { SetupAnswer } from './protocol.ts'
+import type { Preferences, SetupAnswer } from './protocol.ts'
 import { readThread, sendMessage, newSendId } from './omb-chat.ts'
 import type { OrcaWorkerApi } from 'orca/worker'
 import { openChat, repairChat, validBotId } from './omb-open.ts'
@@ -176,6 +177,24 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
       answering = undefined
     })
     return answering
+  })
+  const preferences = async (): Promise<Preferences> => ({
+    shareTools: (await orca.settings.get('shareClaudeSetup')) === true,
+    linkAgents: (await orca.settings.get('linkAgents')) === true,
+    agents: deps.findAgents?.() ?? { claude: false, codex: false }
+  })
+  orca.panels.handle('prefs.get', preferences)
+  // The next status check applies a change, as it does for a change in Orca's Settings.
+  orca.panels.handle('prefs.set', async (input: Partial<SetupAnswer>) => {
+    if (!input || typeof input !== 'object') throw new Error('Choose a setting.')
+    for (const key of ['shareTools', 'linkAgents'] as const)
+      if (input[key] !== undefined && typeof input[key] !== 'boolean') throw new Error('Choose a setting.')
+    if (input.shareTools !== undefined) await orca.settings.set('shareClaudeSetup', input.shareTools)
+    if (input.linkAgents !== undefined) await orca.settings.set('linkAgents', input.linkAgents)
+    // A choice made here answers the setup card too.
+    await orca.storage.set('setupAnswered', true)
+    lastHealthCheck = -Infinity
+    return preferences()
   })
   orca.panels.handle('status', async (input: { retry?: boolean } = {}): Promise<Status> => {
     const answered = (await orca.storage.get('setupAnswered')) === true
@@ -442,5 +461,6 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
 }
 
 export default function activate(orca: OrcaWorkerApi): void {
-  registerPairedHost(orca, api => register(api))
+  registerPairedHost(orca, (api) => register(api))
+  registerUpdates(orca)
 }

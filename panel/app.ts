@@ -1,5 +1,6 @@
 import { createSetup, agentNames } from './setup.ts'
 import { createChatView } from './chat-view.ts'
+import { createSettings } from './settings.ts'
 import type { FrameApi } from './chat-view.ts'
 import type { Bot } from '../shared/roster.ts'
 import type { Hosts } from '../worker/paired-host.ts'
@@ -43,12 +44,10 @@ async function answerSetup(allow: boolean): Promise<void> {
   renderSetup()
   await refreshAfterChange()
 }
-const hostRow = element<HTMLElement>('host-row')
 const hostSelect = element<HTMLSelectElement>('host')
 let hosts: Hosts | undefined
 const hostChosen = () => !hosts || hosts.selected === 'local' || hosts.hosts.some(host => host.id === hosts!.selected)
 function renderHosts(): void {
-  hostRow.hidden = element('list-header').hidden || !hosts || (hosts.hosts.length === 0 && hosts.selected === 'local')
   if (!hosts) return
   const choices = [...(hostChosen() ? [] : [['', 'Choose…']]), ['local', 'This computer'], ...hosts.hosts.map(host => [host.id, host.name])]
   hostSelect.replaceChildren(...choices.map(([value, label]) => {
@@ -61,6 +60,7 @@ function renderHosts(): void {
 async function loadHosts(): Promise<void> {
   try { hosts = await frame.plugin.request('hosts.get', {}) } catch { /* Keep the last choice shown; status reports the problem. */ }
   renderHosts()
+  askForHost()
 }
 // Rises on every host change, so answers from the previous host are dropped, not shown.
 let hostGeneration = 0
@@ -91,6 +91,24 @@ async function chooseHost(id: string): Promise<void> {
   await refreshAfterChange()
 }
 hostSelect.addEventListener('change', () => void chooseHost(hostSelect.value))
+const remoteName = () => (hosts && hosts.selected !== 'local' ? hosts.hosts.find((host) => host.id === hosts!.selected)?.name : undefined)
+const settings = createSettings(frame, element, () => refreshAfterChange())
+let settingsShown = false
+function showSettings(show: boolean): void {
+  settingsShown = show
+  element('main-view').hidden = show
+  element('settings-view').hidden = !show
+  if (show) void settings.open()
+}
+element('open-settings').addEventListener('click', () => showSettings(true))
+element('settings-back').addEventListener('click', () => showSettings(false))
+// With servers paired and none chosen, the choice comes first, before anything starts.
+let askedHost = false
+function askForHost(): void {
+  if (askedHost || hostChosen() || !hosts?.hosts.length) return
+  askedHost = true
+  showSettings(true)
+}
 element('setup-allow').addEventListener('click', () => void answerSetup(true))
 element('setup-skip').addEventListener('click', () => void answerSetup(false))
 element('open-page').addEventListener('click', () => void open())
@@ -311,6 +329,7 @@ async function refreshNow(explicitRetry: boolean): Promise<void> {
     }
     const status = await frame.plugin.request('status', { retry: explicitRetry })
     if (!current()) return
+    settings.setStatus(status, remoteName())
     element<HTMLButtonElement>('open-page').disabled = opening || status.state !== 'running'
     message.textContent = status.message
     message.hidden = !status.message
@@ -348,6 +367,9 @@ document.addEventListener('visibilitychange', () => {
   if (!document.hidden) void start()
 })
 window.addEventListener('pagehide', () => clearTimeout(timer))
-const start = () => loadHosts().then(() => refresh())
+const start = () => {
+  void settings.checkUpdates()
+  return loadHosts().then(() => refresh())
+}
 window.addEventListener('pageshow', () => void start())
 void start()

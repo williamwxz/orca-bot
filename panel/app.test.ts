@@ -51,6 +51,7 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
   let reject!: (error: Error) => void
   let resolve!: () => void
   let host = 'local'
+  const prefs = { shareTools: true, linkAgents: false }
   let hostsBroken = false
   let holdNextBots = false
   let holdBots: ((bots: unknown) => void) | undefined
@@ -73,6 +74,17 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
         }
         if (name === 'bots.list' && host !== 'local')
           return [{ id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', name: 'Remote bot', state: 'idle', modelLabel: 'Claude' }]
+        if (name === 'updates.get')
+          return { version: '0.1.3', latest: '0.1.4', state: 'available', message: 'Version 0.1.4 is available.', autoUpdate: false }
+        if (name === 'updates.auto')
+          return { version: '0.1.3', latest: '0.1.4', state: 'available', message: 'Version 0.1.4 is available.', autoUpdate: (input as { on: boolean }).on }
+        if (name === 'updates.install')
+          return { version: '0.1.3', latest: '0.1.4', state: 'updated', message: 'Updated. Orca restarts Bot Team for Orca with the new version.', autoUpdate: true }
+        if (name === 'prefs.get') return { ...prefs, agents: { claude: true, codex: false } }
+        if (name === 'prefs.set') {
+          Object.assign(prefs, input)
+          return { ...prefs, agents: { claude: true, codex: false } }
+        }
         if (name === 'tools.find') return { tools: [{ name: 'fake', source: 'Cursor' }] }
         if (name === 'setup.get') return { answered, agents: { claude: true, codex: false } }
         if (name === 'status') return { state: 'running', message: '' }
@@ -150,13 +162,31 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
     get('bot-view').children[0].children[0].emit('click')
     assert.equal(get('list-header').hidden, false)
     assert.equal(get('setup').hidden, true)
-    // The picker lists this computer and each paired server, and hides with the bot list.
-    assert.equal(get('host-row').hidden, false)
+    // A new version shows a banner that asks before updating.
+    assert.equal(get('update-banner').hidden, false)
+    assert.equal(get('update-banner-text').textContent, 'Version 0.1.4 is available.')
+    // Settings replace the bot list, with the host picker, permissions and updates.
+    get('open-settings').emit('click'); await flush()
+    assert.deepEqual([get('main-view').hidden, get('settings-view').hidden], [true, false])
     assert.deepEqual(get('host').children.map((option) => [option.value, option.textContent]), [['local', 'This computer'], ['mini-1', 'Mac Mini']])
     assert.equal(get('host').value, 'local')
-    get('roster').children[0].children[0].emit('click'); await flush()
-    assert.equal(get('host-row').hidden, true)
-    get('bot-view').children[0].children[0].emit('click')
+    assert.deepEqual([get('pref-share-tools').checked, get('pref-link-agents').checked], [true, false])
+    assert.equal(get('pref-agent-names').textContent, 'Claude')
+    assert.equal(get('update-install').hidden, false)
+    assert.match(get('omb-status').textContent, /^Running/)
+    get('pref-link-agents').checked = true
+    get('pref-link-agents').emit('change'); await flush()
+    assert.deepEqual(calls.find((call) => call.name === 'prefs.set')?.input, { linkAgents: true })
+    assert.equal(get('pref-link-agents').checked, true)
+    get('update-auto').checked = true
+    get('update-auto').emit('change'); await flush()
+    assert.deepEqual(calls.find((call) => call.name === 'updates.auto')?.input, { on: true })
+    get('update-banner-install').emit('click'); await flush()
+    assert.ok(calls.some((call) => call.name === 'updates.install'))
+    assert.equal(get('update-banner').hidden, true)
+    assert.match(get('settings-message').textContent, /^Updated/)
+    get('settings-back').emit('click')
+    assert.deepEqual([get('main-view').hidden, get('settings-view').hidden], [false, true])
     const listed = calls.filter((call) => call.name === 'bots.list').length
     get('host').value = 'mini-1'
     get('host').emit('change'); await flush()

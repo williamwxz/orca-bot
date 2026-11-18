@@ -50,6 +50,13 @@
         "description": "Claude bots use the connectors, MCP servers, skills and instructions from your Claude setup. More tools means more tokens per message. Turn off to give Claude bots only what you add in OpenMausBot."
       },
       {
+        "key": "autoUpdate",
+        "type": "boolean",
+        "default": false,
+        "title": "Install updates automatically",
+        "description": "Bot Team for Orca checks GitHub for a newer release at most every six hours while its panel is open. Turn on to install it without asking. An update that asks for new access always waits for your approval."
+      },
+      {
         "key": "linkAgents",
         "type": "boolean",
         "default": false,
