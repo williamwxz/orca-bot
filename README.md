@@ -86,7 +86,7 @@ or agent links, and never restarts or stops OpenMausBot there.
 
 ## Security review
 
-Reviewed on 15 November 2026 against OpenMausBot 0.1.158. This describes what
+Reviewed on 17 November 2026 against OpenMausBot 0.1.169. This describes what
 the plugin does; OpenMausBot and the model providers have their own terms.
 
 ### Where your data goes
@@ -124,8 +124,9 @@ of that `orca` command on this computer.
   existing `~/.openmausbot`, so it cannot wake routines or connections you set
   up elsewhere.
 - **A pinned version.** It installs one tested OpenMausBot version (in
-  `shared/omb-version.ts`) from npm, without running install scripts. It never
-  updates by itself.
+  `shared/omb-version.ts`) from npm, without running install scripts.
+  OpenMausBot never updates on its own; when a plugin update changes the pinned
+  version, a server the plugin started switches to it once bots are idle.
 - **Secrets stay out of sight.** The browser sign-in link is used once and is
   never shown, logged or returned by the plugin. Your message text is passed to
   OpenMausBot privately, not on a command line that other programs can read.
@@ -163,9 +164,10 @@ of that `orca` command on this computer.
    yourself, because uninstalling the plugin does not remove it from any of
    these agents, including opencode and Antigravity. If opencode’s config cannot
    be safely updated, the plugin asks you to remove its entry by hand.
-8. **OpenMausBot checks for updates.** It asks GitHub for its own latest release
-   and npm for the latest Codex version. These requests reveal your IP address
-   to those services; we found nothing else in them.
+8. **OpenMausBot checks for updates.** It asks GitHub for its latest release,
+   model list and announcements, `models.dev` for provider models, and npm for
+   the latest Codex version. These requests reveal your IP address to those
+   services; we found nothing else in them.
 
 To remove everything: turn off **Let my Orca agents talk to the bots**, stop
 the server from the command palette, uninstall the

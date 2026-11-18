@@ -1,6 +1,6 @@
 import { assert, test } from 'orca/testing'
 import { readThread, sendMessage, newSendId } from './omb-chat.ts'
-import { CliFailure } from './omb-cli.ts'
+import { CliFailure, ombBinary, pinnedOmbBinary } from './omb-cli.ts'
 import type { CliDeps } from './omb-cli.ts'
 const botId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
 const sendId = 'fake-send-id-000001'
@@ -66,4 +66,16 @@ test('bad bot ids, message lengths and limits never execute', async () => {
   await assert.rejects(readThread({ port: 8799, botId, limit: 21 }, deps), /limit/)
   await assert.rejects(sendMessage({ port: 8799, botId, text: 'x'.repeat(16001), sendId }, deps), /16,000/)
   assert.equal(calls.length, 0)
+})
+test('ombBinary prefers pinned binary and falls back to newest installed version until updated', () => {
+  const { deps } = fake()
+  const pinned = pinnedOmbBinary(deps)
+  const present = new Set(['/fake/.orca-bot/openmausbot/0.1.158/node_modules/.bin/openmausbot'])
+  deps.exists = (path) => present.has(path)
+  deps.readdir = () => ['0.1.99', 'not-a-version', '0.1.158', '0.1.160']
+  assert.equal(ombBinary(deps), '/fake/.orca-bot/openmausbot/0.1.158/node_modules/.bin/openmausbot')
+  present.add(pinned)
+  assert.equal(ombBinary(deps), pinned)
+  present.clear()
+  assert.equal(ombBinary(deps), pinned)
 })

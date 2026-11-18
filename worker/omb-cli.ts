@@ -3,7 +3,7 @@ import * as fs from 'node:fs'
 import { homedir, userInfo } from 'node:os'
 import { childEnvironment } from './child-environment.ts'
 import { join } from 'node:path'
-import { TESTED_OPENMAUSBOT_VERSION } from '../shared/omb-version.ts'
+import { TESTED_OPENMAUSBOT_VERSION, compareVersions } from '../shared/omb-version.ts'
 
 export class CliFailure extends Error {
   code: number | string | undefined
@@ -23,6 +23,7 @@ export type CliDeps = {
     input?: string
   ) => Promise<string>
   exists: (path: string) => boolean
+  readdir?: (path: string) => string[]
   sleep: (ms: number) => Promise<void>
   userInfo: () => { username: string; shell: string | null }
   home: string
@@ -53,6 +54,7 @@ export function defaultCliDeps(): CliDeps {
         return false
       }
     },
+    readdir: (path) => fs.readdirSync(path),
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     userInfo,
     home: homedir(),
@@ -61,8 +63,26 @@ export function defaultCliDeps(): CliDeps {
   }
 }
 
-export function ombBinary(deps: CliDeps): string {
+export function pinnedOmbBinary(deps: Pick<CliDeps, 'home'>): string {
   return join(deps.home, '.orca-bot/openmausbot', TESTED_OPENMAUSBOT_VERSION, 'node_modules/.bin/openmausbot')
+}
+
+export function ombBinary(deps: CliDeps): string {
+  const pinned = pinnedOmbBinary(deps)
+  if (!deps.readdir || deps.exists(pinned)) return pinned
+  try {
+    const versions = deps
+      .readdir(join(deps.home, '.orca-bot/openmausbot'))
+      .filter((entry) => /^\d+(\.\d+)*$/.test(entry))
+      .sort((a, b) => compareVersions(b, a) ?? 0)
+    for (const version of versions) {
+      const candidate = join(deps.home, '.orca-bot/openmausbot', version, 'node_modules/.bin/openmausbot')
+      if (deps.exists(candidate)) return candidate
+    }
+  } catch {
+    /* Missing install root falls back to the pinned binary path. */
+  }
+  return pinned
 }
 
 export function cliOptions(deps: CliDeps, timeout = 10000) {
