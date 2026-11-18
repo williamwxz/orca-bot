@@ -13,14 +13,14 @@ type MenuEvent = {
 export function createBotMenu(
   menu: HTMLElement,
   act: (input: BotAction) => Promise<void>,
-  renameGroup: (input: GroupRename) => Promise<void>
+  renameGroup: (input: GroupRename) => Promise<HTMLElement | undefined>
 ) {
   let busy = false
   let disabled = false
   let trigger: HTMLElement | undefined
   let items: HTMLButtonElement[] = []
 
-  function close(restoreFocus = false): void {
+  function close(restoreFocus = true): void {
     if (restoreFocus) trigger?.focus()
     menu.hidden = true
     menu.replaceChildren()
@@ -88,21 +88,35 @@ export function createBotMenu(
     save.type = 'button'
     save.className = 'bot-menu-btn primary'
     save.textContent = 'Save'
-    const submit = () => {
+    const submit = async () => {
       const trimmed = input.value.trim()
       if (busy || disabled) return
       if (typeof bot === 'string') {
         try {
-          validateGroupName(trimmed)
+          validateGroupName(input.value)
         } catch (error) {
           note.textContent = (error as Error).message
           return
         }
         busy = true
-        close()
-        void renameGroup({ section: bot, name: trimmed }).finally(() => {
+        input.disabled = cancel.disabled = save.disabled = true
+        note.textContent = ''
+        try {
+          const heading = await renameGroup({ section: bot, name: trimmed })
+          if (menu.contains(input)) {
+            close(false)
+            ;(heading ?? trigger)?.focus()
+          }
+        } catch (error) {
+          if (menu.contains(input)) {
+            note.textContent = error instanceof Error ? error.message : 'Could not rename this group.'
+            input.disabled = false
+            input.focus()
+          }
+        } finally {
           busy = false
-        })
+          input.disabled = cancel.disabled = save.disabled = false
+        }
       } else {
         if (!trimmed || trimmed.length > 80) return
         void run({ botId: bot.id, action: 'rename', name: trimmed })
@@ -216,6 +230,10 @@ export function createBotMenu(
     from?: HTMLElement,
     isDisabled = false
   ): void {
+    if (busy && !menu.hidden) {
+      ;(rawEvent as MenuEvent | undefined)?.preventDefault?.()
+      return
+    }
     disabled = busy || isDisabled
     trigger = from
     items = []
@@ -292,7 +310,7 @@ export function createBotMenu(
     const event = rawEvent as MenuEvent | undefined
     event?.preventDefault?.()
     event?.stopPropagation?.()
-    if (section.trim().toLowerCase() === 'pinned') return
+    if (busy) return
     disabled = busy
     trigger = from
     items = []

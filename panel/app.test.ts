@@ -6,6 +6,7 @@ class Element {
   events = new Map<string, ((event?: any) => void)[]>()
   attributes = new Map<string, string>()
   style: Record<string, string> = {}
+  set innerHTML(value: string) { this.children = value ? [new Element()] : [] }
   textContent = ''
   hidden = false
   disabled = false
@@ -74,6 +75,8 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
   let grouped = false
   let pinned = true
   let defaultBot = false
+  let failRename: string | undefined
+  let failList = false
   let failAct = false
   let section = 'Research'
   let holdAct = false
@@ -104,6 +107,7 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
         }
         if (name === 'status' && hostsBroken)
           return { state: 'start_failed', message: 'Could not read Orca’s paired servers.' }
+        if (name === 'bots.list' && failList) throw new Error('Offline')
         if (name === 'bots.list' && holdNextBots) {
           holdNextBots = false
           return new Promise((done) => {
@@ -176,6 +180,7 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
           })
         if (name === 'chat.open') return { message: host === 'local' ? 'Opened.' : '' }
         if (name === 'groups.rename') {
+          if (failRename) throw new Error(failRename)
           section = (input as any).name
           if (holdAct) await new Promise<void>((resolve) => { finishAct = resolve })
           return { ok: true }
@@ -466,13 +471,14 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
     clickLabel(menu, 'Delete')
     const deletingRow = () => get('roster').children.find((child) => child.className.startsWith('bot-row'))!
     const spinner = () => deletingRow().children.at(-1)!.children.find((child) => child.className === 'deleting-spinner')
-    assert.equal(spinner()?.attributes.get('aria-label'), 'Deleting')
+    assert.equal(spinner()?.attributes.get('aria-hidden'), 'true')
+    assert.match(get('result').textContent, /^Deleting .*…$/)
     assert.equal(deletingRow().children[0].attributes.get('aria-busy'), 'true')
     holdNextBots = true
     finishAct!()
     holdAct = false
     await flush()
-    assert.ok(spinner())
+    assert.equal(get('roster').children.some((child) => child.className.startsWith('bot-row')), false)
     holdBots!([{ id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', name: 'Remote bot', state: 'idle', modelLabel: 'Codex', pinned: true, section: 'Research' }])
     await flush()
     assert.equal(spinner(), undefined)
@@ -485,6 +491,14 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
     assert.equal(spinner(), undefined)
     assert.equal(get('result').textContent, 'Delete failed')
     failAct = false
+    failList = true
+    openMenu()
+    clickLabel(menu, 'Delete')
+    clickLabel(menu, 'Delete')
+    await flush()
+    assert.equal(get('roster').children.some((child) => child.className.startsWith('bot-row')), false)
+    assert.match(get('refresh-note').textContent, /Could not refresh/)
+    failList = false
     assert.equal(
       (calls.filter((call) => call.name === 'bots.act').at(-1)?.input as any).action,
       'delete'
@@ -495,9 +509,10 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
     await flush()
     assert.equal(get('roster').children[0].textContent, 'Research')
     const groupHeading = () => get('roster').children.find((child) => child.className === 'roster-group-title')!
-    for (const event of ['contextmenu', 'ContextMenu', 'F10']) {
+    for (const event of ['contextmenu', 'ContextMenu', 'F10', 'Enter', ' ']) {
       const header = groupHeading()
       assert.ok(header.dataset.focus)
+      assert.equal(header.attributes.get('role'), 'button')
       if (event === 'contextmenu') header.emit(event)
       else header.emit('keydown', { key: event, shiftKey: true })
       assert.deepEqual(menu.children.map((child) => child.textContent), ['Rename'])
@@ -512,24 +527,47 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
     }
     groupHeading().emit('contextmenu')
     clickLabel(menu, 'Rename')
-    menu.children[1].value = ' PINNED '
+    menu.children[1].value = 'bad\nname'
     clickLabel(menu, 'Save')
     assert.equal(menu.hidden, false)
-    assert.match(menu.children[3].textContent, /reserved/)
+    assert.match(menu.children[3].textContent, /control characters/)
+    menu.children[1].value = 'Operations'
+    for (const message of ['A group with that name already exists.', 'This group no longer exists.']) {
+      failRename = message
+      clickLabel(menu, 'Save')
+      await flush()
+      assert.equal(menu.hidden, false)
+      assert.equal(menu.children[1].value, 'Operations')
+      assert.equal(menu.children[1].disabled, false)
+      assert.equal((doc as any).activeElement, menu.children[1])
+      assert.equal(menu.children[3].textContent, message)
+    }
+    failRename = undefined
     menu.children[1].value = ' Operations '
     const save = menu.children[2].children[1]
     holdAct = true
     save.emit('click')
     save.emit('click')
-    assert.equal(calls.filter((call) => call.name === 'groups.rename').length, 1)
+    assert.equal(calls.filter((call) => call.name === 'groups.rename').length, 3)
+    assert.equal(menu.hidden, false)
+    assert.equal(menu.children[1].disabled, true)
+    assert.equal(save.disabled, true)
     finishAct!()
     holdAct = false
     await flush()
     assert.equal(groupHeading().textContent, 'Operations')
+    assert.equal((doc as any).activeElement, groupHeading())
+    groupHeading().emit('contextmenu')
+    clickLabel(menu, 'Rename')
+    menu.children[1].value = 'Pinned'
+    menu.children[1].emit('keydown', { key: 'Enter' })
+    await flush()
+    assert.equal(groupHeading().textContent, 'Pinned')
+    assert.equal((doc as any).activeElement, groupHeading())
     groupHeading().emit('contextmenu')
     clickLabel(menu, 'Rename')
     menu.children[1].value = 'Research'
-    menu.children[1].emit('keydown', { key: 'Enter' })
+    clickLabel(menu, 'Save')
     await flush()
     assert.equal(groupHeading().textContent, 'Research')
 
@@ -542,10 +580,14 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
       null
     )
     openMenu()
+    failList = true
     clickLabel(menu, 'Hide from list')
     assert.ok(spinner())
+    assert.match(get('result').textContent, /^Hiding .*…$/)
     await flush()
-    assert.equal(spinner(), undefined)
+    assert.ok(get('roster').children.some((child) => child.className === 'add-mausbot'))
+    assert.equal(get('roster').children.some((child) => child.className.startsWith('bot-row')), false)
+    failList = false
     assert.equal(
       (calls.filter((call) => call.name === 'bots.act').at(-1)?.input as any).action,
       'delete'

@@ -1259,7 +1259,7 @@ test('bot actions validate payloads before dependencies and remove deleted bots 
     await worker.request('status', {})
     await new Promise<void>((resolve) => setImmediate(resolve))
     await worker.request('bots.list', {})
-    for (const name of ['', 'Pinned', 'x'.repeat(61)])
+    for (const name of ['', 'bad\nname', 'x'.repeat(61)])
       await assert.rejects(worker.request('groups.rename', { section: 'Ops', name }))
     await worker.request('groups.rename', { section: 'Ops', name: ' Ops ' })
     assert.equal(renames.length, 0)

@@ -335,6 +335,6 @@ test('group rename crosses terminal relay and preserves server refusal messages'
     status = 404
     await assert.rejects(link.request(host, 'groups.rename', { section: 'Ops', name: 'New' }), /no longer exists/)
     status = 409
-    await assert.rejects(link.request(host, 'groups.rename', { section: 'Ops', name: 'New' }), /already exists.*busy/)
+    await assert.rejects(link.request(host, 'groups.rename', { section: 'Ops', name: 'New' }), /refused.*busy/)
   } finally { await link.disconnect() }
 })

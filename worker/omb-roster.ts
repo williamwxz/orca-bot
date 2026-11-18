@@ -211,7 +211,8 @@ export async function renameGroup(
   } catch (error) {
     if (error instanceof HttpStatusError) {
       if (error.status === 404) throw new Error('This group no longer exists. Refresh the roster.')
-      if (error.status === 409) throw new Error('Could not rename this group. That name already exists, or the group is busy.')
+      if ((error.status === 409 || error.status === 400) && error.code) throw new Error(error.message)
+      if (error.status === 409) throw new Error('The server refused to rename this group. It may be busy; refresh and try again.')
       if (error.status === 400) throw new Error('Enter a valid group name between 1 and 60 characters.')
     }
     throw new Error('Could not rename this group. Try again.')

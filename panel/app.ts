@@ -166,10 +166,23 @@ const botMenu = createBotMenu(element('bot-menu'), async (input: BotAction) => {
   if (input.action === 'delete') deleting.add(input.botId)
   renderBots()
   try {
-    result.textContent = ''
+    const target = bots.find((bot) => bot.id === input.botId)
+    result.textContent = input.action === 'delete'
+      ? `${target?.defaultBot ? 'Hiding' : 'Deleting'} ${target?.name ?? 'bot'}…`
+      : ''
     await frame.plugin.request('bots.act', input)
-    if (input.action === 'delete' && selected === input.botId) selected = undefined
+    if (input.action === 'delete') {
+      if (selected === input.botId) selected = undefined
+      bots = bots.flatMap((bot) => {
+        if (bot.id !== input.botId) return [bot]
+        return bot.defaultBot ? [{ ...bot, addable: true }] : []
+      })
+      chatView.update(bots)
+      renderBots()
+    }
     await refreshAfterChange()
+    if (input.action === 'delete')
+      result.textContent = `${target?.defaultBot ? 'Hidden' : 'Deleted'} ${target?.name ?? 'bot'}.`
   } catch (error) {
     result.textContent = error instanceof Error ? error.message : 'Could not update this bot.'
   } finally {
@@ -178,13 +191,17 @@ const botMenu = createBotMenu(element('bot-menu'), async (input: BotAction) => {
     renderBots()
   }
 }, async (input) => {
-  try {
-    result.textContent = ''
-    await frame.plugin.request('groups.rename', input)
-    await refreshAfterChange()
-  } catch (error) {
-    result.textContent = error instanceof Error ? error.message : 'Could not rename this group.'
-  }
+  await frame.plugin.request('groups.rename', input)
+  bots = bots.map((bot) => ({
+    ...bot,
+    section: bot.section === input.section ? input.name : bot.section,
+    knownSections: bot.knownSections?.map((name) => name === input.section ? input.name : name)
+  }))
+  renderBots()
+  await refreshAfterChange()
+  return Array.from(roster.querySelectorAll<HTMLElement>('[data-focus]')).find(
+    (node) => node.dataset.focus === `group-${input.name}`
+  )
 })
 
 const chatView = createChatView(
@@ -331,8 +348,7 @@ function makeBotRow(bot: Bot, sections: string[]): HTMLElement {
   if (deleting.has(bot.id)) {
     const spinner = document.createElement('span')
     spinner.className = 'deleting-spinner'
-    spinner.setAttribute('role', 'status')
-    spinner.setAttribute('aria-label', 'Deleting')
+    spinner.setAttribute('aria-hidden', 'true')
     state.append(spinner)
   } else if (bot.unread && !readBots.has(bot.id)) {
     const unread = document.createElement('span')
@@ -371,14 +387,16 @@ function renderBots(): void {
     const heading = document.createElement('div')
     heading.className = 'roster-group-title'
     heading.textContent = group.title
-    if (group.title.toLowerCase() !== 'pinned' && grouped.sections.includes(group.title)) {
+    if (grouped.sections.includes(group.title)) {
       heading.tabIndex = 0
+      heading.setAttribute('role', 'button')
       heading.dataset.focus = `group-${group.title}`
       heading.setAttribute('aria-haspopup', 'menu')
       const openGroup = (event: Event) => botMenu.openGroup(group.title, event, heading)
       heading.addEventListener('contextmenu', openGroup)
       heading.addEventListener('keydown', (event) => {
-        if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) openGroup(event)
+        if (['Enter', ' ', 'ContextMenu'].includes(event.key) || (event.shiftKey && event.key === 'F10'))
+          openGroup(event)
       })
     }
     roster.append(heading)
