@@ -43,7 +43,7 @@ class Element {
     this.events.set(name, [...(this.events.get(name) ?? []), fn])
   }
   emit(name: string, event?: any) {
-    for (const fn of this.events.get(name) ?? []) fn(event)
+    for (const fn of this.events.get(name) ?? []) fn({ stopPropagation() {}, ...event })
   }
   focusCalls = 0
   focus() {
@@ -156,7 +156,6 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
           Object.assign(prefs, input)
           return { ...prefs, agents: { claude: true, codex: false } }
         }
-        if (name === 'tools.find') return { tools: [{ name: 'fake', source: 'Cursor' }] }
         if (name === 'setup.get') return { answered, agents: { claude: true, codex: false } }
         if (name === 'server.install') {
           installed = true
@@ -193,7 +192,7 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
             finishAct = () => resolve({ ok: true })
           })
         if (name === 'bots.act') return { ok: true }
-        if (name === 'tools.import') return { added: ['fake'], skipped: [] }
+        if (name === 'mcp.list') return { connectors: [], bots: [] }
         if (name === 'server.stop') return { stopped: true, message: 'Stopped.' }
         if (name === 'thread.read') return { messages: [], hasMore: false }
         if (name === 'setup.answer')
@@ -241,9 +240,7 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
     assert.equal(get('roster').children.length, 1)
     assert.equal(get('message').hidden, true)
     assert.equal(get('agent-names').textContent, 'Claude')
-    assert.equal(get('import-tools-label').hidden, false)
-    assert.match(get('import-tools-copy').textContent, /Adds 1 tool from Cursor/)
-    assert.equal(get('import-tools').checked, true)
+    assert.equal(calls.some(call => call.name === 'tools.import'), false)
     get('roster').children[0].children[0].emit('click')
     await flush()
     assert.equal(get('list-header').hidden, true)
@@ -332,19 +329,15 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
     assert.equal(calls.filter((call) => call.name === 'bots.list').length, listed + 1)
     assert.deepEqual(botNames(get('roster')), ['Remote bot'])
     assert.equal(get('pref-share-tools').disabled, false)
-    assert.equal(get('pref-import').disabled, false)
+
     assert.equal(get('permissions-note').textContent, '')
     assert.equal(get('stop-server').hidden, false)
-    assert.match(
-      get('pref-import-copy').textContent,
-      /apps such as Cursor and Claude Desktop on Mac Mini/
-    )
+
     assert.match(
       get('pref-share-tools-copy').textContent,
       /Claude.*on Mac Mini.*Codex.*on Mac Mini/
     )
     assert.equal(get('pref-agent-host').textContent, ' on Mac Mini')
-    assert.match(get('import-tools-copy').textContent, /on Mac Mini to OpenMausBot/)
     assert.match(get('share-tools-copy').textContent, /Claude.*on Mac Mini.*Codex.*on Mac Mini/)
     assert.equal(get('agent-host').textContent, ' on Mac Mini')
     get('pref-share-tools').checked = false
@@ -353,9 +346,8 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
     assert.deepEqual(calls.filter((call) => call.name === 'prefs.set').at(-1)?.input, {
       shareTools: false
     })
-    get('pref-import').emit('click')
-    await flush()
-    assert.ok(calls.some((call) => call.name === 'tools.import'))
+
+    assert.equal(calls.some((call) => call.name === 'tools.import'), false)
     get('open-page').emit('click')
     await flush()
     assert.equal(get('result').textContent, '')
@@ -433,6 +425,19 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
     assert.equal(menu.hidden, true)
     assert.equal(menuTrigger.focusCalls, beforeEscape + 1)
     assert.equal((doc as any).activeElement, menuTrigger)
+    openMenu()
+    clickLabel(menu, 'Connectors')
+    await flush()
+    assert.ok(menu.children.some(child => child.textContent === 'No MCP connectors are turned on yet.'))
+    clickLabel(menu, 'Manage connectors')
+    await flush()
+    assert.equal(menu.hidden, true)
+    assert.equal(get('main-view').hidden, true)
+    assert.equal(get('mcp-view').hidden, false)
+    assert.ok(get('mcp-groups').querySelectorAll().some(child => child.dataset.focus === 'tab-provider' && child.attributes.get('aria-selected') === 'true'))
+    get('mcp-back').emit('click')
+    get('settings-back').emit('click')
+    assert.equal(get('main-view').hidden, false)
     openMenu()
     clickLabel(menu, 'Rename')
     const beforeCancel = menuTrigger.focusCalls
@@ -666,6 +671,22 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
     assert.equal(get('pref-share-tools').disabled, false)
     assert.equal(get('permissions-note').textContent, '')
     assert.equal(get('settings-message').textContent, '')
+    // Chat capability management returns to the same conversation with Back.
+    get('settings-back').emit('click')
+    get('roster').children.find(c => c.className.startsWith('bot-row'))!.children[0].emit('click')
+    await flush()
+    const descendants = (node: Element): Element[] => [node, ...node.children.flatMap(descendants)]
+    descendants(get('bot-view')).find(c => c.className === 'capability-pill' && c.textContent.startsWith('Connectors'))!.emit('click')
+    await flush()
+    descendants(get('bot-view')).find(c => c.textContent === 'Manage connectors…')!.emit('click')
+    await flush()
+    assert.equal(get('mcp-view').hidden, false)
+    assert.equal(get('bot-view').hidden, true)
+    get('mcp-back').emit('click')
+    await flush()
+    assert.equal(get('main-view').hidden, false)
+    assert.equal(get('bot-view').hidden, false)
+    assert.equal(get('settings-view').hidden, true)
     // When Orca cannot list servers, Retry shows and asks Orca again before checking status.
     host = 'mini-1'
     hostsBroken = true
@@ -681,6 +702,25 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
     assert.equal(calls.filter((call) => call.name === 'hosts.get').length, asked + 1)
     assert.equal(get('retry').hidden, true)
     assert.deepEqual(botNames(get('roster')), ['Remote bot'])
+    get('open-settings').emit('click')
+    await flush()
+    get('mcp-manage').emit('click')
+    await flush()
+    win.emit('pageshow')
+    await flush()
+    await flush()
+    doc.emit('visibilitychange')
+    await flush()
+    await flush()
+    assert.equal(get('mcp-view').hidden, false)
+    assert.equal(get('settings-view').hidden, true)
+    assert.equal(get('main-view').hidden, true)
+    host = 'local'
+    win.emit('pageshow')
+    await flush()
+    await flush()
+    assert.equal(get('mcp-view').hidden, true)
+    assert.equal(get('settings-view').hidden, false)
   } finally {
     win.emit('pagehide')
     keys.forEach((key, i) => {

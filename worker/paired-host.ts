@@ -2,9 +2,8 @@ import type { OrcaWorkerApi } from 'orca/worker'
 import type { CliDeps } from './omb-cli.ts'
 import { defaultCliDeps } from './omb-cli.ts'
 import { TESTED_OPENMAUSBOT_VERSION } from '../shared/omb-version.ts'
-import { importMessage } from './import-tools.ts'
 import { callOrca } from './orca-cli.ts'
-import { RELAYED } from './relay-frames.ts'
+import { RELAYED, validateRelayInput } from './relay-frames.ts'
 import { createTerminalLink, defaultLinkDeps } from './terminal-link.ts'
 import type { LinkDeps } from './terminal-link.ts'
 
@@ -81,6 +80,7 @@ export function registerPairedHost(
   const current = () => (cached ??= read())
   const request = async (name: string, input: unknown, context: unknown): Promise<any> => {
     if (name === 'status' && (input as { retry?: boolean } | undefined)?.retry) cached = undefined
+    validateRelayInput(name, input)
     const state = await current()
     if (state.selected === LOCAL) return handlers.get(name)?.(input, context)
     const host = state.hosts.find((item) => item.id === state.selected)
@@ -122,8 +122,6 @@ export function registerPairedHost(
           if ((await current()).selected === LOCAL) return handler(args, context)
           if (id === 'orcabot.open') return request('chat.open', {}, context)
           if (id === 'orcabot.stopServer') return request('server.stop', {}, context)
-          if (id === 'orcabot.importTools')
-            return { message: importMessage(await request('tools.import', {}, context)) }
           throw new Error('Unsupported command on the bot host.')
         })
     }

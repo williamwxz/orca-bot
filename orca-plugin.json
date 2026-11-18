@@ -35,10 +35,6 @@
       {
         "id": "orcabot.stopServer",
         "title": "Bot Team for Orca: Stop the OpenMausBot server"
-      },
-      {
-        "id": "orcabot.importTools",
-        "title": "Bot Team for Orca: Bring in tools from my AI apps"
       }
     ],
     "settings": [
@@ -90,7 +86,7 @@
     },
     {
       "path": "images/screenshot-setup.png",
-      "alt": "Setup card with three choices: share tools, connect Orca agents, and import three tools from Cursor and Claude Desktop.",
+      "alt": "Setup card for choosing whether to share Claude tools and connect Orca agents.",
       "caption": "Choose what your bots can access."
     }
   ]

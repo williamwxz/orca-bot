@@ -61,7 +61,10 @@ test('raw fleet route carries thread, activity states, pin/section fields and bo
     ['Ops', 'EmptyGroup']
   )
   const result = await listBots({ port: 18799 }, deps)
-  assert.deepEqual(calls, [{ port: 18799, path: '/api/bots?messages=0', patch: undefined }])
+  assert.deepEqual(calls, [
+    { port: 18799, path: '/api/bots?messages=0', patch: undefined },
+    { port: 18799, path: '/api/mcp/servers', patch: undefined }
+  ])
   assert.equal(result[0].state, 'working')
   assert.equal(result[1].state, 'waiting')
   assert.equal(result[0].activeTaskId, 'thread')
@@ -181,7 +184,7 @@ test('model labels prefer supplied labels, remove instance prefix and only capit
       { ...bot, modelSelection: { instanceId: 'codex', ...selection }, modelLabel: label }
     ])
     assert.equal((await listBots({ port: 18799 }, deps))[0].modelLabel, expected)
-    assert.equal(calls.length, 1)
+    assert.equal(calls.length, 2)
   }
 })
 
@@ -286,4 +289,70 @@ test('Pinned is a real group name and public rename refusals stay distinct', asy
     deps.request = async () => { throw new HttpStatusError(status, { errorKey }) }
     await assert.rejects(renameGroup({ port: 18799, section: 'Ops', name: 'New' }, deps), message)
   }
+})
+
+test('model switches patch the fresh active thread and validate before any HTTP request', async () => {
+  const { deps, calls } = fake([{ ...bot, threadId: 'current-thread' }])
+  await actOnBot({ port: 123, botId: id, action: 'model', instanceId: 'claude.work', model: ' anthropic/sonnet ' }, deps)
+  assert.deepEqual(calls.at(-1), { port: 123, path: `/api/bots/${id}`, patch: { modelSelection: { instanceId: 'claude.work', model: 'anthropic/sonnet' }, requireAvailableModel: true, threadId: 'current-thread' }, method: 'PATCH' })
+  for (const input of [{ instanceId: 'bad/id', model: 'ok' }, { instanceId: 'ok', model: '\u0000bad' }, { instanceId: '', model: 'ok' }]) {
+    const before = calls.length
+    await assert.rejects(actOnBot({ port: 123, botId: id, action: 'model', ...input }, deps), /valid provider/)
+    assert.equal(calls.length, before)
+  }
+  const noThread = fake([bot])
+  await actOnBot({ port: 123, botId: id, action: 'model', instanceId: 'codex', model: 'gpt-6' }, noThread.deps)
+  assert.equal('threadId' in (noThread.calls.at(-1) as any).patch, false)
+})
+test('model switching respects fresh busy state and returns safe actionable server refusals', async () => {
+  const busy = fake([{ ...bot, busy: true }])
+  await assert.rejects(actOnBot({ port: 1, botId: id, action: 'model', instanceId: 'codex', model: 'gpt-6' }, busy.deps), /busy/)
+  assert.equal(busy.calls.length, 1)
+  for (const [status, code, pattern] of [[409, 'serverError.model.accountUpdating', /provider is updating/], [409, 'serverError.model.botBusy', /busy/], [409, undefined, /approval change/], [400, undefined, /Ask first/], [403, undefined, /Ask first/], [500, undefined, /Could not change/]] as const) {
+    const deps: HttpDeps = { avatar: async () => undefined, request: async (_port, path) => {
+      if (path.includes('?messages')) return { bots: [bot] }
+      throw new HttpStatusError(status, { errorKey: code, error: 'SECRET token /private/path' })
+    } }
+    await assert.rejects(actOnBot({ port: 1, botId: id, action: 'model', instanceId: 'codex', model: 'gpt-6' }, deps), pattern)
+  }
+})
+
+test('roster connector counts respect enabled, pinned, allowlist and offFor rules without discovery', async () => {
+  const paths: string[] = []
+  const bots = [
+    { ...bot },
+    { ...bot, id: secondId, mcpServers: ['shared', 'other-owned'] },
+    { ...bot, id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', mcpServers: [] }
+  ]
+  const servers = [
+    { name: 'shared', enabled: true },
+    { name: 'off', enabled: false },
+    { name: 'owned', enabled: true, bot: id },
+    { name: 'other-owned', enabled: true, bot: secondId },
+    { name: 'blocked', enabled: true, offFor: [id] }
+  ]
+  const deps: HttpDeps = {
+    avatar: async () => undefined,
+    request: async (_port, path) => {
+      paths.push(path)
+      return path === '/api/mcp/servers' ? { servers } : { bots }
+    }
+  }
+  assert.deepEqual(
+    (await listBots({ port: 1 }, deps)).map((b) => b.connectorCount),
+    [2, 2, 0]
+  )
+  assert.deepEqual(paths, ['/api/bots?messages=0', '/api/mcp/servers'])
+  paths.length = 0
+  assert.ok(
+    (await listBots({ port: 1, includeAvatars: false }, deps)).every(
+      (b) => b.connectorCount === undefined
+    )
+  )
+  assert.deepEqual(paths, ['/api/bots?messages=0'])
+  deps.request = async (_port, path) => {
+    if (path === '/api/mcp/servers') throw new Error('offline')
+    return { bots }
+  }
+  assert.ok((await listBots({ port: 1 }, deps)).every((b) => b.connectorCount === undefined))
 })

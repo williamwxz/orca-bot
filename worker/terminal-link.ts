@@ -194,7 +194,7 @@ export function createTerminalLink(deps: LinkDeps) {
         if (session && session.host.id !== host.id) await close(session)
         session ??= await open(host)
         const s = session
-        try { return await exchange(s, name, input) }
+        try { return await exchange(s, name, input, name === 'mcp.act' ? 300000 : 30000) }
         catch (error) {
           // A broken connection is replaced next time; an answer from the host is not.
           if (!(error instanceof HostAnswer)) await close(s)

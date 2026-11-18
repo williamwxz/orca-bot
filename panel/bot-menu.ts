@@ -1,3 +1,7 @@
+import { createCapabilityPicker } from './capability-picker.ts'
+import type { FrameApi } from './chat-view.ts'
+import type { CapabilityHooks } from './capability-picker.ts'
+import type { Connectors, ConnectorAction } from '../worker/mcp-connectors.ts'
 import { validateGroupName } from '../shared/roster.ts'
 import type { Bot, BotAction, GroupRename } from '../shared/roster.ts'
 
@@ -13,15 +17,25 @@ type MenuEvent = {
 export function createBotMenu(
   menu: HTMLElement,
   act: (input: BotAction) => Promise<void>,
-  renameGroup: (input: GroupRename) => Promise<HTMLElement | undefined>
+  renameGroup: (input: GroupRename) => Promise<HTMLElement | undefined>,
+  connectors?: {
+    list(): Promise<Connectors>
+    act(input: ConnectorAction): Promise<Connectors>
+    manage(botId: string, enabled: boolean): void
+  },
+  models?: { frame: FrameApi; hooks: CapabilityHooks }
 ) {
+  const modelPicker = models ? createCapabilityPicker(menu, models.frame, models.hooks) : undefined
+  let revision = 0
   let busy = false
   let disabled = false
   let trigger: HTMLElement | undefined
   let items: HTMLButtonElement[] = []
 
   function close(restoreFocus = false): void {
+    modelPicker?.close(false)
     if (restoreFocus) trigger?.focus()
+    ++revision
     menu.hidden = true
     menu.replaceChildren()
   }
@@ -64,6 +78,94 @@ export function createBotMenu(
       if (!disabled) onClick()
     })
     return btn
+  }
+
+  async function renderConnectors(bot: Bot, x: number, y: number) {
+    if (!connectors) return
+    const current = ++revision
+    let data: Connectors | undefined
+    let saving = false
+    const draw = (problem = '', focusName?: string) => {
+      if (current !== revision || menu.hidden) return
+      items = []
+      const title = document.createElement('div')
+      title.className = 'bot-menu-title'
+      title.textContent = `Connectors for ${bot.name}`
+      const children: HTMLElement[] = [title]
+      const rows = data?.connectors.filter((c) => c.enabled && !c.bot) ?? []
+      const note = document.createElement('p')
+      note.className = 'bot-menu-note'
+      note.setAttribute('role', 'status')
+      note.textContent =
+        problem ||
+        (!data ? 'Loading connectors…' : !rows.length ? 'No MCP connectors are turned on yet.' : '')
+      if (note.textContent) children.push(note)
+      let focus: HTMLButtonElement | undefined
+      for (const row of rows) {
+        const assigned = row.bots.includes(bot.id)
+        const control = menuItem(
+          `${assigned ? '✓ ' : ''}${row.rawName} · ${row.provider}`,
+          async () => {
+            if (saving) return
+            saving = true
+            draw('', row.name)
+            let problem = ''
+            try {
+              const next = await connectors.act({
+                action: 'assign',
+                name: row.name,
+                fingerprint: row.fingerprint,
+                bots: assigned ? row.bots.filter((id) => id !== bot.id) : [...row.bots, bot.id]
+              })
+              if (current !== revision) return
+              data = next
+            } catch (error) {
+              problem =
+                error instanceof Error ? error.message : 'Could not update connector access.'
+              try {
+                const next = await connectors.list()
+                if (current !== revision) return
+                data = next
+              } catch {
+                data = undefined
+              }
+            } finally {
+              saving = false
+              draw(problem, row.name)
+            }
+          }
+        )
+        control.setAttribute('role', 'menuitemcheckbox')
+        control.setAttribute('aria-checked', String(assigned))
+        control.setAttribute('aria-label', `${row.rawName} · ${row.provider} · ${row.name}`)
+        control.disabled = disabled || saving
+        if (row.name === focusName) focus = control
+        children.push(control)
+      }
+      const sep = document.createElement('div')
+      sep.className = 'bot-menu-sep'
+      const manage = menuItem('Manage connectors', () => {
+        close()
+        connectors.manage(bot.id, !!data?.connectors.some((c) => c.enabled))
+      })
+      children.push(sep, manage)
+      menu.replaceChildren(...children)
+      position(x, y)
+      if (focus && !focus.disabled) focus.focus()
+      else {
+        menu.tabIndex = -1
+        menu.focus()
+      }
+    }
+    draw()
+    try {
+      const next = await connectors.list()
+      if (current !== revision) return
+      data = next
+      draw('', data.connectors.find((c) => c.enabled && !c.bot)?.name)
+    } catch (error) {
+      draw(error instanceof Error ? error.message : 'Could not load connectors.')
+    }
   }
 
   function renderRename(bot: Bot | string): void {
@@ -109,7 +211,8 @@ export function createBotMenu(
           }
         } catch (error) {
           if (menu.contains(input)) {
-            note.textContent = error instanceof Error ? error.message : 'Could not rename this group.'
+            note.textContent =
+              error instanceof Error ? error.message : 'Could not rename this group.'
             input.disabled = false
             input.focus()
           }
@@ -234,6 +337,8 @@ export function createBotMenu(
       ;(rawEvent as MenuEvent | undefined)?.preventDefault?.()
       return
     }
+    modelPicker?.close(false)
+    ++revision
     disabled = busy || isDisabled
     trigger = from
     items = []
@@ -247,6 +352,17 @@ export function createBotMenu(
       bot.pinned ? 'Unpin' : 'Pin',
       () => void run({ botId: bot.id, action: 'pin', pinned: !bot.pinned })
     )
+    const modelItem = models
+      ? [
+          menuItem('Model', () => {
+            ++revision
+            void modelPicker!.open('model', bot, trigger ?? menu)
+          })
+        ]
+      : []
+    const connectorItems = connectors
+      ? [menuItem('Connectors', () => void renderConnectors(bot, x, y))]
+      : []
     const renameItem = menuItem('Rename', () => {
       renderRename(bot)
       position(x, y)
@@ -268,7 +384,15 @@ export function createBotMenu(
           },
           'danger'
         )
-    menu.replaceChildren(pinItem, renameItem, groupItem, sep, deleteItem)
+    menu.replaceChildren(
+      pinItem,
+      ...modelItem,
+      ...connectorItems,
+      renameItem,
+      groupItem,
+      sep,
+      deleteItem
+    )
     menu.hidden = false
     position(x, y)
     pinItem.focus()
@@ -311,6 +435,8 @@ export function createBotMenu(
     event?.preventDefault?.()
     event?.stopPropagation?.()
     if (busy) return
+    modelPicker?.close(false)
+    ++revision
     disabled = busy
     trigger = from
     items = []

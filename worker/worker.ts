@@ -1,11 +1,14 @@
+import { listModels } from './omb-models.ts'
+import type { Models } from '../shared/models.ts'
+import { createConnectors } from './mcp-connectors.ts'
+import type { ConnectorAction, Connectors } from './mcp-connectors.ts'
 import { registerPairedHost } from './paired-host.ts'
 import { registerUpdates } from './updates.ts'
 import { defaultHostPrefs } from './host-prefs.ts'
 import type { HostPrefs, StoredPrefs } from './host-prefs.ts'
 import { linkError } from '../shared/agents.ts'
 import type { FoundAgents } from '../shared/agents.ts'
-import { defaultImportDeps, findTools, importTools, importMessage } from './import-tools.ts'
-import type { Tool, ImportResult } from './import-tools.ts'
+import { defaultImportDeps } from './import-tools.ts'
 import { defaultLinkDeps, findAgents, syncAgentLinks } from './agent-link.ts'
 import type { Preferences, SetupAnswer } from './protocol.ts'
 import { readThread, sendMessage, newSendId } from './omb-chat.ts'
@@ -34,8 +37,16 @@ import type { ServerResult, StopResult } from './omb-server.ts'
 import { TESTED_OPENMAUSBOT_VERSION, compareVersions } from '../shared/omb-version.ts'
 
 export type WorkerDeps = {
-  findTools?: () => Promise<Tool[]>
-  importTools?: (port: number) => Promise<ImportResult>
+  listModels?: (port: number) => Promise<Models>
+  connectors?: {
+    list(port: number): Promise<Connectors>
+    act(port: number, input: ConnectorAction): Promise<Connectors>
+    reconcile(
+      port: number,
+      write?: (operation: () => Promise<void>) => Promise<void>
+    ): Promise<void>
+    reset?(): void
+  }
   findAgents?: () => FoundAgents
   syncAgentLinks?: (input: { enabled: boolean; owned: boolean; port: number }) => Promise<void>
   hostPrefs?: HostPrefs
@@ -68,8 +79,7 @@ export function defaultWorkerDeps(): WorkerDeps {
   const links = defaultLinkDeps()
   const imports = defaultImportDeps()
   return {
-    findTools: () => findTools(imports),
-    importTools: (port) => importTools(port, imports),
+    connectors: createConnectors(imports, defaultHostPrefs()),
     findAgents: () => findAgents(links),
     syncAgentLinks: async (input) =>
       syncAgentLinks(
@@ -104,6 +114,7 @@ export function defaultWorkerDeps(): WorkerDeps {
       ),
     addMausBot: (input) => addMausBot(input, http),
     renameGroup: (input) => renameGroup(input, http),
+    listModels: (port) => listModels(port, http),
     actOnBot: (input) => actOnBot(input, http),
     readThread: (input) => readThread(input, cli),
     sendMessage: (input) => sendMessage(input, cli),
@@ -134,7 +145,7 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
   let opening: Promise<OpenResult> | undefined
   let repairAt = -Infinity
   let repairFailedUntil = -Infinity
-  let seenPrefs: Required<StoredPrefs> | undefined
+  let seenPrefs: Record<keyof typeof prefKeys, boolean> | undefined
   let pendingPrefs: StoredPrefs = {}
 
   let prefsQueue: Promise<unknown> = Promise.resolve()
@@ -151,17 +162,17 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
     installConsent: ['storage', 'openmausbotInstallConsent'],
     stopped: ['storage', 'botServerStopped']
   } as const
-  const syncPrefs = (): Promise<Required<StoredPrefs>> =>
+  const syncPrefs = (): Promise<Record<keyof typeof prefKeys, boolean>> =>
     withPrefs(async () => {
-      const current = {} as Required<StoredPrefs>
+      const current = {} as Record<keyof typeof prefKeys, boolean>
       const prior = seenPrefs ?? ((await orca.storage.get('syncedHostPrefs')) as StoredPrefs | null)
-      for (const key of Object.keys(prefKeys) as (keyof StoredPrefs)[]) {
+      for (const key of Object.keys(prefKeys) as (keyof typeof prefKeys)[]) {
         const [bag, name] = prefKeys[key]
         current[key] = (await orca[bag].get(name)) === true
       }
       const shared = deps.hostPrefs?.read()
       const patch: StoredPrefs = {}
-      for (const key of Object.keys(prefKeys) as (keyof StoredPrefs)[]) {
+      for (const key of Object.keys(prefKeys) as (keyof typeof prefKeys)[]) {
         const [bag, name] = prefKeys[key]
         if (typeof prior?.[key] === 'boolean' && current[key] !== prior[key]) {
           patch[key] = current[key]
@@ -179,7 +190,7 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
       try {
         if (Object.keys(patch).length) deps.hostPrefs?.write(patch)
         if (
-          (Object.keys(prefKeys) as (keyof StoredPrefs)[]).some(
+          (Object.keys(prefKeys) as (keyof typeof prefKeys)[]).some(
             (key) => current[key] !== prior?.[key]
           )
         )
@@ -197,8 +208,8 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
       patch = { ...pendingPrefs, ...patch }
       deps.hostPrefs?.write(patch)
       pendingPrefs = {}
-      const current = { ...seenPrefs } as Required<StoredPrefs>
-      for (const key of Object.keys(prefKeys) as (keyof StoredPrefs)[]) {
+      const current = { ...seenPrefs } as Record<keyof typeof prefKeys, boolean>
+      for (const key of Object.keys(prefKeys) as (keyof typeof prefKeys)[]) {
         const [bag, name] = prefKeys[key]
         if (patch[key] !== undefined) await orca[bag].set(name, patch[key])
         current[key] = (await orca[bag].get(name)) === true
@@ -225,7 +236,7 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
   }
   let lastHealthCheck = -Infinity
   let checking: Promise<void> | undefined
-  let importing: Promise<ImportResult> | undefined
+  let updatingConnectors: Promise<unknown> | undefined
   let answering: Promise<{ answered: true }> | undefined
   let linkSetting: boolean | undefined
   let linkRetryAt = -Infinity
@@ -352,6 +363,7 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
           .then(async (healthy) => {
             if (status !== checked) return
             if (!healthy) {
+              deps.connectors?.reset?.()
               status = undefined
               startedByPlugin = false
               lastRoster = []
@@ -388,7 +400,7 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
               .filter(Boolean)
               .join(' ')
             if (
-              importing ||
+              updatingConnectors ||
               sends ||
               !setup.restart ||
               !deps.rosterBusy ||
@@ -425,6 +437,7 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
                   if (stillNeedsRestart && !stillNeedsRestart.restart) {
                     // Another worker already applied the change while we waited for the lock.
                     const server = await deps.ensureServer(restartShare, fresh.installConsent)
+                    deps.connectors?.reset?.()
                     startedByPlugin = server.startedByPlugin
                     status = {
                       state: 'running',
@@ -460,6 +473,7 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
                   }
                   lastRoster = []
                   const server = await deps.ensureServer(restartShare, fresh.installConsent)
+                  deps.connectors?.reset?.()
                   startedByPlugin = server.startedByPlugin
                   lastHealthCheck = -Infinity
                   status = {
@@ -495,6 +509,7 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
       await checking
     }
     if (input.retry && !pending) {
+      deps.connectors?.reset?.()
       lastRoster = []
       status = undefined
       stopped = false
@@ -508,6 +523,7 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
       pending = Promise.resolve()
         .then(() => deps.ensureServer(share, allowInstall))
         .then((server) => {
+          deps.connectors?.reset?.()
           startedByPlugin = server.startedByPlugin
           status = {
             state: 'running',
@@ -539,64 +555,23 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
       throw new Error('OpenMausBot is not running yet.')
     return status.port
   }
-  const bringTools = (): Promise<ImportResult> => {
-    if (importing) return importing
-    importing = Promise.resolve()
-      .then(async () => {
-        await syncPrefs()
-        await writePrefs({ stopped: false })
-        stopped = false
-        await checking
-        await pending
-        if (status?.state !== 'running') {
-          const prefs = await syncPrefs()
-          const share = prefs.setupAnswered && prefs.shareTools
-          pending = deps
-            .ensureServer(share, prefs.installConsent)
-            .then((server) => {
-              startedByPlugin = server.startedByPlugin
-              stopped = false
-              status = {
-                state: 'running',
-                message: versionMessage(server.version),
-                port: server.port,
-                version: server.version,
-                testedVersion: TESTED_OPENMAUSBOT_VERSION
-              }
-            })
-            .catch(() => {
-              throw new Error('Could not start OpenMausBot to import tools.')
-            })
-            .finally(() => {
-              pending = undefined
-            })
-          await pending
-        }
-        const port = runningPort()
-        if (!startedByPlugin || !deps.importTools)
-          throw new Error('Tools can only be imported into a server Bot Team for Orca started.')
-        try {
-          return await deps.importTools(port)
-        } catch {
-          throw new Error('Could not import or switch off tools. Check the Bot Dashboard.')
-        }
-      })
-      .finally(() => {
-        importing = undefined
-      })
-    return importing
-  }
-  orca.panels.handle('tools.find', async () => {
+  orca.panels.handle('mcp.list', async () => {
+    if (!deps.connectors) throw new Error('MCP connectors are unavailable.')
+    return lifecycle(() => deps.connectors!.list(runningPort()))
+  })
+  orca.panels.handle('mcp.act', async (input) => {
+    if (!deps.connectors || !startedByPlugin)
+      throw new Error('MCP connectors require a server started by this plugin.')
+    if (updatingConnectors) throw new Error('An MCP update is already in progress. Please retry.')
+    const port = runningPort()
+    const work = lifecycle(() => deps.connectors!.act(port, input))
+    updatingConnectors = work
     try {
-      return { tools: (await deps.findTools?.()) ?? [] }
-    } catch {
-      return { tools: [] }
+      return await work
+    } finally {
+      updatingConnectors = undefined
     }
   })
-  orca.panels.handle('tools.import', bringTools)
-  orca.commands.register('orcabot.importTools', async () => ({
-    message: importMessage(await bringTools())
-  }))
   const chat = (input: { botId?: string } = {}): Promise<OpenResult> => {
     const port = runningPort()
     if (
@@ -647,9 +622,31 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
     }
   })
   orca.panels.handle('chat.open', (input: { botId?: string }) => chat(input))
+  orca.panels.handle('models.list', async () => {
+    const port = runningPort()
+    if (!deps.listModels) throw new Error('Models are unavailable.')
+    return deps.listModels(port)
+  })
+  let reconciling: Promise<void> | undefined
   orca.panels.handle('bots.list', async () => {
     const port = runningPort()
     const bots = await deps.listBots({ port })
+    // A successful roster read confirms this server is reachable. Background maintenance
+    // is coalesced and detached so network failures and busy locks never block recovery.
+    if (
+      status?.state === 'running' &&
+      status.port === port &&
+      startedByPlugin &&
+      deps.connectors &&
+      !reconciling
+    ) {
+      reconciling = Promise.resolve()
+        .then(() => deps.connectors!.reconcile(port, lifecycle))
+        .catch(() => {})
+        .finally(() => {
+          reconciling = undefined
+        })
+    }
     if (status?.state === 'running' && status.port === port) lastRoster = bots
     return bots
   })
@@ -680,8 +677,8 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
   })
   orca.commands.register('orcabot.open', () => chat())
   const stop = async (): Promise<StopResult> => {
-    // Finish importing and switching tools off before stopping our server.
-    await importing?.catch(() => {})
+    // Finish connector updates before stopping our server.
+    await updatingConnectors?.catch(() => {})
     // Wait for our own startup so a stop command cannot leave it running afterwards.
     await pending
     const result = await lifecycle(async () => {

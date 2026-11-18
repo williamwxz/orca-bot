@@ -51,8 +51,6 @@ export function createSettings(frame: FrameApi, element: Elements, changed: () =
     element('pref-share-tools-copy').textContent =
       `Claude bots use the Claude connectors, MCP servers, skills and instructions on ${target}. Codex bots always use the Codex setup on ${target}.`
     element('pref-agent-host').textContent = ` on ${target}`
-    element('pref-import-copy').textContent =
-      `Adds tools from apps such as Cursor and Claude Desktop on ${target} to OpenMausBot, switched off. Tokens saved in those apps on ${target} are copied to OpenMausBot there.`
   }
 
   function renderServer(): void {
@@ -84,7 +82,6 @@ export function createSettings(frame: FrameApi, element: Elements, changed: () =
     element('permissions-note').textContent = problem
     renderImportCopy()
     for (const id of ['pref-share-tools', 'pref-link-agents']) input(id).disabled = !prefs
-    button('pref-import').disabled = !prefs
     if (!prefs) {
       input('pref-share-tools').checked = input('pref-link-agents').checked = false
       return
@@ -183,23 +180,6 @@ export function createSettings(frame: FrameApi, element: Elements, changed: () =
     'change',
     () => void setPreference('linkAgents', input('pref-link-agents').checked)
   )
-  button('pref-import').addEventListener('click', async () => {
-    button('pref-import').disabled = true
-    note('Bringing in tools\u2026')
-    try {
-      const result = await frame.plugin.request('tools.import', {})
-      const added = result.added.length
-      const failed = result.skipped.some((tool) => tool.reason === 'failed')
-      note(
-        (added
-          ? `Brought in ${added} ${added === 1 ? 'tool' : 'tools'}, switched off. Turn them on per bot in the Bot Dashboard.`
-          : 'No new tools to bring in.') + (failed ? ' Some could not be brought in.' : '')
-      )
-    } catch (error) {
-      note(failure(error, 'Could not bring in tools.'))
-    }
-    button('pref-import').disabled = false
-  })
   button('update-check').addEventListener('click', async () => {
     button('update-check').disabled = true
     element('update-status').textContent = 'Checking for updates\u2026'

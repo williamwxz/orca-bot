@@ -734,62 +734,6 @@ test('setup answers bypass a previous link backoff but failed answers do not cau
   }
 })
 
-test('tools handlers coalesce imports, refuse unowned servers, and sanitize failures', async () => {
-  for (const owned of [true, false]) {
-    let calls = 0
-    let finish!: (result: { added: string[]; skipped: [] }) => void
-    const result = new Promise<{ added: string[]; skipped: [] }>((resolve) => {
-      finish = resolve
-    })
-    const worker = await mountWorker(
-      {
-        default: (orca) =>
-          register(orca, {
-            checkHealth: async () => true,
-            now: () => 0,
-            ensureServer: async () => ({
-              port: 1234,
-              version: testedVersion,
-              started: owned,
-              startedByPlugin: owned
-            }),
-            stopServer: async () => ({ stopped: true, message: '' }),
-            openChat: async () => ({ message: '' }),
-            listBots: async () => [],
-            addMausBot: async () => {},
-            readThread: async () => ({ messages: [], hasMore: false }),
-            sendMessage: async () => ({ sendId: 'fake' }),
-            findTools: async () => [{ name: 'test', source: 'Cursor' }],
-            importTools: async () => {
-              calls++
-              return result
-            }
-          })
-      },
-      { host: mockHost() }
-    )
-    try {
-      assert.deepEqual(await worker.request('tools.find', {}), {
-        tools: [{ name: 'test', source: 'Cursor' }]
-      })
-      const first = worker.request('tools.import', {})
-      if (!owned) {
-        await assert.rejects(first, /server Bot Team for Orca started/)
-        assert.equal(calls, 0)
-        continue
-      }
-      const second = worker.request('tools.import', {})
-      await new Promise<void>((resolve) => setImmediate(resolve))
-      assert.equal(calls, 1)
-      finish({ added: ['test'], skipped: [] })
-      assert.deepEqual(await first, { added: ['test'], skipped: [] })
-      assert.deepEqual(await second, { added: ['test'], skipped: [] })
-    } finally {
-      await worker.deactivate()
-    }
-  }
-})
-
 const flushRepair = () => new Promise<void>((resolve) => setImmediate(resolve))
 
 test('background repair uses owned health checks, throttles 30s and silently backs off failures 60s', async () => {
@@ -1079,8 +1023,7 @@ test('polls and tool import cannot approve installation; the explicit action per
             permissions.push(allowInstall === true)
             if (!allowInstall) throw new ServerError('needs_install', 'Install OpenMausBot.')
             return { port: 8799, version: testedVersion, started: true, startedByPlugin: true }
-          },
-          importTools: async () => ({ added: [], skipped: [] })
+          }
         })
     },
     { host }
@@ -1089,13 +1032,12 @@ test('polls and tool import cannot approve installation; the explicit action per
     await worker.request('status', {})
     await new Promise<void>((resolve) => setImmediate(resolve))
     assert.equal(((await worker.request('status', {})) as any).state, 'needs_install')
-    await assert.rejects(worker.request('tools.import', {}))
-    assert.deepEqual(permissions, [false, false])
+    assert.deepEqual(permissions, [false])
     await worker.request('server.install', {})
     await worker.request('status', {})
     await new Promise<void>((resolve) => setImmediate(resolve))
     assert.equal(((await worker.request('status', {})) as any).state, 'running')
-    assert.deepEqual(permissions, [false, false, true])
+    assert.deepEqual(permissions, [false, true])
     await worker.request('server.stop', {})
     await worker.request('status', { retry: true })
     await new Promise<void>((resolve) => setImmediate(resolve))
@@ -1235,6 +1177,7 @@ test('bot actions validate payloads before dependencies and remove deleted bots 
           readThread: async () => ({ messages: [], hasMore: false }),
           sendMessage: async () => ({ sendId: 'fake' }),
           addMausBot: async () => {},
+          listModels: async port => { assert.equal(port, 18799); return { groups: [] } },
           renameGroup: async (input) => { renames.push(input) },
           actOnBot: async (input) => {
             actions.push(input)
@@ -1255,12 +1198,15 @@ test('bot actions validate payloads before dependencies and remove deleted bots 
     { host: mockHost() }
   )
   try {
+    await assert.rejects(worker.request('models.list', {}), /not running/)
     await assert.rejects(worker.request('bots.act', { botId, action: 'delete' }), /not running/)
     await worker.request('status', {})
     await new Promise<void>((resolve) => setImmediate(resolve))
     await worker.request('bots.list', {})
     for (const name of ['', 'bad\nname', 'x'.repeat(61)])
       await assert.rejects(worker.request('groups.rename', { section: 'Ops', name }))
+    assert.deepEqual(await worker.request('models.list', {}), { groups: [] })
+    await assert.rejects(worker.request('bots.act', { botId, action: 'model', instanceId: 'bad/id', model: 'x' }), /valid provider/)
     await worker.request('groups.rename', { section: 'Ops', name: ' Ops ' })
     assert.equal(renames.length, 0)
     await worker.request('groups.rename', { section: ' Ops ', name: ' New ', port: 9999 })
@@ -1279,6 +1225,8 @@ test('bot actions validate payloads before dependencies and remove deleted bots 
       /Invalid bot ID/
     )
     assert.equal(actions.length, 0)
+    await worker.request('bots.act', { botId, action: 'model', instanceId: 'claude', model: 'provider/sonnet', port: 9999 })
+    assert.deepEqual(actions.pop(), { botId, action: 'model', instanceId: 'claude', model: 'provider/sonnet', port: 18799 })
     await worker.request('bots.act', { botId, action: 'pin', pinned: true, port: 9999 })
     assert.deepEqual(actions, [{ botId, action: 'pin', pinned: true, port: 18799 }])
     await worker.request('bots.act', { botId, action: 'delete' })
@@ -1386,7 +1334,7 @@ test('restart uses persisted sync snapshot to distinguish native changes from re
   }
 })
 
-test('a stop persists across local and relay workers until explicit retry, installation, or import', async () => {
+test('a stop persists across local and relay workers until explicit retry or installation', async () => {
   let saved: any = { installConsent: true }
   let starts = 0
   const prefs = {
@@ -1403,8 +1351,7 @@ test('a stop persists across local and relay workers until explicit retry, insta
             ensureServer: async () => {
               starts++
               return { port: 8799, version: testedVersion, started: true, startedByPlugin: true }
-            },
-            importTools: async () => ({ added: [], skipped: [] })
+            }
           })
       },
       { host: mockHost() }
@@ -1420,7 +1367,7 @@ test('a stop persists across local and relay workers until explicit retry, insta
   assert.match(((await observer.request('status', {})) as any).message, /was stopped/)
   await observer.deactivate()
   await owner.deactivate()
-  for (const resume of ['retry', 'server.install', 'tools.import']) {
+  for (const resume of ['retry', 'server.install']) {
     const next = await mount()
     try {
       const before = starts
@@ -1598,5 +1545,114 @@ test('lock contention during idle restart preserves running status and rechecks 
     assert.equal(((await worker.request('status', {})) as any).version, testedVersion)
   } finally {
     await worker.deactivate()
+  }
+})
+
+test('only successful roster polls schedule best-effort connector reconciliation', async () => {
+  let reconciled = 0
+  const worker = await mountWorker(
+    {
+      default: (api) =>
+        register(api, {
+          ...setupDeps(),
+          connectors: {
+            list: async () => ({ connectors: [], bots: [] }),
+            act: async () => ({ connectors: [], bots: [] }),
+            reconcile: async () => {
+              reconciled++
+            }
+          }
+        })
+    },
+    { host: mockHost() }
+  )
+  try {
+    await worker.request('status', {})
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    await worker.request('status', {})
+    const afterStatus = reconciled
+    assert.equal(afterStatus, 0)
+    await worker.request('bots.list', {})
+    assert.equal(reconciled, afterStatus + 1)
+  } finally {
+    await worker.deactivate()
+  }
+})
+
+test('failed or hanging reconciliation never blocks roster, crash recovery, or explicit Retry', async () => {
+  for (const failure of ['throws', 'lock-busy', 'hangs']) {
+    let now = 0,
+      starts = 0,
+      resets = 0,
+      reconciles = 0
+    let healthy = true
+    let release: (() => void) | undefined
+    const worker = await mountWorker(
+      {
+        default: (api) =>
+          register(api, {
+            ...setupDeps(),
+            now: () => now,
+            checkHealth: async () => healthy,
+            hostPrefs: {
+              read: () => ({
+                connectors: {
+                  mail: { provider: 'Cursor', rawName: 'mail', fingerprint: 'a'.repeat(64) }
+                }
+              }),
+              write: (patch) => patch
+            },
+            ensureServer: async () => {
+              starts++
+              return { port: 8799, version: testedVersion, started: true, startedByPlugin: true }
+            },
+            withLifecycle: async (op) => {
+              if (failure === 'lock-busy') throw new Error('Lock busy')
+              return op()
+            },
+            connectors: {
+              list: async () => ({ connectors: [], bots: [] }),
+              act: async () => ({ connectors: [], bots: [] }),
+              reset: () => {
+                resets++
+              },
+              reconcile: async (_port, write) => {
+                reconciles++
+                if (failure === 'hangs')
+                  await new Promise<void>((resolve) => {
+                    release = resolve
+                  })
+                else if (failure === 'lock-busy') await write!(async () => {})
+                else throw new Error('Server unavailable')
+              }
+            }
+          })
+      },
+      { host: mockHost() }
+    )
+    try {
+      await worker.request('status', {})
+      await flushRepair()
+      assert.deepEqual(await worker.request('bots.list', {}), [])
+      await flushRepair()
+      assert.equal(reconciles, 1)
+      await worker.request('bots.list', {})
+      if (failure === 'hangs') assert.equal(reconciles, 1)
+      healthy = false
+      now = 3000
+      assert.equal(((await worker.request('status', {})) as any).state, 'starting')
+      await flushRepair()
+      assert.equal(starts, 2)
+      healthy = true
+      assert.equal(((await worker.request('status', { retry: true })) as any).state, 'starting')
+      await flushRepair()
+      assert.equal(starts, 3)
+      assert.ok(resets >= 3)
+      release?.()
+      await flushRepair()
+    } finally {
+      release?.()
+      await worker.deactivate()
+    }
   }
 })

@@ -22,7 +22,16 @@ import type { CliDeps } from './omb-cli.ts'
 import type { PageStore } from './omb-open.ts'
 import { openChat } from './omb-open.ts'
 import { TESTED_OPENMAUSBOT_VERSION } from '../shared/omb-version.ts'
-import { NEXT, PING, RELAYED, WINDOW, frames, lineReader, unpack } from './relay-frames.ts'
+import {
+  NEXT,
+  PING,
+  RELAYED,
+  WINDOW,
+  frames,
+  lineReader,
+  unpack,
+  validateRelayInput
+} from './relay-frames.ts'
 
 type Store = { storage: Record<string, unknown>; settings: Record<string, unknown> }
 export type RelayIo = {
@@ -180,12 +189,14 @@ export function createRelay(
         if (request.name === PING) answer = { output: { hash: io.hash } }
         else if (!(RELAYED as readonly unknown[]).includes(request.name))
           throw new Error('Unsupported bot request.')
-        else
+        else {
+          validateRelayInput(request.name, request.input)
           answer = {
             output: await handlers.get(request.name as string)!(request.input ?? {}, {
               panelId: 'paired-client'
             })
           }
+        }
       } catch (error) {
         answer = { error: error instanceof Error ? error.message : 'The bot request failed.' }
       }

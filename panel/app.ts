@@ -1,3 +1,4 @@
+import { createMcpView } from './mcp-view.ts'
 import { createSetup, agentNames } from './setup.ts'
 import { createChatView } from './chat-view.ts'
 import { createSettings } from './settings.ts'
@@ -17,12 +18,8 @@ const running = element<HTMLElement>('running')
 const roster = element<HTMLElement>('roster')
 const refreshNote = element<HTMLElement>('refresh-note')
 const result = element<HTMLElement>('result')
-const setup = createSetup(
-  (answer) => frame.plugin.request('setup.answer', answer),
-  () => frame.plugin.request('tools.import', {})
-)
+const setup = createSetup((answer) => frame.plugin.request('setup.answer', answer))
 const shareTools = element<HTMLInputElement>('share-tools')
-const importTools = element<HTMLInputElement>('import-tools')
 const linkAgents = element<HTMLInputElement>('link-agents')
 
 const hostSelect = element<HTMLSelectElement>('host')
@@ -43,16 +40,12 @@ function renderSetup(hostName = remoteName()): void {
     `Claude bots use the Claude connectors, MCP servers, skills and instructions on ${target}. Codex bots always use the Codex setup on ${target}.`
   element('agent-host').textContent = ` on ${target}`
   element('agent-names').textContent = agentNames(state.agents)
-  element('import-tools-label').hidden = state.tools.length === 0
-  element('import-tools-copy').textContent =
-    `Adds ${state.tools.length} ${state.tools.length === 1 ? 'tool' : 'tools'} from ${[...new Set(state.tools.map((t) => t.source))].join(', ')} on ${target} to OpenMausBot, switched off. Turn them on per bot in the Bot Dashboard. Tokens saved in those apps on ${target} are copied to OpenMausBot there.`
   element('setup-message').textContent = state.message
   for (const id of ['setup-allow', 'setup-skip'])
     element<HTMLButtonElement>(id).disabled = state.busy
-  importTools.disabled = shareTools.disabled = linkAgents.disabled = state.busy
+  shareTools.disabled = linkAgents.disabled = state.busy
 }
 async function answerSetup(allow: boolean): Promise<void> {
-  setup.state.importTools = importTools.checked
   setup.state.shareTools = shareTools.checked
   setup.state.linkAgents = linkAgents.checked
   const applying = setup.answer(allow)
@@ -81,6 +74,22 @@ function renderHosts(): void {
   )
   hostSelect.value = hostChosen() ? hosts.selected : ''
 }
+let connectorHostId: string | undefined
+function updateConnectorHost(id: string, name?: string): void {
+  if (connectorHostId === id) return
+  if (connectorHostId !== undefined) {
+    hostGeneration++
+    botMenu.close()
+    chatView.close()
+    bots = []
+    selected = undefined
+    rosterView.hidden = false
+    element('list-header').hidden = false
+    renderBots()
+  }
+  connectorHostId = id
+  mcp.hostChanged(id, name)
+}
 async function loadHosts(): Promise<void> {
   try {
     hosts = await frame.plugin.request('hosts.get', {})
@@ -88,6 +97,7 @@ async function loadHosts(): Promise<void> {
     /* Keep the last choice shown; status reports the problem. */
   }
   renderHosts()
+  updateConnectorHost(hosts?.selected ?? '', remoteName())
   askForHost()
 }
 // Rises on every host change, so answers from the previous host are dropped, not shown.
@@ -98,6 +108,7 @@ async function chooseHost(id: string): Promise<void> {
   botMenu.close()
   hostSelect.disabled = true
   const nextRemote = hosts?.hosts.find((host) => host.id === id)?.name
+  updateConnectorHost(id, nextRemote)
   settings.beginHostChange(nextRemote)
   setup.state.loaded = false
   renderSetup(nextRemote)
@@ -125,16 +136,21 @@ async function chooseHost(id: string): Promise<void> {
   }
   await refreshAfterChange()
   await settings.hostChanged(hostProblem)
+  await mcp.refresh()
 }
 hostSelect.addEventListener('change', () => void chooseHost(hostSelect.value))
+const mcp = createMcpView(frame, element)
 const settings = createSettings(frame, element, () => refreshAfterChange())
 let settingsShown = false
+let mcpStatus = ''
 function showSettings(show: boolean): void {
   settingsShown = show
   botMenu.close()
+  chatView.dismissCapabilities()
   element('main-view').hidden = show
   element('settings-view').hidden = !show
-  if (show) void settings.open()
+  element('mcp-view').hidden = true
+  if (show) { void settings.open(); void mcp.refresh() }
 }
 element('open-settings').addEventListener('click', () => showSettings(true))
 element('settings-back').addEventListener('click', () => showSettings(false))
@@ -160,6 +176,25 @@ const readBots = new Set<string>()
 const previews = new Map<string, string>()
 const rosterView = element<HTMLElement>('roster-view')
 
+async function refreshCapabilities(): Promise<void> {
+  const generation = hostGeneration
+  const next = await frame.plugin.request('bots.list', {})
+  if (generation !== hostGeneration) return
+  bots = next
+  chatView.update(bots)
+  renderBots()
+}
+function manageCapabilities(botId: string, enabled: boolean, fromChat = false) {
+  showSettings(true)
+  if (fromChat) chatView.close()
+  mcp.open({ tab: enabled ? 'bot' : 'provider', botId,
+    ...(fromChat ? { back: () => {
+      showSettings(false)
+      const bot = bots.find(b => b.id === botId)
+      if (bot) showBot(bot)
+    } } : {})
+  })
+}
 const botMenu = createBotMenu(element('bot-menu'), async (input: BotAction) => {
   if (changing.has(input.botId)) return
   changing.add(input.botId)
@@ -202,7 +237,12 @@ const botMenu = createBotMenu(element('bot-menu'), async (input: BotAction) => {
   return Array.from(roster.querySelectorAll<HTMLElement>('[data-focus]')).find(
     (node) => node.dataset.focus === `group-${input.name}`
   )
-})
+}, {
+  list: () => frame.plugin.request('mcp.list', {}),
+  act: input => frame.plugin.request('mcp.act', input),
+  manage: (botId, enabled) => manageCapabilities(botId, enabled)
+}, { frame, hooks: { changed: refreshCapabilities, manage: (botId, enabled) => manageCapabilities(botId, enabled), hostGeneration: () => hostGeneration } }
+)
 
 const chatView = createChatView(
   element('bot-view'),
@@ -219,7 +259,8 @@ const chatView = createChatView(
   (id, preview) => {
     if (preview) previews.set(id, preview)
     else previews.delete(id)
-  }
+  },
+  { changed: refreshCapabilities, manage: (botId, enabled) => manageCapabilities(botId, enabled, true), hostGeneration: () => hostGeneration }
 )
 function showBot(bot: Bot): void {
   botMenu.close()
@@ -448,8 +489,6 @@ async function refreshNow(explicitRetry: boolean): Promise<void> {
         shareTools.checked = setup.state.shareTools
         linkAgents.checked = setup.state.linkAgents
       }
-      if (!setup.state.answered && !setup.state.toolsLoaded)
-        setup.loadTools((await frame.plugin.request('tools.find', {})).tools)
       renderSetup()
     } catch {
       /* Retry with the next refresh; bots still load. */
@@ -457,6 +496,11 @@ async function refreshNow(explicitRetry: boolean): Promise<void> {
     const status = await frame.plugin.request('status', { retry: explicitRetry })
     if (!current()) return
     settings.setStatus(status, remoteName())
+    const connectorStatus = JSON.stringify([status.state, status.port, remoteName()])
+    if (connectorStatus !== mcpStatus) {
+      mcpStatus = connectorStatus
+      if (settingsShown) void mcp.refresh()
+    }
     element<HTMLButtonElement>('open-page').disabled = opening || status.state !== 'running'
     // Avoid duplicating the install notice in both #message and #install-card.
     const installShown = !element('install-card').hidden

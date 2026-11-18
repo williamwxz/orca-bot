@@ -1,3 +1,5 @@
+import { createCapabilityPicker } from './capability-picker.ts'
+import type { CapabilityHooks } from './capability-picker.ts'
 import { dayLabel, threadPreview } from './presentation.ts'
 import type { Requests } from '../worker/protocol.ts'
 import type { Bot } from '../shared/roster.ts'
@@ -13,7 +15,10 @@ import type { Thread, Composer } from '../shared/chat.ts'
 
 export type FrameApi = {
   plugin: {
-    request<K extends keyof Requests>(name: K, input: Requests[K]['input']): Promise<Requests[K]['output']>
+    request<K extends keyof Requests>(
+      name: K,
+      input: Requests[K]['input']
+    ): Promise<Requests[K]['output']>
   }
   shell?: { openExternal(url: string): Promise<unknown> }
 }
@@ -35,7 +40,8 @@ export function createChatView(
   avatar: (bot: Bot) => HTMLElement,
   open: (id: string) => void,
   back: () => void,
-  preview?: (id: string, text: string | undefined) => void
+  preview?: (id: string, text: string | undefined) => void,
+  capabilities?: CapabilityHooks
 ) {
   let bot: Bot | undefined
   let generation = 0
@@ -68,6 +74,64 @@ export function createChatView(
     full
   )
   header.firstElementChild!.setAttribute('aria-label', 'Back to bots')
+  const capabilityMenu = node('div')
+  capabilityMenu.className = 'bot-menu capability-menu'
+  capabilityMenu.hidden = true
+  const modelPill = button('Model', () => {
+    if (!bot || !picker) return
+    void picker.open('model', bot, modelPill)
+    modelPill.setAttribute('aria-expanded', 'true')
+  })
+  const connectorPill = button('Connectors', () => {
+    if (!bot || !picker) return
+    void picker.open('connectors', bot, connectorPill)
+    connectorPill.setAttribute('aria-expanded', 'true')
+  })
+  const bar = node('div')
+  bar.className = 'chat-capabilities'
+  for (const pill of [modelPill, connectorPill]) {
+    pill.className = 'capability-pill'
+    pill.setAttribute('aria-haspopup', 'menu')
+    pill.setAttribute('aria-expanded', 'false')
+    bar.append(pill)
+  }
+  const picker = capabilities
+    ? createCapabilityPicker(
+        capabilityMenu,
+        frame,
+        {
+          ...capabilities,
+          busyChanged: () => renderCapabilities(),
+          connectorCountChanged: (id, count) => {
+            if (bot?.id !== id) return
+            bot = { ...bot, connectorCount: count }
+            renderCapabilities()
+          },
+          changed: () => capabilities.changed()
+        },
+        () => {
+          modelPill.setAttribute('aria-expanded', 'false')
+          connectorPill.setAttribute('aria-expanded', 'false')
+          renderCapabilities()
+        }
+      )
+    : undefined
+  function renderCapabilities() {
+    if (!bot) return
+    modelPill.textContent = `${bot.modelLabel || 'Model'} ▾`
+    modelPill.setAttribute('aria-label', `Model: ${bot.modelLabel || 'not selected'}`)
+    modelPill.disabled = bot.state === 'working' || !!picker?.switching()
+    modelPill.title =
+      bot.state === 'working'
+        ? 'Wait until the reply finishes to change models.'
+        : picker?.switching()
+          ? 'Saving capability changes…'
+          : 'Choose model'
+    const count = bot.connectorCount ?? 0
+    connectorPill.title = 'Choose connectors for this bot'
+    connectorPill.textContent = `${count ? `Connectors · ${count}` : 'Connectors'} ▾`
+    connectorPill.setAttribute('aria-label', count ? `Connectors: ${count} allowed` : 'Connectors')
+  }
   const list = node('div')
   list.className = 'messages'
   list.setAttribute('aria-label', 'Recent messages')
@@ -98,7 +162,7 @@ export function createChatView(
   const letters = node('span')
   sheen.append(letters)
   workingText.append(workingLabel, sheen)
-  root.append(header, list, note, working, composer)
+  root.append(header, ...(capabilities ? [bar] : []), list, note, working, composer, capabilityMenu)
   const atBottom = () => list.scrollHeight - list.scrollTop - list.clientHeight < 40
   function linkedText(parent: HTMLElement, text: string): void {
     const pattern = /https?:\/\/[^\s<>]+/g
@@ -126,14 +190,21 @@ export function createChatView(
     if (!bot) return
     const bottom = atBottom(),
       top = list.scrollTop
-    const nextIdentityKey = JSON.stringify([bot.id, bot.name, bot.modelLabel, bot.state, bot.avatar])
+    const nextIdentityKey = JSON.stringify([
+      bot.id,
+      bot.name,
+      capabilities ? '' : bot.modelLabel,
+      bot.avatar
+    ])
     if (identityKey !== nextIdentityKey) {
       identityKey = nextIdentityKey
       identity.replaceChildren(avatar(bot))
       const names = node('div')
-      names.append(node('strong', bot.name), node('small', bot.modelLabel))
+      names.append(node('strong', bot.name))
+      if (!capabilities) names.append(node('small', bot.modelLabel))
       identity.append(names)
     }
+    renderCapabilities()
     input.placeholder = `Message ${bot.name}`
     renderWorking()
     list.replaceChildren()
@@ -170,7 +241,8 @@ export function createChatView(
         item.append(node('small', attempt.error ?? 'Sending…'))
       list.append(item)
     }
-    if (!thread.messages.length && !state.attempts.length) list.append(node('p', 'No recent messages.'))
+    if (!thread.messages.length && !state.attempts.length)
+      list.append(node('p', 'No recent messages.'))
     send.disabled = state.sending || !state.draft.trim() || state.draft.length > 16000
     if (input.value !== state.draft) input.value = state.draft
     list.scrollTop = bottom ? list.scrollHeight : top
@@ -178,11 +250,14 @@ export function createChatView(
   function renderWorking(): void {
     clearTimeout(clockTimer)
     if (!bot) return
-    if (bot.state === 'working' && !observedWorking.has(bot.id)) observedWorking.set(bot.id, Date.now())
+    if (bot.state === 'working' && !observedWorking.has(bot.id))
+      observedWorking.set(bot.id, Date.now())
     const since = state.sendFailed
       ? undefined
       : (state.wait?.since ??
-        (bot.state === 'working' && !finishedWorking.has(bot.id) ? observedWorking.get(bot.id) : undefined))
+        (bot.state === 'working' && !finishedWorking.has(bot.id)
+          ? observedWorking.get(bot.id)
+          : undefined))
     working.hidden = since === undefined
     if (since === undefined) {
       workingKey = ''
@@ -201,7 +276,10 @@ export function createChatView(
   function schedule(): void {
     clearTimeout(timer)
     if (bot && !document.hidden)
-      timer = setTimeout(() => void read(), refreshInterval(bot.state, state.sending || !!state.wait))
+      timer = setTimeout(
+        () => void read(),
+        refreshInterval(bot.state, state.sending || !!state.wait)
+      )
   }
   async function read(): Promise<void> {
     if (!bot || document.hidden || reading) return
@@ -274,6 +352,7 @@ export function createChatView(
   })
   function close(): void {
     generation++
+    picker?.close(false)
     bot = undefined
     reading = false
     clearTimeout(timer)
@@ -297,6 +376,8 @@ export function createChatView(
     void read()
   })
   return {
+    close,
+    dismissCapabilities: () => picker?.close(false),
     open(next: Bot) {
       close()
       bot = next
@@ -330,6 +411,7 @@ export function createChatView(
       const changed = latest.state !== bot.state
       if (changed && latest.state === 'working') state.sendFailed = false
       bot = latest
+      picker?.update(latest)
       render()
       if (changed) schedule()
     }

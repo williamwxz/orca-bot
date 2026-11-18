@@ -1,5 +1,6 @@
+import type { Models } from '../shared/models.ts'
+import type { Connectors, ConnectorAction } from './mcp-connectors.ts'
 import type { FoundAgents } from '../shared/agents.ts'
-import type { Tool, ImportResult } from './import-tools.ts'
 import type { Thread } from '../shared/chat.ts'
 import type { Bot, BotAction, GroupRename } from '../shared/roster.ts'
 import type { Hosts } from './paired-host.ts'
@@ -19,8 +20,9 @@ export type SetupAnswer = { shareTools: boolean; linkAgents: boolean }
 export type Preferences = SetupAnswer & { agents: FoundAgents }
 
 export type Requests = {
-  'tools.find': { input: Record<string, never>; output: { tools: Tool[] } }
-  'tools.import': { input: Record<string, never>; output: ImportResult }
+  'models.list': { input: Record<string, never>; output: Models }
+  'mcp.list': { input: Record<string, never>; output: Connectors }
+  'mcp.act': { input: ConnectorAction; output: Connectors }
   'setup.get': { input: Record<string, never>; output: Setup }
   'setup.answer': { input: SetupAnswer; output: { answered: true } }
   'thread.read': { input: { botId: string; limit?: number }; output: Thread }

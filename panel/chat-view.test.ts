@@ -10,6 +10,14 @@ class Element {
   events = new Map<string, ((event: any) => void)[]>()
   attributes = new Map<string, string>()
   className = ''
+  dataset: Record<string, string> = {}
+  style = {}
+  contains(node: Element): boolean {
+    return this === node || this.children.some((c) => c.contains(node))
+  }
+  getBoundingClientRect() {
+    return { left: 20, bottom: 80, width: 240, height: 180 }
+  }
   value = ''
   hidden = false
   disabled = false
@@ -43,9 +51,12 @@ class Element {
     this.events.set(name, [...(this.events.get(name) ?? []), fn])
   }
   emit(name: string, event: any = {}) {
-    for (const fn of this.events.get(name) ?? []) fn({ preventDefault() {}, ...event })
+    for (const fn of this.events.get(name) ?? [])
+      fn({ preventDefault() {}, stopPropagation() {}, ...event })
   }
-  focus() {}
+  focus() {
+    ;(document as any).activeElement = this
+  }
   requestSubmit() {
     this.emit('submit')
   }
@@ -100,7 +111,13 @@ test('panel renders safe text, keeps scroll and avatar, respects IME, restores f
                   kind: 'text',
                   text: '<script>literal</script>\nhttps://example.invalid'
                 },
-                { id: '2', at: 2, role: 'bot', kind: 'unsupported', text: 'This needs the full chat.' }
+                {
+                  id: '2',
+                  at: 2,
+                  role: 'bot',
+                  kind: 'unsupported',
+                  text: 'This needs the full chat.'
+                }
               ]
             }
           }) as any
@@ -277,5 +294,167 @@ test('accepted sends render once, clock ticks independently, replies stop it, an
     else delete (globalThis as any).document
     if (originalWindow) Object.defineProperty(globalThis, 'window', originalWindow)
     else delete (globalThis as any).window
+  }
+})
+
+test('chat capability pills count allowed connectors, gate working models and dismiss on bot switch or close', async () => {
+  const keys = ['document', 'window', 'setTimeout', 'clearTimeout'] as const
+  const originals = keys.map((k) => Object.getOwnPropertyDescriptor(globalThis, k))
+  const doc = Object.assign(new Element('document'), {
+    createElement: (tag: string) => new Element(tag),
+    createTextNode: (text: string) => Object.assign(new Element('text'), { textContent: text })
+  })
+  const win = Object.assign(new Element('window'), { innerWidth: 380, innerHeight: 700 })
+  for (const [key, value] of [
+    ['document', doc],
+    ['window', win],
+    ['setTimeout', () => 0],
+    ['clearTimeout', () => {}]
+  ] as const)
+    Object.defineProperty(globalThis, key, { configurable: true, value })
+  const root = new Element('root')
+  let current: Bot = {
+    id: 'a',
+    name: 'Work',
+    title: '',
+    main: false,
+    unread: false,
+    state: 'idle',
+    model: 'codex/gpt-6',
+    connectorCount: 2,
+    modelLabel: 'GPT-6'
+  }
+  const rows = {
+    connectors: [
+      {
+        name: 'mail',
+        rawName: 'gmail',
+        provider: 'Cursor',
+        fingerprint: 'exact',
+        enabled: true,
+        present: true,
+        bots: ['a']
+      },
+      {
+        name: 'docs',
+        rawName: 'docs',
+        provider: 'Codex',
+        fingerprint: 'docs',
+        enabled: true,
+        present: true,
+        bots: ['a']
+      }
+    ],
+    bots: [{ id: 'a', name: 'Work' }]
+  }
+  const managed: unknown[] = []
+  const calls: any[] = []
+  let delayed: Promise<any> | undefined
+  const view = createChatView(
+    root as any,
+    {
+      plugin: {
+        request: async (name: string, input: any) => {
+          calls.push({ name, input })
+          if (name === 'thread.read') return { messages: [], hasMore: false }
+          if (name === 'models.list')
+            return (
+              delayed ?? {
+                groups: [
+                  {
+                    instanceId: 'claude',
+                    label: 'Claude',
+                    models: [{ id: 'sonnet', label: 'Sonnet' }]
+                  }
+                ]
+              }
+            )
+          if (name === 'mcp.act')
+            rows.connectors.find((c) => c.name === input.name)!.bots = input.bots
+          if (name === 'bots.act') {
+            current = { ...current, model: 'claude/sonnet', modelLabel: 'Sonnet' }
+            return { ok: true }
+          }
+          return structuredClone(rows)
+        }
+      }
+    } as any,
+    () => new Element('avatar') as any,
+    () => {},
+    () => {},
+    undefined,
+    {
+      changed: async () => {
+        view.update([current])
+      },
+      manage: (...args) => managed.push(args)
+    }
+  )
+  const pill = (prefix: string) =>
+    all(root).find((n) => n.className === 'capability-pill' && n.textContent.startsWith(prefix))!
+  try {
+    view.open(current)
+    await flush()
+    assert.equal(pill('Connectors').textContent, 'Connectors · 2 ▾')
+    assert.equal(
+      calls.some((c) => c.name === 'mcp.list'),
+      false
+    )
+    pill('GPT-6').emit('click')
+    await flush()
+    assert.equal(pill('GPT-6').attributes.get('aria-expanded'), 'true')
+    all(root)
+      .find((n) => n.dataset.key === 'claude/sonnet')!
+      .emit('click')
+    await flush()
+    assert.ok(pill('Sonnet'))
+    assert.equal(
+      calls.some((c) => c.name === 'mcp.list'),
+      false
+    )
+    assert.equal(calls.filter((c) => c.name === 'bots.act').length, 1)
+    doc.emit('keydown', { key: 'Escape' })
+    assert.equal((document as any).activeElement, pill('Sonnet'))
+    view.update([{ ...current, state: 'working' }])
+    assert.equal(pill('Sonnet').disabled, true)
+    view.update([current])
+    view.update([{ ...current, connectorCount: 1 }])
+    assert.equal(pill('Connectors').textContent, 'Connectors · 1 ▾')
+    pill('Connectors').emit('click')
+    await flush()
+    assert.equal(pill('Connectors').textContent, 'Connectors · 2 ▾')
+    all(root)
+      .find((n) => n.dataset.key === 'mail')!
+      .emit('click')
+    await flush()
+    assert.equal(pill('Connectors').textContent, 'Connectors · 1 ▾')
+    assert.equal(calls.filter((c) => c.name === 'mcp.list').length, 1)
+    all(root)
+      .find((n) => n.dataset.key === 'mail')!
+      .emit('click')
+    await flush()
+    assert.equal(pill('Connectors').textContent, 'Connectors · 2 ▾')
+    assert.equal(calls.filter((c) => c.name === 'mcp.list').length, 1)
+    all(root)
+      .find((n) => n.textContent === 'Manage connectors…')!
+      .emit('click')
+    assert.deepEqual(managed, [['a', true]])
+    let finish!: (x: any) => void
+    delayed = new Promise((resolve) => {
+      finish = resolve
+    })
+    pill('Sonnet').emit('click')
+    view.open({ ...current, id: 'b', name: 'Personal' })
+    finish({ groups: [{ instanceId: 'late', label: 'STALE', models: [] }] })
+    await flush()
+    assert.equal(root.textContent.includes('STALE'), false)
+    assert.equal(all(root).find((n) => n.className.includes('capability-menu'))!.hidden, true)
+    view.close()
+    assert.equal(root.hidden, true)
+  } finally {
+    for (const [i, key] of keys.entries()) {
+      if (originals[i]) Object.defineProperty(globalThis, key, originals[i]!)
+      else delete (globalThis as any)[key]
+    }
   }
 })

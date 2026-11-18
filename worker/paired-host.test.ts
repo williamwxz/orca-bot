@@ -93,7 +93,7 @@ test('the panel chooses the host, relays dashboard open and permissions, and kee
                 throw new Error('Must run on selected remote host')
               })
             }
-            api.panels.handle('tools.import', () => {
+            api.panels.handle('mcp.list', () => {
               local.push('import')
               return { added: [], skipped: [] }
             })
@@ -120,7 +120,7 @@ test('the panel chooses the host, relays dashboard open and permissions, and kee
                 linkAgents: Boolean((input as { linkAgents?: boolean }).linkAgents),
                 agents: { claude: true, codex: true }
               }
-            if (name === 'tools.import') return { added: ['cursor'], skipped: [] }
+            if (name === 'mcp.list') return { connectors: [], bots: [] }
             if (name === 'server.install') return { accepted: true }
             if (name === 'server.stop') return { stopped: true, message: 'Stopped.' }
             return { state: 'running', message: '' }
@@ -165,10 +165,10 @@ test('the panel chooses the host, relays dashboard open and permissions, and kee
       linkAgents: true,
       agents: { claude: true, codex: true }
     })
-    assert.deepEqual(await worker.request('tools.import', {}), { added: ['cursor'], skipped: [] })
+    assert.deepEqual(await worker.request('mcp.list', {}), { connectors: [], bots: [] })
     assert.deepEqual(
       [local, relayed],
-      [[], ['groups.rename', 'status', 'setup.get', 'chat.open', 'prefs.get', 'prefs.set', 'tools.import']]
+      [[], ['groups.rename', 'status', 'setup.get', 'chat.open', 'prefs.get', 'prefs.set', 'mcp.list']]
     )
     assert.deepEqual(await worker.request('server.install', {}), { accepted: true })
     assert.deepEqual(await worker.request('server.stop', {}), {

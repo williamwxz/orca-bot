@@ -41,10 +41,17 @@ Grok signed in on this computer.
 
 Good to know:
 
-- **Bot Team for Orca: Bring in tools from my AI apps** in the command palette, or the
-  matching setup-card row, copies tools from Claude Code, Claude Desktop, Cursor,
-  Gemini CLI, Codex, opencode and Antigravity into OpenMausBot,
-  switched off. Turn them on per bot in the Bot Dashboard.
+- Open **Settings → MCP Connectors → Manage** to discover connectors from Claude Code,
+  Claude Desktop, Cursor, Codex, Gemini CLI, opencode and Antigravity on the chosen host.
+  Use **Providers** to turn connectors on and **By Bot** to audit and toggle each bot’s
+  access. In a bot’s chat, the **Model** and **Connectors** pills let you switch ready AI
+  models and assign enabled connectors without leaving the conversation; both pickers
+  are also available in the bot context menu. Model changes wait until the bot is idle
+  and update its active thread. Provider and approval restrictions still apply.
+  Newly enabled connectors start with no bots assigned. Existing custom servers appear
+  under **OpenMausBot**. Disable keeps credentials there; Remove deletes the server and
+  its stored credentials and clears its bot assignments. First-run setup never imports tools.
+  Codex-backed bots still load `~/.codex/config.toml` directly, independently of these mappings.
 
 - The panel shows the last 20 messages as plain text and sends messages of up to
   16,000 characters. Anything richer says "This needs the full chat."
@@ -99,7 +106,7 @@ connections, expose a bot port or ask for a second pairing
 code. An unavailable server never falls back to a different bot team on this
 computer.
 
-From a paired client you can manage bots, change permissions, import tools from
+From a paired client you can manage bots, change permissions, manage MCP connectors from
 apps on the server, and install or stop OpenMausBot. The Bot Dashboard opens
 in the paired desktop's Orca browser and reuses its tab; plugin-owned servers
 auto-pair. Keep Orca connected with remote server browsing hosted on this device.
@@ -109,7 +116,7 @@ preferences take precedence over a stale `paired-client.json` cache on startup;
 a persisted sync snapshot also preserves native Settings changes made while the
 worker was closed. Subsequent changes in either Settings view sync on the next
 request. Stopping the server persists across reconnects until Retry, installation
-or a tool import explicitly starts it again. Lifecycle operations share a host
+explicitly starts it again. Lifecycle operations share a host
 lock, and installation uses unique staging directories.
 These paths have fake-dependency coverage; two-computer live verification is pending.
 
@@ -141,13 +148,20 @@ of that `orca` command on this computer.
 ### What Bot Team for Orca does to protect you
 
 - **Asks first.** Nothing is shared with bots, linked to your agents or
-  imported until you approve it in the setup card. You can change each choice
-  later in Orca's Settings.
-- **Imported tools stay on this computer.** Imported tool definitions, including
+  imported automatically. Sharing and agent linking require setup consent; connector
+  imports require enabling selected connectors in Settings → MCP Connectors.
+- **Imported tools stay on the selected host.** Imported tool definitions, including
   any tokens in them, are copied into OpenMausBot's settings in `~/.orca-bot/data`;
   sources include Claude Code, Claude Desktop, Cursor, Gemini CLI, Codex,
-  opencode and Antigravity, and tools arrive switched off. Bot Team for Orca uses an internal OpenMausBot route for this,
-  which a new OpenMausBot version may change.
+  opencode and Antigravity, and only selected connectors are copied when enabled. Bot Team for Orca uses an internal OpenMausBot route for this,
+  which a new OpenMausBot version may change. Preferences retain only provider, original
+  name and a per-host keyed HMAC-SHA256 fingerprint; definitions and credentials never cross panel or relay RPC.
+  Before enabling connectors, unrestricted bots receive explicit allowlists preserving
+  previously enabled access. New-bot defaults restrict MCP access without changing other
+  template fields; background polls reconcile later unrestricted bots, and a failed
+  post-enable reconciliation switches the connector back off. Busy bots can block changes; refresh and retry when idle.
+  Other OpenMausBot clients and direct provider CLI configuration can change access outside
+  this panel, so refresh before reviewing assignments.
 - **Usage analytics are off.** OpenMausBot's page sends anonymous usage events
   to PostHog by default. For a server Bot Team for Orca starts, it switches this off
   before the page first loads. If you turn it on yourself in OpenMausBot's
@@ -170,7 +184,7 @@ of that `orca` command on this computer.
   Error messages never include raw output.
 - **No logins stored.** Bot Team for Orca does not read, copy or keep your Claude,
   Codex or Grok login. It only tells Claude which Orca login folder to use.
-  The one exception is a tool import you start yourself, described above.
+  Connector credentials are copied only when you enable those connectors, as described above.
 
 ### Risks you should know about
 
