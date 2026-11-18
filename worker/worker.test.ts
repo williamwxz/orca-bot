@@ -501,6 +501,8 @@ test('setup.get reports persisted answer and found agents', async () => {
     )
     try {
       assert.deepEqual(await worker.request('setup.get', {}), {
+        shareTools: false,
+        linkAgents: false,
         answered,
         agents: { claude: true, codex: false }
       })

@@ -18,8 +18,8 @@ export function createSetup(
     loaded: false,
     answered: false,
     agents: { claude: false, codex: false } as Setup['agents'],
-    shareTools: true,
-    linkAgents: true,
+    shareTools: false,
+    linkAgents: false,
     busy: false,
     message: ''
   }
@@ -30,6 +30,10 @@ export function createSetup(
       state.toolsLoaded = true
     },
     load(setup: Setup) {
+      if (!state.loaded) {
+        state.shareTools = setup.shareTools ?? false
+        state.linkAgents = setup.linkAgents ?? false
+      }
       state.loaded = true
       state.answered = setup.answered
       state.agents = setup.agents
@@ -49,7 +53,8 @@ export function createSetup(
           try {
             const result = await bringTools()
             if (result.skipped.some((s) => s.reason === 'failed'))
-              state.message = 'Some tools could not be imported or switched off; check the Bot Dashboard.'
+              state.message =
+                'Some tools could not be imported or switched off; check the Bot Dashboard.'
           } catch {
             state.message = 'Tools could not be imported or switched off; check the Bot Dashboard.'
           }

@@ -56,6 +56,7 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
   let host = 'local'
   const prefs = { shareTools: true, linkAgents: false }
   let hostsBroken = false
+  let selectionFails = false
   let holdNextBots = false
   let holdBots: ((bots: unknown) => void) | undefined
   const frame = {
@@ -67,6 +68,7 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
             ? { selected: host, hosts: [], message: 'Could not read Orca’s paired servers.' }
             : { selected: host, hosts: [{ id: 'mini-1', name: 'Mac Mini' }], message: '' }
         if (name === 'hosts.select') {
+          if (selectionFails) throw new Error('Pairing unavailable.')
           host = (input as { id: string }).id
           return { selected: host, hosts: [{ id: 'mini-1', name: 'Mac Mini' }], message: '' }
         }
@@ -111,6 +113,8 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
             message: 'Updated. Orca restarts Bot Team for Orca with the new version.',
             autoUpdate: true
           }
+        if (name === 'prefs.get' && host !== 'local')
+          throw new Error('Manage permissions on the paired server.')
         if (name === 'prefs.get') return { ...prefs, agents: { claude: true, codex: false } }
         if (name === 'prefs.set') {
           Object.assign(prefs, input)
@@ -249,7 +253,9 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
     get('update-banner-install').emit('click')
     await flush()
     assert.ok(calls.some((call) => call.name === 'updates.install'))
-    assert.equal(get('update-banner').hidden, true)
+    assert.equal(get('update-banner').hidden, false)
+    assert.match(get('update-banner-text').textContent, /^Updated/)
+    assert.equal(get('update-banner-install').hidden, true)
     assert.match(get('settings-message').textContent, /^Updated/)
     get('settings-back').emit('click')
     assert.deepEqual([get('main-view').hidden, get('settings-view').hidden], [false, true])
@@ -262,6 +268,18 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
     assert.equal(get('host').disabled, false)
     assert.equal(calls.filter((call) => call.name === 'bots.list').length, listed + 1)
     assert.deepEqual(botNames(get('roster')), ['Remote bot'])
+    assert.equal(get('pref-share-tools').disabled, true)
+    assert.equal(get('pref-import').disabled, true)
+    assert.match(get('permissions-note').textContent, /paired server/)
+    get('open-settings').emit('click')
+    await flush()
+    selectionFails = true
+    get('host').value = 'local'
+    get('host').emit('change')
+    await flush()
+    await flush()
+    assert.match(get('settings-message').textContent, /Pairing unavailable/)
+    selectionFails = false
     // Switching clears the old host's bots at once, and a late answer from that host is dropped.
     holdNextBots = true
     win.emit('pageshow')
@@ -299,6 +317,9 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
     await flush()
     await flush()
     assert.deepEqual(botNames(get('roster')), ['Fake bot'])
+    assert.equal(get('pref-share-tools').disabled, false)
+    assert.equal(get('permissions-note').textContent, '')
+    assert.equal(get('settings-message').textContent, '')
     // When Orca cannot list servers, Retry shows and asks Orca again before checking status.
     host = 'mini-1'
     hostsBroken = true

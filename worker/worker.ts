@@ -152,6 +152,8 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
     }
   }
   orca.panels.handle('setup.get', async () => ({
+    shareTools: (await orca.settings.get('shareClaudeSetup')) === true,
+    linkAgents: (await orca.settings.get('linkAgents')) === true,
     answered: (await orca.storage.get('setupAnswered')) === true,
     agents: deps.findAgents?.() ?? { claude: false, codex: false }
   }))

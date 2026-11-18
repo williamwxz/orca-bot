@@ -1,10 +1,10 @@
 import { test, assert } from 'orca/testing'
 import { createSetup, agentNames } from './setup.ts'
 
-test('setup starts checked and shows the found agent names', () => {
+test('setup starts with permissions off and shows the found agent names', () => {
   const setup = createSetup(async () => {})
-  assert.equal(setup.state.shareTools, true)
-  assert.equal(setup.state.linkAgents, true)
+  assert.equal(setup.state.shareTools, false)
+  assert.equal(setup.state.linkAgents, false)
   assert.equal(setup.state.loaded, false)
   for (const [agents, name] of [
     [{ claude: true, codex: true }, 'Claude and Codex'],
@@ -21,6 +21,7 @@ test('Allow sends checked options, hides after success, and ignores repeat answe
   })
   setup.load({ answered: false, agents: { claude: true, codex: true } })
   setup.state.shareTools = false
+  setup.state.linkAgents = true
   await setup.answer(true)
   await setup.answer(false)
   assert.deepEqual(calls, [{ shareTools: false, linkAgents: true }])
@@ -33,6 +34,7 @@ test('Not now disables both; no installed agents disables linking', async () => 
       calls.push(answer)
     })
     setup.load({ answered: false, agents: { claude: false, codex: false } })
+    setup.state.shareTools = true
     await setup.answer(allow)
     assert.deepEqual(calls, [{ shareTools: allow, linkAgents: false }])
   }
@@ -89,4 +91,15 @@ test('import row starts on, imports only visible checked tools after setup, and 
 test('setup names include every linked agent', () => {
   assert.equal(agentNames({ claude: true, codex: true, opencode: true }), 'Claude, Codex and opencode')
   assert.equal(agentNames({ opencode: true, antigravity: true }), 'opencode and Antigravity')
+})
+
+test('setup seeds retained permission values once without overwriting unsaved choices on polls', () => {
+  const setup = createSetup(async () => {})
+  setup.load({ answered: false, agents: { claude: true }, shareTools: false, linkAgents: true })
+  assert.equal(setup.state.shareTools, false)
+  assert.equal(setup.state.linkAgents, true)
+  setup.state.shareTools = true
+  setup.load({ answered: false, agents: { claude: true }, shareTools: false, linkAgents: false })
+  assert.equal(setup.state.shareTools, true)
+  assert.equal(setup.state.linkAgents, true)
 })

@@ -38,11 +38,11 @@
       <p class="setup-lead">Choose what to allow. You can change this later in Settings.</p>
       <label class="setup-option">
         <span class="setup-copy"><strong>Bots can use my tools</strong><small>Claude bots get your Claude connectors, MCP servers, skills and instructions. Codex bots always use your Codex setup.</small></span>
-        <input id="share-tools" class="switch" type="checkbox" role="switch" checked />
+        <input id="share-tools" class="switch" type="checkbox" role="switch" />
       </label>
       <label class="setup-option" id="link-agents-label">
         <span class="setup-copy"><strong>My Orca agents can talk to the bots</strong><small>Adds Bot Team for Orca's tools to <span id="agent-names">Claude, Codex, opencode and Antigravity</span>, so an agent can message a bot or read its replies.</small></span>
-        <input id="link-agents" class="switch" type="checkbox" role="switch" checked />
+        <input id="link-agents" class="switch" type="checkbox" role="switch" />
       </label>
       <label class="setup-option" id="import-tools-label" hidden>
         <span class="setup-copy"><strong>Bring in tools from my AI apps</strong><small id="import-tools-copy"></small></span>
@@ -50,7 +50,7 @@
       </label>
       <div class="setup-actions">
         <button id="setup-skip" type="button">Not now</button>
-        <button id="setup-allow" type="button">Allow</button>
+        <button id="setup-allow" type="button">Save choices</button>
       </div>
       <p id="setup-message" role="status"></p>
     </section>
