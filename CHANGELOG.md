@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.1.6 (18 November 2026)
+
+- **In-panel bot model switching**: switch a bot's AI model directly from the
+  chat view header's **Model** pill or the sidebar right-click **Model** menu,
+  grouped by ready AI provider from OpenMausBot (`GET /api/instances`) and
+  updating both the bot default and its active conversation on local and paired
+  Orca servers.
+- **Bot-centric MCP Connectors & least-privilege scoping**: replaces the
+  one-click bulk tool import with **Settings → MCP Connectors** (**Providers**
+  catalog for enabling, disabling, or removing connectors by AI app, plus a **By
+  Bot** access view) and an in-chat **Connectors** pill + sidebar context menu
+  checklist for scoping enabled MCP connectors per bot. Newly enabled connectors
+  default to zero bots allowed, with non-destructive background reconciliation
+  and paired-host relay parity.
+- **Sidebar group rename & context menu polish**: right-click or press
+  `Shift+F10` on a sidebar group heading to rename the group, remove trailing
+  ellipses from bot context menu items, and show an inline spinner while a bot
+  is being deleted or hidden.
+
 ## 0.1.5 (17 November 2026)
 
 - **Panel polish**: shows the OpenMausBot installation notice once inside its
