@@ -1,3 +1,4 @@
+import { connectorIcon } from './connector-icon.ts'
 import type { FrameApi } from './chat-view.ts'
 import type { Connector, Connectors, ConnectorAction } from '../worker/mcp-connectors.ts'
 
@@ -112,7 +113,13 @@ export function createMcpView(frame: FrameApi, element: (id: string) => HTMLElem
             })
         )
         control.disabled =
-          busy() || !selectable.length || selectable.every((c) => c.enabled === enabled)
+          busy() ||
+          !selectable.length ||
+          selectable.every(
+            (c) =>
+              c.enabled === enabled &&
+              (enabled || !c.present || (c.removable ?? provider === 'OpenMausBot'))
+          )
         controls.append(control)
       }
       head.append(title, controls)
@@ -132,7 +139,8 @@ export function createMcpView(frame: FrameApi, element: (id: string) => HTMLElem
         line.className = 'mcp-row-head'
         const actions = node('div')
         actions.className = 'mcp-actions'
-        if (row.present) {
+        const removable = row.present && (row.removable ?? row.provider === 'OpenMausBot')
+        if (removable) {
           const remove = actionButton(
             'Remove',
             `${row.name}-remove`,
@@ -146,7 +154,7 @@ export function createMcpView(frame: FrameApi, element: (id: string) => HTMLElem
           actions.append(remove)
         }
         actions.append(switchControl(row))
-        line.append(titleFor(row), actions)
+        line.append(connectorIcon(row), titleFor(row), actions)
         section.append(line)
         if (row.enabled) {
           const access = node('div')
@@ -168,17 +176,12 @@ export function createMcpView(frame: FrameApi, element: (id: string) => HTMLElem
           }
           section.append(access)
         }
-        if (removing === row.name) {
+        if (removable && removing === row.name) {
           const confirmation = node('div')
           confirmation.className = 'mcp-confirm'
           confirmation.append(
             node('strong', `Remove ${row.name}?`),
-            node(
-              'p',
-              row.provider === 'OpenMausBot'
-                ? 'Its saved credentials in OpenMausBot will be permanently deleted. No local source is available to restore them.'
-                : 'This deletes its saved credentials and bot assignments in OpenMausBot.'
-            )
+            node('p', 'Its saved credentials in OpenMausBot will be permanently deleted.')
           )
           const actions = node('div')
           actions.className = 'bot-menu-actions'
@@ -234,6 +237,7 @@ export function createMcpView(frame: FrameApi, element: (id: string) => HTMLElem
         const line = node('div')
         line.className = 'mcp-row mcp-row-head'
         line.append(
+          connectorIcon(row),
           titleFor(row, true),
           row.bot ? node('span', 'Pinned to this bot') : switchControl(row, bot.id)
         )
@@ -261,7 +265,9 @@ export function createMcpView(frame: FrameApi, element: (id: string) => HTMLElem
     const target = remote ?? 'this computer'
     element('mcp-security').textContent =
       `Credentials on ${target} are copied only for connectors you turn on. Only selected bots can use them in OpenMausBot. Provider CLI settings can give bots additional access.`
-    button('mcp-refresh').disabled = busy()
+    const refreshButton = button('mcp-refresh')
+    refreshButton.disabled = busy()
+    refreshButton.setAttribute('aria-busy', String(refreshButton.disabled))
     element('mcp-summary').textContent = data
       ? `${data.connectors.filter((c) => c.enabled).length} enabled · ${data.connectors.length} available on ${target}`
       : `MCP connectors unavailable on ${target}. Start OpenMausBot with this plugin, then refresh.`
@@ -352,6 +358,18 @@ export function createMcpView(frame: FrameApi, element: (id: string) => HTMLElem
     try {
       const next = await frame.plugin.request('mcp.act', input)
       if (current !== generation) return
+      if (
+        input.action === 'toggle' &&
+        !input.enabled &&
+        focusedKey === `${input.name}-toggle` &&
+        !next.connectors.some((row) => row.name === input.name)
+      ) {
+        const previous = data?.connectors.find((row) => row.name === input.name)
+        const local = next.connectors.find(
+          (row) => row.provider === previous?.provider && row.rawName === previous?.rawName
+        )
+        if (local) focusedKey = `${local.name}-toggle`
+      }
       data = next
       if (input.action === 'remove') {
         removing = undefined

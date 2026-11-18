@@ -117,6 +117,8 @@ test('capability pickers group models, retain missing current choice, assign rep
     await picker.open('model', bot, trigger as any)
     assert.ok(root.children.some((n) => n.textContent === 'Current: Old model'))
     assert.ok(root.children.some((n) => n.textContent === 'Claude Work'))
+    assert.equal(root.children.some((n) => n.textContent === 'Cancel'), false)
+    assert.equal(root.children.at(-1), item('claude.work/anthropic/sonnet'))
     assert.equal(root.style.left, '122px')
     assert.equal(root.style.top, '392px')
     let stopped = false
@@ -148,12 +150,25 @@ test('capability pickers group models, retain missing current choice, assign rep
     assert.equal(picker.switching(), false)
     failure = ''
     await picker.open('connectors', bot, trigger as any)
+    assert.equal(root.children.some((n) => n.textContent === 'Cancel'), false)
+    assert.equal(root.children.at(-1)?.textContent, 'Manage connectors…')
+    doc.emit('keydown', { key: 'ArrowUp' })
+    assert.equal((document as any).activeElement, root.children.at(-1))
+    doc.emit('keydown', { key: 'ArrowDown' })
+    assert.equal((document as any).activeElement, item('work-mail'))
+    assert.equal(item('work-mail').children[0].dataset.icon, 'gmail')
     assert.equal(item('owned').disabled, true)
     item('work-mail').emit()
     await flush()
     assert.deepEqual(data.connectors[0].bots, ['b', 'a'])
     assert.equal(root.hidden, false)
     assert.equal(item('work-mail').attrs.get('aria-checked'), 'true')
+    assert.equal(
+      item('work-mail')
+        .children.find((n) => n.textContent === '✓')
+        ?.attrs.get('aria-hidden'),
+      'true'
+    )
     item('work-mail').emit()
     await flush()
     assert.deepEqual(data.connectors[0].bots, ['b'])
@@ -182,6 +197,16 @@ test('capability pickers group models, retain missing current choice, assign rep
     await pending
     assert.equal(root.hidden, true)
     assert.equal(root.children.length, 0)
+    delayed = Promise.resolve({ groups: [] })
+    await picker.open('model', bot, trigger as any)
+    assert.match(root.children.at(-1)!.textContent, /No ready models/)
+    for (const key of ['ArrowDown', 'ArrowUp']) {
+      doc.emit('keydown', { key })
+      assert.equal((document as any).activeElement, root)
+    }
+    doc.emit('keydown', { key: 'Escape' })
+    assert.equal(root.hidden, true)
+    assert.equal((document as any).activeElement, trigger)
     delayed = undefined
     await picker.open('model', bot, trigger as any)
     delayed = new Promise((resolve) => {

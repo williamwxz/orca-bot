@@ -149,7 +149,7 @@ test('provider enable/disable, explicit assignments and remove preserve other pr
   result = await f.act(1234, { action: 'group', provider: 'Cursor', enabled: false })
   assert.equal(result.connectors.filter((c) => c.provider === 'Cursor' && c.enabled).length, 0)
   assert.equal(f.servers.find((s) => s.name === 'old').enabled, true)
-  await f.act(1234, { action: 'remove', name: 'gmail-cursor' })
+  await assert.rejects(f.act(1234, { action: 'remove', name: 'gmail-cursor' }))
   assert.equal(
     f.servers.some((s) => s.name === 'gmail-cursor'),
     false
@@ -685,4 +685,98 @@ test('list only revokes managed connectors after a failed bot patch and confirme
     await assert.rejects(f.service.list(1234))
     assert.equal(f.servers.find((s) => s.name === 'gmail').enabled, outcome !== 'confirmed')
   }
+})
+
+test('local disable retains a disabled retryable server after bot or delete failure', async () => {
+  for (const failure of ['bot', 'delete']) {
+    const f = fixture()
+    await f.act(1234, { action: 'toggle', name: 'gmail', enabled: true })
+    await assert.rejects(f.act(1234, { action: 'remove', name: 'gmail' }))
+    await f.act(1234, { action: 'assign', name: 'gmail', bots: ['a'] })
+    const request = f.deps.request
+    f.deps.request = async (port, path, method, body) => {
+      if (failure === 'bot' ? path === '/api/bots/a' && method === 'PATCH' : method === 'DELETE')
+        throw new Error(requestFailure(409, path, method))
+      return request(port, path, method, body)
+    }
+    const off = { action: 'toggle', name: 'gmail', enabled: false }
+    await assert.rejects(f.act(1234, off))
+    assert.equal(f.servers.find((s) => s.name === 'gmail').enabled, false)
+    assert.ok(f.prefs.read().connectors!.gmail)
+    f.deps.request = request
+    await f.act(1234, off)
+    assert.ok(!f.servers.some((s) => s.name === 'gmail'))
+    assert.ok(!f.prefs.read().connectors!.gmail)
+  }
+})
+
+test('custom servers survive individual and group disable with credentials intact', async () => {
+  for (const action of ['toggle', 'group']) {
+    const f = fixture()
+    f.servers[0].url = 'https://mcp.linear.app/' + secret
+    const state = await f.act(1234, {
+      action,
+      name: 'old',
+      provider: 'OpenMausBot',
+      enabled: false
+    })
+    assert.equal(f.servers[0].enabled, false)
+    assert.ok(f.servers[0].url.includes(secret))
+    assert.equal(state.connectors.find((c) => c.name === 'old')?.icon, 'linear')
+    assert.ok(!JSON.stringify(state).includes('linear.app'))
+    assert.ok(!JSON.stringify(state).includes(secret))
+    assert.ok(!f.calls.some((c) => c.method === 'DELETE'))
+  }
+})
+
+test('matching local transport never authorizes purging user-created credentials', async () => {
+  for (const bot of [undefined, 'a']) {
+    for (const action of ['toggle', 'group']) {
+      const f = fixture()
+      const custom = {
+        name: 'private-mail',
+        command: 'mail',
+        args: [],
+        env: { TOKEN: 'omb-only' },
+        bot,
+        enabled: true
+      }
+      f.servers.push(custom)
+      const before = await f.service.list(1234)
+      const row = before.connectors.find((c) => c.name === custom.name)!
+      assert.equal(row.provider, 'Claude Desktop')
+      assert.equal(row.removable, true)
+      if (bot && action === 'group') {
+        // Groups exclude pinned rows, including stale or forged requests naming one.
+        await assert.rejects(
+          f.service.act(1234, { action, provider: row.provider, enabled: false, targets: [row] })
+        )
+        assert.equal(custom.enabled, true)
+      } else {
+        await f.act(1234, { action, name: row.name, provider: row.provider, enabled: false })
+        assert.equal(custom.enabled, false)
+        const writes = f.calls.filter((c) => c.path.endsWith('/private-mail') && c.method !== 'GET')
+        assert.deepEqual(
+          writes.map((c) => [c.method, c.body]),
+          [['PATCH', { enabled: false }]]
+        )
+      }
+      assert.ok(!f.calls.some((c) => c.method === 'DELETE'))
+      assert.deepEqual(custom.env, { TOKEN: 'omb-only' })
+      await f.act(1234, { action: 'remove', name: row.name })
+      assert.ok(!f.servers.includes(custom))
+    }
+  }
+})
+
+test('pinning a recorded import preserves its credentials on disable', async () => {
+  const f = fixture()
+  await f.act(1234, { action: 'toggle', name: 'gmail', enabled: true })
+  const row = f.servers.find((s) => s.name === 'gmail')
+  row.bot = 'a'
+  await f.act(1234, { action: 'toggle', name: 'gmail', enabled: false })
+  assert.equal(row.enabled, false)
+  assert.ok(f.servers.includes(row))
+  assert.ok(f.prefs.read().connectors!.gmail)
+  assert.ok(!f.calls.some((c) => c.method === 'DELETE'))
 })

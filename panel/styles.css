@@ -269,10 +269,40 @@ label { display: block; margin: 12px 0 5px; font-size: 12px; }
 #mcp-security { font-size: 12px; line-height: 18px; color: var(--bd-muted); margin: 8px 0; }
 #mcp-message { font-size: 12px; color: var(--bd-muted); margin: 6px 0; }
 #mcp-message:empty { display: none; }
-#mcp-refresh { margin-left: auto; }
+#mcp-refresh { display: grid; place-items: center; width: 28px; height: 28px; padding: 0; margin-left: auto; }
+#mcp-refresh:hover { background: var(--bd-selected); }
+@media (prefers-reduced-motion: no-preference) {
+  #mcp-refresh[aria-busy="true"] svg { animation: deleting-spin 1s linear infinite; }
+}
 
 .chat-capabilities { display: flex; flex-wrap: wrap; gap: 5px; margin: 0 0 8px 72px; }
 .chat-capabilities .capability-pill { height: 24px; max-width: 100%; padding: 0 8px; border-radius: 999px; font-size: 11px; color: var(--bd-muted); background: var(--bd-composer); border: 1px solid var(--bd-composer-ring); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-capabilities .capability-pill[aria-expanded="true"] { background: var(--bd-selected); color: var(--bd-ink); }
 .capability-menu { max-height: calc(100vh - 24px); max-width: min(300px, calc(100vw - 16px)); overflow-y: auto; }
 .capability-group { margin-top: 6px; padding-top: 8px; border-top: 1px solid var(--bd-composer-ring); color: var(--bd-muted); }
+
+.mcp-icon {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: inset 0 0 0 1px var(--bd-composer-ring);
+}
+html.dark .mcp-icon { background: #292b30; }
+.mcp-icon svg { width: 18px; height: 18px; }
+.mcp-icon.compact { width: 22px; height: 22px; border-radius: 6px; }
+.mcp-icon.compact svg { width: 15px; height: 15px; }
+.mcp-row-head .mcp-row-title { flex: 1; }
+.mcp-row-bots { margin-left: 40px; }
+.mcp-choice { display: flex; align-items: center; gap: 8px; }
+.mcp-choice-label { flex: 1; }
+.mcp-choice-check { font-weight: 650; }
+.mcp-icon-hue-0 { color: #ad68c7; }
+.mcp-icon-hue-1 { color: #538bd4; }
+.mcp-icon-hue-2 { color: #258f8d; }
+.mcp-icon-hue-3 { color: #c97a30; }
+.mcp-icon-hue-4 { color: #ca6889; }
+.mcp-icon-hue-5 { color: #708b46; }
