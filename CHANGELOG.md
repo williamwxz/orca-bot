@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.8 (18 November 2026)
+
+- **Add bot button & creation flow**: adds an accessible **Add bot** (`+`)
+  action in the panel header alongside empty-state and group context menu entry
+  points, opening a compact **New bot** popover (optional bot name, paired-host
+  terminal relay support, least-privilege MCP defaults, and immediate chat open
+  upon creation).
+- **Auto-closing bottom-left toast notifications**: replaces lingering inline
+  action status text with a floating bottom-left toast notification featuring an
+  immediate `×` dismiss button and a 3-second auto-close timer.
+
 ## 0.1.7 (18 November 2026)
 
 - **Clean MCP connector toggles & auto-purge on disable**: turning off (or using
