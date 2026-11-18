@@ -1,7 +1,7 @@
 import { defaultHttpDeps, HttpStatusError } from './omb-http.ts'
 import type { HttpDeps } from './omb-http.ts'
-import { mainFirst } from '../shared/roster.ts'
-import type { Bot, BotAction } from '../shared/roster.ts'
+import { mainFirst, validateGroupName } from '../shared/roster.ts'
+import type { Bot, BotAction, GroupRename } from '../shared/roster.ts'
 import { validBotId } from './omb-open.ts'
 import { addableMausBot, visibleBot } from '../shared/appearance.ts'
 
@@ -109,9 +109,7 @@ export function validateBotAction(input: BotAction): void {
       throw new Error('Enter a bot name between 1 and 80 characters.')
   } else if (input.action === 'group') {
     if (input.section !== null) {
-      const trimmed = typeof input.section === 'string' ? input.section.trim() : ''
-      if (!trimmed || trimmed.length > 60)
-        throw new Error('Enter a group name between 1 and 60 characters.')
+      validateGroupName(input.section)
     }
   } else if (input.action !== 'delete') {
     throw new Error('Unsupported bot action.')
@@ -198,5 +196,24 @@ export async function rosterBusy(
     )
   } catch {
     return true
+  }
+}
+
+export async function renameGroup(
+  input: { port: number } & GroupRename,
+  deps: HttpDeps = defaultHttpDeps()
+): Promise<void> {
+  const section = validateGroupName(input?.section)
+  const name = validateGroupName(input?.name)
+  if (section === name) return
+  try {
+    await deps.request(input.port, `/api/sidebar-sections?section=${encodeURIComponent(section)}`, { name }, 'PATCH')
+  } catch (error) {
+    if (error instanceof HttpStatusError) {
+      if (error.status === 404) throw new Error('This group no longer exists. Refresh the roster.')
+      if (error.status === 409) throw new Error('Could not rename this group. That name already exists, or the group is busy.')
+      if (error.status === 400) throw new Error('Enter a valid group name between 1 and 60 characters.')
+    }
+    throw new Error('Could not rename this group. Try again.')
   }
 }

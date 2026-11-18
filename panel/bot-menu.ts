@@ -1,4 +1,5 @@
-import type { Bot, BotAction } from '../shared/roster.ts'
+import { validateGroupName } from '../shared/roster.ts'
+import type { Bot, BotAction, GroupRename } from '../shared/roster.ts'
 
 type MenuEvent = {
   clientX?: number
@@ -9,7 +10,11 @@ type MenuEvent = {
   stopPropagation?: () => void
 }
 
-export function createBotMenu(menu: HTMLElement, act: (input: BotAction) => Promise<void>) {
+export function createBotMenu(
+  menu: HTMLElement,
+  act: (input: BotAction) => Promise<void>,
+  renameGroup: (input: GroupRename) => Promise<void>
+) {
   let busy = false
   let disabled = false
   let trigger: HTMLElement | undefined
@@ -61,16 +66,17 @@ export function createBotMenu(menu: HTMLElement, act: (input: BotAction) => Prom
     return btn
   }
 
-  function renderRename(bot: Bot): void {
+  function renderRename(bot: Bot | string): void {
     const title = document.createElement('div')
     title.className = 'bot-menu-title'
-    title.textContent = 'Rename bot'
+    const group = typeof bot === 'string'
+    title.textContent = group ? 'Rename group' : 'Rename bot'
     const input = document.createElement('input')
     input.type = 'text'
     input.className = 'bot-menu-input'
-    input.value = bot.name
-    input.setAttribute('maxlength', '80')
-    input.setAttribute('aria-label', 'Bot name')
+    input.value = typeof bot === 'string' ? bot : bot.name
+    input.setAttribute('maxlength', group ? '60' : '80')
+    input.setAttribute('aria-label', group ? 'Group name' : 'Bot name')
     const actions = document.createElement('div')
     actions.className = 'bot-menu-actions'
     const cancel = document.createElement('button')
@@ -84,8 +90,23 @@ export function createBotMenu(menu: HTMLElement, act: (input: BotAction) => Prom
     save.textContent = 'Save'
     const submit = () => {
       const trimmed = input.value.trim()
-      if (!trimmed || trimmed.length > 80) return
-      void run({ botId: bot.id, action: 'rename', name: trimmed })
+      if (busy || disabled) return
+      if (typeof bot === 'string') {
+        try {
+          validateGroupName(trimmed)
+        } catch (error) {
+          note.textContent = (error as Error).message
+          return
+        }
+        busy = true
+        close()
+        void renameGroup({ section: bot, name: trimmed }).finally(() => {
+          busy = false
+        })
+      } else {
+        if (!trimmed || trimmed.length > 80) return
+        void run({ botId: bot.id, action: 'rename', name: trimmed })
+      }
     }
     save.addEventListener('click', submit)
     input.addEventListener('keydown', (event) => {
@@ -99,7 +120,10 @@ export function createBotMenu(menu: HTMLElement, act: (input: BotAction) => Prom
       }
     })
     actions.append(cancel, save)
-    menu.replaceChildren(title, input, actions)
+    const note = document.createElement('p')
+    note.className = 'bot-menu-note'
+    note.setAttribute('role', 'alert')
+    menu.replaceChildren(title, input, actions, note)
     input.focus()
     ;(input as HTMLInputElement & { select?: () => void }).select?.()
   }
@@ -205,11 +229,11 @@ export function createBotMenu(menu: HTMLElement, act: (input: BotAction) => Prom
       bot.pinned ? 'Unpin' : 'Pin',
       () => void run({ botId: bot.id, action: 'pin', pinned: !bot.pinned })
     )
-    const renameItem = menuItem('Rename\u2026', () => {
+    const renameItem = menuItem('Rename', () => {
       renderRename(bot)
       position(x, y)
     })
-    const groupItem = menuItem('Group\u2026', () => {
+    const groupItem = menuItem('Group', () => {
       items = []
       renderGroup(bot, sections)
       position(x, y)
@@ -219,7 +243,7 @@ export function createBotMenu(menu: HTMLElement, act: (input: BotAction) => Prom
     const deleteItem = bot.defaultBot
       ? menuItem('Hide from list', () => void run({ botId: bot.id, action: 'delete' }))
       : menuItem(
-          'Delete\u2026',
+          'Delete',
           () => {
             renderDelete(bot)
             position(x, y)
@@ -264,5 +288,26 @@ export function createBotMenu(menu: HTMLElement, act: (input: BotAction) => Prom
   window.addEventListener('blur', () => close())
   window.addEventListener('resize', () => close())
 
-  return { open, close }
+  function openGroup(section: string, rawEvent?: unknown, from?: HTMLElement): void {
+    const event = rawEvent as MenuEvent | undefined
+    event?.preventDefault?.()
+    event?.stopPropagation?.()
+    if (section.trim().toLowerCase() === 'pinned') return
+    disabled = busy
+    trigger = from
+    items = []
+    const rect = from?.getBoundingClientRect?.()
+    const x = event?.clientX || rect?.left || 24
+    const y = event?.clientY || rect?.bottom || 80
+    const rename = menuItem('Rename', () => {
+      renderRename(section)
+      position(x, y)
+    })
+    menu.replaceChildren(rename)
+    menu.hidden = false
+    position(x, y)
+    rename.focus()
+  }
+
+  return { open, openGroup, close }
 }

@@ -88,7 +88,7 @@ test('the panel chooses the host, relays dashboard open and permissions, and kee
               linkAgents: false,
               agents: { claude: false, codex: false }
             }))
-            for (const name of ['server.install', 'server.stop']) {
+            for (const name of ['server.install', 'server.stop', 'groups.rename']) {
               api.panels.handle(name, () => {
                 throw new Error('Must run on selected remote host')
               })
@@ -100,6 +100,10 @@ test('the panel chooses the host, relays dashboard open and permissions, and kee
           },
           relayTo((name, input) => {
             relayed.push(name)
+            if (name === 'groups.rename') {
+              assert.deepEqual(input, { section: 'Ops', name: 'Research' })
+              return { ok: true }
+            }
             if (name === 'chat.open') return { message: '' }
             if (name === 'setup.get')
               return {
@@ -138,6 +142,7 @@ test('the panel chooses the host, relays dashboard open and permissions, and kee
       hosts,
       message: ''
     })
+    assert.deepEqual(await worker.request('groups.rename', { section: 'Ops', name: 'Research' }), { ok: true })
     assert.equal(host.data().storage.botHost, 'mini-1')
     assert.match(
       ((await worker.request('status', {})) as { message: string }).message,
@@ -163,7 +168,7 @@ test('the panel chooses the host, relays dashboard open and permissions, and kee
     assert.deepEqual(await worker.request('tools.import', {}), { added: ['cursor'], skipped: [] })
     assert.deepEqual(
       [local, relayed],
-      [[], ['status', 'setup.get', 'chat.open', 'prefs.get', 'prefs.set', 'tools.import']]
+      [[], ['groups.rename', 'status', 'setup.get', 'chat.open', 'prefs.get', 'prefs.set', 'tools.import']]
     )
     assert.deepEqual(await worker.request('server.install', {}), { accepted: true })
     assert.deepEqual(await worker.request('server.stop', {}), {

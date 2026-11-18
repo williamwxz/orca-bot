@@ -155,6 +155,7 @@ let selected: string | undefined
 let bots: Bot[] = []
 let rosterKey = ''
 const changing = new Set<string>()
+const deleting = new Set<string>()
 const readBots = new Set<string>()
 const previews = new Map<string, string>()
 const rosterView = element<HTMLElement>('roster-view')
@@ -162,6 +163,7 @@ const rosterView = element<HTMLElement>('roster-view')
 const botMenu = createBotMenu(element('bot-menu'), async (input: BotAction) => {
   if (changing.has(input.botId)) return
   changing.add(input.botId)
+  if (input.action === 'delete') deleting.add(input.botId)
   renderBots()
   try {
     result.textContent = ''
@@ -171,8 +173,17 @@ const botMenu = createBotMenu(element('bot-menu'), async (input: BotAction) => {
   } catch (error) {
     result.textContent = error instanceof Error ? error.message : 'Could not update this bot.'
   } finally {
+    deleting.delete(input.botId)
     changing.delete(input.botId)
     renderBots()
+  }
+}, async (input) => {
+  try {
+    result.textContent = ''
+    await frame.plugin.request('groups.rename', input)
+    await refreshAfterChange()
+  } catch (error) {
+    result.textContent = error instanceof Error ? error.message : 'Could not rename this group.'
   }
 })
 
@@ -279,6 +290,7 @@ function makeBotRow(bot: Bot, sections: string[]): HTMLElement {
   chat.className = 'bot-chat'
   chat.dataset.focus = `${bot.id}-chat`
   chat.setAttribute('aria-disabled', String(opening || changing.has(bot.id)))
+  chat.setAttribute('aria-busy', String(deleting.has(bot.id)))
   chat.title = bot.title || `Open ${bot.name}'s chat`
   chat.setAttribute('aria-label', `Open ${bot.name}'s chat`)
   const avatar = makeAvatar(bot)
@@ -316,7 +328,13 @@ function makeBotRow(bot: Bot, sections: string[]): HTMLElement {
   copy.append(model)
   const state = document.createElement('span')
   state.className = 'state'
-  if (bot.unread && !readBots.has(bot.id)) {
+  if (deleting.has(bot.id)) {
+    const spinner = document.createElement('span')
+    spinner.className = 'deleting-spinner'
+    spinner.setAttribute('role', 'status')
+    spinner.setAttribute('aria-label', 'Deleting')
+    state.append(spinner)
+  } else if (bot.unread && !readBots.has(bot.id)) {
     const unread = document.createElement('span')
     unread.className = 'unread-dot'
     unread.setAttribute('aria-label', 'Unread')
@@ -328,7 +346,7 @@ function makeBotRow(bot: Bot, sections: string[]): HTMLElement {
 }
 
 function renderBots(): void {
-  const key = JSON.stringify([bots, selected, opening, [...changing], [...readBots], [...previews]])
+  const key = JSON.stringify([bots, selected, opening, [...changing], [...deleting], [...readBots], [...previews]])
   if (key === rosterKey) return
   rosterKey = key
   const focused = (document.activeElement as HTMLElement)?.dataset.focus
@@ -353,6 +371,16 @@ function renderBots(): void {
     const heading = document.createElement('div')
     heading.className = 'roster-group-title'
     heading.textContent = group.title
+    if (group.title.toLowerCase() !== 'pinned' && grouped.sections.includes(group.title)) {
+      heading.tabIndex = 0
+      heading.dataset.focus = `group-${group.title}`
+      heading.setAttribute('aria-haspopup', 'menu')
+      const openGroup = (event: Event) => botMenu.openGroup(group.title, event, heading)
+      heading.addEventListener('contextmenu', openGroup)
+      heading.addEventListener('keydown', (event) => {
+        if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) openGroup(event)
+      })
+    }
     roster.append(heading)
     for (const bot of group.bots) {
       roster.append(makeBotRow(bot, grouped.sections))

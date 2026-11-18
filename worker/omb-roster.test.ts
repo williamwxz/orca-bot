@@ -1,5 +1,5 @@
 import { assert, test } from 'orca/testing'
-import { listBots, addMausBot, actOnBot, rosterBusy } from './omb-roster.ts'
+import { listBots, addMausBot, actOnBot, rosterBusy, renameGroup } from './omb-roster.ts'
 import { HttpStatusError } from './omb-http.ts'
 import { groupRoster } from '../shared/roster.ts'
 import type { HttpDeps } from './omb-http.ts'
@@ -248,4 +248,22 @@ test('custom Pinned and Bots sections have distinct headings without losing memb
     grouped.groups.flatMap((group) => group.bots.map((bot) => bot.id)),
     ['1', '2', '3', '4']
   )
+})
+
+test('group rename trims, encodes its query, skips no-ops and explains refusals', async () => {
+  const { deps, calls } = fake([])
+  await renameGroup({ port: 18799, section: ' R&D / 产品 ', name: ' Operations ' }, deps)
+  assert.deepEqual(calls, [{ port: 18799, path: '/api/sidebar-sections?section=R%26D%20%2F%20%E4%BA%A7%E5%93%81', patch: { name: 'Operations' }, method: 'PATCH' }])
+  await renameGroup({ port: 18799, section: ' Ops ', name: 'Ops' }, deps)
+  assert.equal(calls.length, 1)
+  for (const invalid of ['', ' ', 'x'.repeat(61), ' PINNED ', null, 42]) {
+    for (const field of ['section', 'name']) {
+      await assert.rejects(renameGroup({ port: 18799, section: 'Ops', name: 'New', [field]: invalid } as any, deps))
+    }
+  }
+  assert.equal(calls.length, 1)
+  for (const [status, message] of [[404, /no longer exists/], [409, /already exists.*busy/], [400, /valid group name/], [500, /Try again/]] as const) {
+    deps.request = async () => { throw new HttpStatusError(status) }
+    await assert.rejects(renameGroup({ port: 18799, section: 'Ops', name: 'New' }, deps), message)
+  }
 })

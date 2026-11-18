@@ -12,6 +12,8 @@ class Element {
   checked = true
   className = ''
   value = ''
+  selected = false
+  select() { this.selected = true }
   dataset: Record<string, string> = {}
   append(...children: Element[]) {
     this.children.push(...children)
@@ -72,6 +74,8 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
   let grouped = false
   let pinned = true
   let defaultBot = false
+  let failAct = false
+  let section = 'Research'
   let holdAct = false
   let finishAct: (() => void) | undefined
   let holdOpen = false
@@ -112,7 +116,7 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
               id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
               name: 'Remote bot',
               defaultBot,
-              ...(grouped ? { pinned, section: 'Research', knownSections: ['Research'] } : {}),
+              ...(grouped ? { pinned, section, knownSections: [section] } : {}),
               state: 'idle',
               modelLabel: 'Claude'
             }
@@ -171,6 +175,12 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
             finishOpen = () => resolve({ message: '' })
           })
         if (name === 'chat.open') return { message: host === 'local' ? 'Opened.' : '' }
+        if (name === 'groups.rename') {
+          section = (input as any).name
+          if (holdAct) await new Promise<void>((resolve) => { finishAct = resolve })
+          return { ok: true }
+        }
+        if (name === 'bots.act' && failAct) throw new Error('Delete failed')
         if (name === 'bots.act' && holdAct)
           return new Promise((resolve) => {
             finishAct = () => resolve({ ok: true })
@@ -399,7 +409,7 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
       button!.emit('click')
     }
     openMenu()
-    clickLabel(menu, 'Rename…')
+    clickLabel(menu, 'Rename')
     clickLabel(menu, 'Cancel')
     assert.equal(menu.hidden, true)
     assert.equal((doc as any).activeElement?.className, 'bot-chat')
@@ -423,7 +433,7 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
       pinned: false
     })
     openMenu()
-    clickLabel(menu, 'Rename…')
+    clickLabel(menu, 'Rename')
     menu.children[1].value = 'New name'
     clickLabel(menu, 'Save')
     await flush()
@@ -432,7 +442,7 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
       'New name'
     )
     openMenu()
-    clickLabel(menu, 'Group…')
+    clickLabel(menu, 'Group')
     clickLabel(menu, '✓ Research')
     await flush()
     assert.equal(
@@ -440,7 +450,7 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
       'Research'
     )
     openMenu()
-    clickLabel(menu, 'Group…')
+    clickLabel(menu, 'Group')
     menu.children.at(-1)!.children[0].value = 'New group'
     clickLabel(menu, 'Add')
     await flush()
@@ -450,10 +460,31 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
     )
     openMenu()
     const beforeDelete = calls.filter((call) => call.name === 'bots.act').length
-    clickLabel(menu, 'Delete…')
-    assert.equal(calls.filter((call) => call.name === 'bots.act').length, beforeDelete)
     clickLabel(menu, 'Delete')
+    assert.equal(calls.filter((call) => call.name === 'bots.act').length, beforeDelete)
+    holdAct = true
+    clickLabel(menu, 'Delete')
+    const deletingRow = () => get('roster').children.find((child) => child.className.startsWith('bot-row'))!
+    const spinner = () => deletingRow().children.at(-1)!.children.find((child) => child.className === 'deleting-spinner')
+    assert.equal(spinner()?.attributes.get('aria-label'), 'Deleting')
+    assert.equal(deletingRow().children[0].attributes.get('aria-busy'), 'true')
+    holdNextBots = true
+    finishAct!()
+    holdAct = false
     await flush()
+    assert.ok(spinner())
+    holdBots!([{ id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', name: 'Remote bot', state: 'idle', modelLabel: 'Codex', pinned: true, section: 'Research' }])
+    await flush()
+    assert.equal(spinner(), undefined)
+    failAct = true
+    openMenu()
+    clickLabel(menu, 'Delete')
+    clickLabel(menu, 'Delete')
+    assert.ok(spinner())
+    await flush()
+    assert.equal(spinner(), undefined)
+    assert.equal(get('result').textContent, 'Delete failed')
+    failAct = false
     assert.equal(
       (calls.filter((call) => call.name === 'bots.act').at(-1)?.input as any).action,
       'delete'
@@ -463,8 +494,47 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
     win.emit('pageshow')
     await flush()
     assert.equal(get('roster').children[0].textContent, 'Research')
+    const groupHeading = () => get('roster').children.find((child) => child.className === 'roster-group-title')!
+    for (const event of ['contextmenu', 'ContextMenu', 'F10']) {
+      const header = groupHeading()
+      assert.ok(header.dataset.focus)
+      if (event === 'contextmenu') header.emit(event)
+      else header.emit('keydown', { key: event, shiftKey: true })
+      assert.deepEqual(menu.children.map((child) => child.textContent), ['Rename'])
+      clickLabel(menu, 'Rename')
+      assert.equal(menu.children[0].textContent, 'Rename group')
+      assert.equal(menu.children[1].value, section)
+      assert.equal(menu.children[1].selected, true)
+      assert.equal(menu.children[1].attributes.get('maxlength'), '60')
+      menu.children[1].emit('keydown', { key: 'Escape' })
+      assert.equal(menu.hidden, true)
+      assert.equal((doc as any).activeElement, header)
+    }
+    groupHeading().emit('contextmenu')
+    clickLabel(menu, 'Rename')
+    menu.children[1].value = ' PINNED '
+    clickLabel(menu, 'Save')
+    assert.equal(menu.hidden, false)
+    assert.match(menu.children[3].textContent, /reserved/)
+    menu.children[1].value = ' Operations '
+    const save = menu.children[2].children[1]
+    holdAct = true
+    save.emit('click')
+    save.emit('click')
+    assert.equal(calls.filter((call) => call.name === 'groups.rename').length, 1)
+    finishAct!()
+    holdAct = false
+    await flush()
+    assert.equal(groupHeading().textContent, 'Operations')
+    groupHeading().emit('contextmenu')
+    clickLabel(menu, 'Rename')
+    menu.children[1].value = 'Research'
+    menu.children[1].emit('keydown', { key: 'Enter' })
+    await flush()
+    assert.equal(groupHeading().textContent, 'Research')
+
     openMenu()
-    clickLabel(menu, 'Group…')
+    clickLabel(menu, 'Group')
     clickLabel(menu, 'Remove from group')
     await flush()
     assert.equal(
@@ -473,7 +543,9 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
     )
     openMenu()
     clickLabel(menu, 'Hide from list')
+    assert.ok(spinner())
     await flush()
+    assert.equal(spinner(), undefined)
     assert.equal(
       (calls.filter((call) => call.name === 'bots.act').at(-1)?.input as any).action,
       'delete'

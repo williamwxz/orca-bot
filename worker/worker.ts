@@ -12,10 +12,11 @@ import { readThread, sendMessage, newSendId } from './omb-chat.ts'
 import type { OrcaWorkerApi } from 'orca/worker'
 import { openChat, repairChat, validBotId } from './omb-open.ts'
 import type { OpenInput, OpenResult } from './omb-open.ts'
-import { listBots, addMausBot, actOnBot, validateBotAction, rosterBusy } from './omb-roster.ts'
+import { listBots, addMausBot, actOnBot, validateBotAction, rosterBusy, renameGroup } from './omb-roster.ts'
+import { validateGroupName } from '../shared/roster.ts'
 import { defaultHttpDeps } from './omb-http.ts'
 import { defaultCliDeps } from './omb-cli.ts'
-import type { Bot, BotAction } from '../shared/roster.ts'
+import type { Bot, BotAction, GroupRename } from '../shared/roster.ts'
 import type { Status } from './protocol.ts'
 import {
   withServerLock,
@@ -52,6 +53,7 @@ export type WorkerDeps = {
   openChat: (input: OpenInput) => Promise<OpenResult>
   repairChat?: (input: OpenInput) => Promise<boolean>
   addMausBot: (input: { port: number; botId: string }) => Promise<void>
+  renameGroup?: (input: { port: number } & GroupRename) => Promise<void>
   actOnBot?: (input: { port: number } & BotAction) => Promise<void>
   readThread: typeof readThread
   sendMessage: typeof sendMessage
@@ -101,6 +103,7 @@ export function defaultWorkerDeps(): WorkerDeps {
         cli
       ),
     addMausBot: (input) => addMausBot(input, http),
+    renameGroup: (input) => renameGroup(input, http),
     actOnBot: (input) => actOnBot(input, http),
     readThread: (input) => readThread(input, cli),
     sendMessage: (input) => sendMessage(input, cli),
@@ -655,6 +658,15 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
     if (!input || !validBotId(input.botId)) throw new Error('Invalid bot ID.')
     await deps.addMausBot({ port, botId: input.botId })
     return { message: 'MausBot added.' }
+  })
+  orca.panels.handle('groups.rename', async (input: GroupRename) => {
+    const port = runningPort()
+    const section = validateGroupName(input?.section)
+    const name = validateGroupName(input?.name)
+    if (section === name) return { ok: true }
+    if (!deps.renameGroup) throw new Error('Group rename is unavailable.')
+    await deps.renameGroup({ port, section, name })
+    return { ok: true }
   })
   orca.panels.handle('bots.act', async (input: BotAction) => {
     const port = knownBot(input)

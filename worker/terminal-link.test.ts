@@ -1,3 +1,5 @@
+import { renameGroup } from './omb-roster.ts'
+import { HttpStatusError } from './omb-http.ts'
 import { assert, test } from 'orca/testing'
 import { gunzipSync } from 'node:zlib'
 import { createRelay } from './relay-host.ts'
@@ -308,4 +310,31 @@ test('paired launcher detaches with fake process dependencies and validates the 
       stdio: ['ignore', 'pipe', 'ignore', 7]
     })
   }
+})
+
+test('group rename crosses terminal relay and preserves server refusal messages', async () => {
+  const calls: unknown[] = []
+  let status = 200
+  const server = fakeServer({
+    'groups.rename': async (input) => {
+      await renameGroup({ ...input, port: 18799 }, {
+        avatar: async () => undefined,
+        request: async (...args) => {
+          calls.push(args)
+          if (status !== 200) throw new HttpStatusError(status)
+          return { sections: ['New'] }
+        }
+      })
+      return { ok: true }
+    }
+  })
+  const link = createTerminalLink(linkDeps(server))
+  try {
+    assert.deepEqual(await link.request(host, 'groups.rename', { section: 'R&D', name: 'New' }), { ok: true })
+    assert.deepEqual(calls[0], [18799, '/api/sidebar-sections?section=R%26D', { name: 'New' }, 'PATCH'])
+    status = 404
+    await assert.rejects(link.request(host, 'groups.rename', { section: 'Ops', name: 'New' }), /no longer exists/)
+    status = 409
+    await assert.rejects(link.request(host, 'groups.rename', { section: 'Ops', name: 'New' }), /already exists.*busy/)
+  } finally { await link.disconnect() }
 })

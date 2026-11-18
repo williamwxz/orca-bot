@@ -43,6 +43,7 @@ export const RELAYED = [
   'status',
   'bots.list',
   'bots.act',
+  'groups.rename',
   'thread.read',
   'message.send',
   'bots.addMausBot',

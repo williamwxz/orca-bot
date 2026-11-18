@@ -226,3 +226,17 @@ label { display: block; margin: 12px 0 5px; font-size: 12px; }
 .bot-menu-btn.primary { border: 0; background: var(--bd-accent); color: #fff; }
 .bot-menu-btn.danger { border: 0; background: var(--bd-danger); color: #fff; }
 @media (prefers-reduced-motion: reduce) { .switch, .switch::after { transition: none; } }
+
+.deleting-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: deleting-spin 1s linear infinite;
+}
+@keyframes deleting-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .deleting-spinner { animation: none; }
+}
+.roster-group-title[tabindex]:focus-visible { outline: 1px solid currentColor; }
