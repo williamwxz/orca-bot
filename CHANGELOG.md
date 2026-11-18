@@ -1,25 +1,28 @@
 # Changelog
 
-## Unreleased
+## 0.1.5 (17 November 2026)
 
-- Host preferences recover from corrupt JSON and save atomically; a persisted
-  sync snapshot distinguishes native Settings edits from remote changes.
-  Stop intent and client dashboard page IDs survive relay reconnects.
-- Host lifecycle operations serialize across workers, recheck state under the
-  lock, and install through unique staging directories.
-- Remote permission descriptions identify the host supplying tools and agents.
-  Bot menus support keyboard opening, arrow navigation and focus restoration;
-  built-in group headers remain distinct from custom sections.
-
-- One installation notice card, a gear Settings icon, and a right-click bot
-  menu for pinning, renaming, grouping, deleting or hiding the default MausBot.
-  Grouped rosters show Pinned and named section headings.
-- Paired clients can change host permissions, import host tools, approve
-  installation and stop the host server. Host preferences sync with local Orca
-  settings, and stale paired-client caches defer to persisted host choices.
-- Remote Bot Dashboard opens and auto-pairs in the client browser, reuses its
-  page ID and leaves no success message under the panel. Cross-device live
-  verification remains pending.
+- **Panel polish**: shows the OpenMausBot installation notice once inside its
+  card instead of repeating it in the header, and uses a gear icon for Settings.
+- **Bot right-click actions**: right-click (or press `Shift+F10` / the context
+  menu key) on a bot row to **Pin** or **Unpin**, **Rename**, move to or create
+  a **Group**, **Delete** a bot, or **Hide from list** for the default MausBot.
+  Grouped rosters render **Pinned** and named section headings while keeping
+  arrow-key navigation and focus restoration in the menu.
+- **Remote Bot Dashboard**: when bots run on a paired Orca server, **Jump to
+  Bot Dashboard** and bot dashboard links open and auto-pair in the client
+  desktop's Orca browser, reuse the client tab across relay reconnects, and no
+  longer show a bottom fallback notice. Cross-device live verification remains
+  pending.
+- **Synced remote permissions and server controls**: **Permissions** (Claude and
+  Codex tool sharing, Orca agent links, and AI app tool imports) and
+  **OpenMausBot** (**Install OpenMausBot** approval and **Stop OpenMausBot**)
+  sync two-way with a paired server, naming the server that supplies tools and
+  agents. Installation still requires explicit user approval.
+- **Atomic shared state and cross-worker locking**: host preferences self-heal
+  from corrupt JSON, save atomically, and write only changed keys; server
+  install, upgrade, start and stop serialize across local and relay workers with
+  isolated staging folders and 15-minute / boot-time stale-lock recovery.
 
 ## 0.1.4 (17 November 2026)
 
