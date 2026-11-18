@@ -2,7 +2,7 @@ import { createCapabilityPicker } from './capability-picker.ts'
 import type { FrameApi } from './chat-view.ts'
 import type { CapabilityHooks } from './capability-picker.ts'
 import type { Connectors, ConnectorAction } from '../worker/mcp-connectors.ts'
-import { validateGroupName } from '../shared/roster.ts'
+import { validateBotCreate, validateGroupName } from '../shared/roster.ts'
 import type { Bot, BotAction, GroupRename } from '../shared/roster.ts'
 
 type MenuEvent = {
@@ -466,7 +466,7 @@ export function createBotMenu(
       input.disabled = submit.disabled = true
       submit.textContent = 'Creating…'
       try {
-        await create!({ ...(input.value.trim() && { name: input.value.trim() }), ...(section && { section }) })
+        await create!(validateBotCreate({ ...(input.value.trim() && { name: input.value }), ...(section && { section }) }))
       } catch (error) {
         if (current !== revision) return
         note.textContent = error instanceof Error ? error.message : 'Could not create bot.'

@@ -235,7 +235,9 @@ const botMenu = createBotMenu(element('bot-menu'), async (input: BotAction) => {
     if (generation !== hostGeneration) return
     if (input.action === 'delete')
       toast.show(`${target?.defaultBot ? 'Hidden' : 'Deleted'} ${target?.name ?? 'bot'}.`)
-    else toast.show(input.action === 'rename' ? `Renamed to ${input.name}.` : input.action === 'pin' ? (input.pinned ? 'Pinned.' : 'Unpinned.') : input.action === 'model' ? 'Model updated.' : 'Group updated.')
+    else if (input.action === 'rename') toast.show(`Renamed to ${input.name}.`)
+    else if (input.action === 'pin') toast.show(input.pinned ? 'Pinned.' : 'Unpinned.')
+    else toast.show(input.action === 'model' ? 'Model updated.' : 'Group updated.')
   } catch (error) {
     if (generation === hostGeneration) toast.show(error instanceof Error ? error.message : 'Could not update this bot.')
   } finally {
