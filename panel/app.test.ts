@@ -45,7 +45,9 @@ class Element {
   emit(name: string, event?: any) {
     for (const fn of this.events.get(name) ?? []) fn(event)
   }
+  focusCalls = 0
   focus() {
+    this.focusCalls++
     ;(document as any).activeElement = this
   }
 }
@@ -413,9 +415,30 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
       assert.ok(button)
       button!.emit('click')
     }
+    const menuTrigger = get('roster').children.find((child) => child.className.startsWith('bot-row'))!.children[0]
+    const outside = get('open-settings')
+    for (const event of ['click', 'blur', 'resize']) {
+      openMenu()
+      outside.focus()
+      const before = menuTrigger.focusCalls
+      if (event === 'click') doc.emit(event, { target: outside })
+      else win.emit(event)
+      assert.equal(menu.hidden, true)
+      assert.equal(menuTrigger.focusCalls, before)
+      assert.equal((doc as any).activeElement, outside)
+    }
+    openMenu()
+    const beforeEscape = menuTrigger.focusCalls
+    doc.emit('keydown', { key: 'Escape', preventDefault() {} })
+    assert.equal(menu.hidden, true)
+    assert.equal(menuTrigger.focusCalls, beforeEscape + 1)
+    assert.equal((doc as any).activeElement, menuTrigger)
     openMenu()
     clickLabel(menu, 'Rename')
+    const beforeCancel = menuTrigger.focusCalls
     clickLabel(menu, 'Cancel')
+    assert.equal(menuTrigger.focusCalls, beforeCancel + 1)
+    assert.equal((doc as any).activeElement, menuTrigger)
     assert.equal(menu.hidden, true)
     assert.equal((doc as any).activeElement?.className, 'bot-chat')
     holdAct = true

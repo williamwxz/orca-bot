@@ -20,7 +20,7 @@ export function createBotMenu(
   let trigger: HTMLElement | undefined
   let items: HTMLButtonElement[] = []
 
-  function close(restoreFocus = true): void {
+  function close(restoreFocus = false): void {
     if (restoreFocus) trigger?.focus()
     menu.hidden = true
     menu.replaceChildren()
