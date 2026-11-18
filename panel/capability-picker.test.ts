@@ -148,6 +148,7 @@ test('capability pickers group models, retain missing current choice, assign rep
     assert.equal(picker.switching(), false)
     failure = ''
     await picker.open('connectors', bot, trigger as any)
+    assert.equal(item('work-mail').children[0].dataset.icon, 'gmail')
     assert.equal(item('owned').disabled, true)
     item('work-mail').emit()
     await flush()

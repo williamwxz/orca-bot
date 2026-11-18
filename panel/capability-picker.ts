@@ -1,3 +1,4 @@
+import { connectorIcon } from './connector-icon.ts'
 import type { Bot } from '../shared/roster.ts'
 import type { Models } from '../shared/models.ts'
 import type { Connectors } from '../worker/mcp-connectors.ts'
@@ -163,7 +164,7 @@ export function createCapabilityPicker(
         for (const row of rows) {
           const allowed = row.bots.includes(bot.id)
           const choice = item(
-            `${allowed ? '✓ ' : ''}${row.rawName} · ${row.provider}${row.bot ? ' · Pinned to this bot' : ''}`,
+            `${row.rawName} · ${row.provider}${row.bot ? ' · Pinned to this bot' : ''}`,
             () =>
               void mutate(row.name, async () => {
                 const next = await frame.plugin.request('mcp.act', {
@@ -176,6 +177,10 @@ export function createCapabilityPicker(
               }),
             allowed
           )
+          const label = node('span', choice.textContent ?? '', 'mcp-choice-label')
+          choice.replaceChildren(connectorIcon(row, true), label)
+          if (allowed) choice.append(node('span', '✓', 'mcp-choice-check'))
+          choice.className += ' mcp-choice'
           choice.dataset.key = row.name
           choice.disabled ||= !!row.bot
           children.push(choice)

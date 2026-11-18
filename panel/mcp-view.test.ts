@@ -156,6 +156,10 @@ test('MCP menu provides host-aware groups, zero-bot prompt, assignments, loading
     all(get('mcp-groups'))
       .find((n) => n.dataset.focus === 'tab-provider')!
       .emit()
+    assert.ok(all(get('mcp-groups')).some((n) => n.dataset.icon === 'mail'))
+    assert.ok(!all(get('mcp-groups')).some((n) => n.dataset.focus === 'mail-remove'))
+    data.connectors[0].provider = 'OpenMausBot'
+    await view.refresh()
     all(get('mcp-groups'))
       .find((n) => n.textContent === 'Remove')!
       .emit()

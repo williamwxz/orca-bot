@@ -4,7 +4,10 @@ import type { Candidate, ImportDeps } from './import-tools.ts'
 import type { HostPrefs } from './host-prefs.ts'
 import { visibleBot } from '../shared/appearance.ts'
 
+import { detectConnectorIcon, type ConnectorIcon } from '../shared/connector-icons.ts'
+
 export type Connector = {
+  icon?: ConnectorIcon
   name: string
   fingerprint: string
   rawName: string
@@ -239,6 +242,7 @@ export function createConnectors(deps: ImportDeps, prefs: HostPrefs) {
           provenance: recorded
         }),
         rawName: c?.rawName ?? s.name,
+        icon: detectConnectorIcon(c?.rawName ?? s.name, s.name, c?.definition ?? s),
         provider: c ? providerOf(c) : 'OpenMausBot',
         enabled: s.enabled,
         present: true,
@@ -262,6 +266,7 @@ export function createConnectors(deps: ImportDeps, prefs: HostPrefs) {
         name,
         fingerprint: c.fingerprint,
         rawName: c.rawName,
+        icon: detectConnectorIcon(c.rawName, name, c.definition),
         provider: providerOf(c),
         enabled: false,
         present: false,
@@ -374,10 +379,27 @@ export function createConnectors(deps: ImportDeps, prefs: HostPrefs) {
           const targetNames = new Set(targets.map((c) => c.name))
           const enabling = (input.action === 'toggle' || input.action === 'group') && input.enabled
           const newlyEnabled = targets.filter((c) => enabling && !c.enabled).map((c) => c.name)
+          if (
+            input.action === 'remove' &&
+            (!targets[0].present || targets[0].provider !== 'OpenMausBot')
+          )
+            throw new Error(changed)
+          const purge = new Set(
+            targets
+              .filter(
+                (row) =>
+                  input.action === 'remove' ||
+                  ((input.action === 'group' || input.action === 'toggle') &&
+                    !input.enabled &&
+                    row.present &&
+                    row.provider !== 'OpenMausBot')
+              )
+              .map((row) => row.name)
+          )
           const botPlans = state.bots.map((b) => {
             const before = b.mcpServers ?? enabledFor(state.servers, b)
             let after = before.filter((n) => !newlyEnabled.includes(n))
-            if (input.action === 'remove') after = after.filter((n) => !targetNames.has(n))
+            if (purge.size) after = after.filter((n) => !purge.has(n))
             if (input.action === 'assign' && visibleBot(b)) {
               after = after.filter((n) => !targetNames.has(n))
               if (input.bots.includes(b.id)) after.push(targets[0].name)
@@ -386,21 +408,19 @@ export function createConnectors(deps: ImportDeps, prefs: HostPrefs) {
             if (after.length > 20) throw new Error('A bot would exceed the 20 connector limit.')
             return { bot: b, after }
           })
-          if ((input.action === 'assign' || input.action === 'remove') && !targets[0].present)
-            throw new Error()
+          if (input.action === 'assign' && !targets[0].present) throw new Error()
           if (enabling) await restrictDefaults(port, newlyEnabled)
-          if (input.action === 'remove')
-            await deps.request(port, `/api/mcp/servers/${targets[0].name}`, 'PATCH', {
-              enabled: false
-            })
-          if (enabling || input.action === 'assign' || input.action === 'remove') {
+          for (const row of targets)
+            if (purge.has(row.name) && row.enabled)
+              await deps.request(port, `/api/mcp/servers/${row.name}`, 'PATCH', { enabled: false })
+          if (enabling || input.action === 'assign' || purge.size) {
             for (const { bot, after } of botPlans) {
               if (bot.mcpServers == null || canonical(bot.mcpServers) !== canonical(after))
                 await patchBot(port, bot, after)
             }
           }
           for (const row of targets) {
-            if (input.action === 'remove') {
+            if (purge.has(row.name)) {
               await deps.request(port, `/api/mcp/servers/${row.name}`, 'DELETE')
               const provenance = { ...prefs.read()?.connectors }
               delete provenance[row.name]

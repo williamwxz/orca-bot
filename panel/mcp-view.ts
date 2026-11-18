@@ -1,3 +1,4 @@
+import { connectorIcon } from './connector-icon.ts'
 import type { FrameApi } from './chat-view.ts'
 import type { Connector, Connectors, ConnectorAction } from '../worker/mcp-connectors.ts'
 
@@ -112,7 +113,11 @@ export function createMcpView(frame: FrameApi, element: (id: string) => HTMLElem
             })
         )
         control.disabled =
-          busy() || !selectable.length || selectable.every((c) => c.enabled === enabled)
+          busy() ||
+          !selectable.length ||
+          selectable.every(
+            (c) => c.enabled === enabled && (enabled || !c.present || provider === 'OpenMausBot')
+          )
         controls.append(control)
       }
       head.append(title, controls)
@@ -132,7 +137,8 @@ export function createMcpView(frame: FrameApi, element: (id: string) => HTMLElem
         line.className = 'mcp-row-head'
         const actions = node('div')
         actions.className = 'mcp-actions'
-        if (row.present) {
+        const removable = row.present && row.provider === 'OpenMausBot'
+        if (removable) {
           const remove = actionButton(
             'Remove',
             `${row.name}-remove`,
@@ -146,7 +152,7 @@ export function createMcpView(frame: FrameApi, element: (id: string) => HTMLElem
           actions.append(remove)
         }
         actions.append(switchControl(row))
-        line.append(titleFor(row), actions)
+        line.append(connectorIcon(row), titleFor(row), actions)
         section.append(line)
         if (row.enabled) {
           const access = node('div')
@@ -168,16 +174,14 @@ export function createMcpView(frame: FrameApi, element: (id: string) => HTMLElem
           }
           section.append(access)
         }
-        if (removing === row.name) {
+        if (removable && removing === row.name) {
           const confirmation = node('div')
           confirmation.className = 'mcp-confirm'
           confirmation.append(
             node('strong', `Remove ${row.name}?`),
             node(
               'p',
-              row.provider === 'OpenMausBot'
-                ? 'Its saved credentials in OpenMausBot will be permanently deleted. No local source is available to restore them.'
-                : 'This deletes its saved credentials and bot assignments in OpenMausBot.'
+              'Its saved credentials in OpenMausBot will be permanently deleted. No local source is available to restore them.'
             )
           )
           const actions = node('div')
@@ -234,6 +238,7 @@ export function createMcpView(frame: FrameApi, element: (id: string) => HTMLElem
         const line = node('div')
         line.className = 'mcp-row mcp-row-head'
         line.append(
+          connectorIcon(row),
           titleFor(row, true),
           row.bot ? node('span', 'Pinned to this bot') : switchControl(row, bot.id)
         )
