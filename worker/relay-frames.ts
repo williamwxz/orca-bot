@@ -1,3 +1,4 @@
+import { validateModelSelection } from '../shared/models.ts'
 import { gunzipSync, gzipSync } from 'node:zlib'
 
 // Orca's terminal stream drops some spaces and keeps only the newest 2000 lines, so replies
@@ -40,6 +41,9 @@ export function lineReader(onLine: (line: string) => void): (chunk: string) => v
 
 /** Panel requests answered by a paired server; host selection and plugin updates stay local. */
 export const RELAYED = [
+  'models.list',
+  'mcp.list',
+  'mcp.act',
   'status',
   'bots.list',
   'bots.act',
@@ -52,9 +56,13 @@ export const RELAYED = [
   'setup.answer',
   'prefs.get',
   'prefs.set',
-  'tools.find',
-  'tools.import',
   'server.install',
   'server.stop'
 ] as const
 export const PING = 'relay.ping'
+
+export function validateRelayInput(name: unknown, input: unknown): void {
+  if (name !== 'bots.act' || !input || typeof input !== 'object') return
+  const action = input as Record<string, unknown>
+  if (action.action === 'model') validateModelSelection(action.instanceId, action.model)
+}

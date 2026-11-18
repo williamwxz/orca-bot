@@ -1,3 +1,4 @@
+import { validateModelSelection } from '../shared/models.ts'
 import { defaultHttpDeps, HttpStatusError } from './omb-http.ts'
 import type { HttpDeps } from './omb-http.ts'
 import { mainFirst, validateGroupName } from '../shared/roster.ts'
@@ -22,6 +23,16 @@ export async function listBots(
           .filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
           .map((item) => item.trim())
       : []
+    let servers: Record<string, any>[] | undefined
+    if (input.includeAvatars !== false) {
+      try {
+        const mcp = (await deps.request(input.port, '/api/mcp/servers')) as { servers?: unknown }
+        if (Array.isArray(mcp?.servers))
+          servers = mcp.servers.filter((s) => s && typeof s === 'object')
+      } catch {
+        // Optional counts must not prevent the roster from loading.
+      }
+    }
     const bots: Bot[] = []
     for (const bot of value.bots) {
       if (!bot || !validBotId(bot.id) || typeof bot.name !== 'string')
@@ -56,6 +67,18 @@ export async function listBots(
             ? 'waiting'
             : 'idle',
         unread: bot.unread === true,
+        ...(servers
+          ? {
+              connectorCount: servers.filter(
+                (s) =>
+                  s.enabled &&
+                  (!s.bot || s.bot === bot.id) &&
+                  (bot.mcpServers == null ||
+                    (Array.isArray(bot.mcpServers) && bot.mcpServers.includes(s.name))) &&
+                  !(Array.isArray(s.offFor) && s.offFor.includes(bot.id))
+              ).length
+            }
+          : {}),
         model: `${selection.instanceId}/${selection.model}`,
         modelLabel:
           [selection.label, bot.modelLabel]
@@ -84,7 +107,7 @@ export async function addMausBot(
   deps: HttpDeps = defaultHttpDeps()
 ): Promise<void> {
   if (!validBotId(input.botId)) throw new Error('Invalid bot ID.')
-  const bots = await listBots(input, deps)
+  const bots = await listBots({ ...input, includeAvatars: false }, deps)
   if (!bots.some((bot) => bot.id === input.botId && bot.addable))
     throw new Error('MausBot is no longer hidden. Refresh the roster.')
   try {
@@ -101,7 +124,9 @@ export async function addMausBot(
 
 export function validateBotAction(input: BotAction): void {
   if (!input || !validBotId(input.botId)) throw new Error('Invalid bot ID.')
-  if (input.action === 'pin') {
+  if (input.action === 'model') {
+    validateModelSelection(input.instanceId, input.model)
+  } else if (input.action === 'pin') {
     if (typeof input.pinned !== 'boolean') throw new Error('Invalid pin state.')
   } else if (input.action === 'rename') {
     const trimmed = typeof input.name === 'string' ? input.name.trim() : ''
@@ -127,6 +152,20 @@ export async function actOnBot(
   if (!target) throw new Error('This bot is no longer in the roster. Refresh the roster.')
 
   try {
+    if (input.action === 'model') {
+      if (target.state === 'working') throw new HttpStatusError(409)
+      await deps.request(
+        input.port,
+        `/api/bots/${input.botId}`,
+        {
+          modelSelection: { instanceId: input.instanceId, model: input.model.trim() },
+          requireAvailableModel: true,
+          ...(target.activeTaskId ? { threadId: target.activeTaskId } : {})
+        },
+        'PATCH'
+      )
+      return
+    }
     if (input.action === 'pin') {
       await deps.request(input.port, `/api/bots/${input.botId}`, { pinned: input.pinned })
       return
@@ -156,6 +195,21 @@ export async function actOnBot(
     }
     await deps.request(input.port, `/api/bots/${input.botId}`, undefined, 'DELETE')
   } catch (error) {
+    if (input.action === 'model') {
+      if (error instanceof HttpStatusError) {
+        if (error.code === 'serverError.model.accountUpdating')
+          throw new Error('The provider is updating. Wait a moment and try again.')
+        if (error.status === 409)
+          throw new Error(
+            'This bot is busy or an approval change is in progress. Wait until it finishes, then try again.'
+          )
+        if (error.status === 400 || error.status === 403)
+          throw new Error(
+            'This model or provider is unavailable, or Custom approval requires choosing Ask first in the Bot Dashboard.'
+          )
+      }
+      throw new Error('Could not change this bot’s model. Refresh and try again.')
+    }
     if (error instanceof HttpStatusError && error.status === 409 && input.action === 'group') {
       throw new Error(
         'Could not move this bot right now. It may be busy, or that group already has a Chief of Staff.'
@@ -207,13 +261,23 @@ export async function renameGroup(
   const name = validateGroupName(input?.name)
   if (section === name) return
   try {
-    await deps.request(input.port, `/api/sidebar-sections?section=${encodeURIComponent(section)}`, { name }, 'PATCH')
+    await deps.request(
+      input.port,
+      `/api/sidebar-sections?section=${encodeURIComponent(section)}`,
+      { name },
+      'PATCH'
+    )
   } catch (error) {
     if (error instanceof HttpStatusError) {
       if (error.status === 404) throw new Error('This group no longer exists. Refresh the roster.')
-      if ((error.status === 409 || error.status === 400) && error.code) throw new Error(error.message)
-      if (error.status === 409) throw new Error('The server refused to rename this group. It may be busy; refresh and try again.')
-      if (error.status === 400) throw new Error('Enter a valid group name between 1 and 60 characters.')
+      if ((error.status === 409 || error.status === 400) && error.code)
+        throw new Error(error.message)
+      if (error.status === 409)
+        throw new Error(
+          'The server refused to rename this group. It may be busy; refresh and try again.'
+        )
+      if (error.status === 400)
+        throw new Error('Enter a valid group name between 1 and 60 characters.')
     }
     throw new Error('Could not rename this group. Try again.')
   }

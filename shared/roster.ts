@@ -5,6 +5,7 @@ export type Bot = {
   main: boolean
   state: 'working' | 'waiting' | 'idle'
   unread: boolean
+  connectorCount?: number
   modelLabel: string
   model?: string
   avatar?: string
@@ -27,6 +28,7 @@ export function validateGroupName(value: unknown): string {
 }
 
 export type BotAction =
+  | { botId: string; action: 'model'; instanceId: string; model: string }
   | { botId: string; action: 'pin'; pinned: boolean }
   | { botId: string; action: 'rename'; name: string }
   | { botId: string; action: 'group'; section: string | null }

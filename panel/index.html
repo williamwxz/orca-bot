@@ -43,10 +43,6 @@
         <span class="setup-copy"><strong>My Orca agents can talk to the bots</strong><small>Adds Bot Team for Orca's tools to <span id="agent-names">Claude, Codex, opencode and Antigravity</span><span id="agent-host"></span>, so an agent can message a bot or read its replies.</small></span>
         <input id="link-agents" class="switch" type="checkbox" role="switch" />
       </label>
-      <label class="setup-option" id="import-tools-label" hidden>
-        <span class="setup-copy"><strong>Bring in tools from my AI apps</strong><small id="import-tools-copy"></small></span>
-        <input id="import-tools" class="switch" type="checkbox" role="switch" checked />
-      </label>
       <div class="setup-actions">
         <button id="setup-skip" type="button">Not now</button>
         <button id="setup-allow" type="button">Save choices</button>
@@ -84,10 +80,11 @@
           <span class="setup-copy"><strong>My Orca agents can talk to the bots</strong><small>Adds Bot Team for Orca's tools to <span id="pref-agent-names">Claude, Codex, opencode and Antigravity</span><span id="pref-agent-host"></span>, so an agent can message a bot or read its replies.</small></span>
           <input id="pref-link-agents" class="switch" type="checkbox" role="switch" />
         </label>
-        <div class="setup-option">
-          <span class="setup-copy"><strong>Bring in tools from my AI apps</strong><small id="pref-import-copy">Adds tools from apps such as Cursor and Claude Desktop to OpenMausBot, switched off. Tokens saved in those apps are copied to OpenMausBot on this computer.</small></span>
-          <button id="pref-import" type="button">Bring in</button>
-        </div>
+      </div>
+      <div class="settings-group">
+        <h3>MCP Connectors</h3>
+        <p id="mcp-summary" class="settings-note" role="status"></p>
+        <button id="mcp-manage" class="bot-menu-btn" type="button">Manage</button>
       </div>
       <div class="settings-group">
         <h3>Updates</h3>
@@ -111,6 +108,16 @@
         <button id="stop-server" type="button">Stop OpenMausBot</button>
       </div>
       <p id="settings-message" role="status" aria-live="polite"></p>
+    </section>
+    <section id="mcp-view" aria-labelledby="mcp-title" hidden>
+      <div class="settings-header">
+        <button id="mcp-back" type="button" aria-label="Back to Settings">←</button>
+        <h2 id="mcp-title">MCP Connectors</h2>
+        <button id="mcp-refresh" type="button">Refresh</button>
+      </div>
+      <p id="mcp-security" class="settings-note"></p>
+      <p id="mcp-message" role="status" aria-live="polite"></p>
+      <div id="mcp-groups"></div>
     </section>
     <div id="bot-menu" class="bot-menu" role="menu" hidden></div>
   </main>

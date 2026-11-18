@@ -9,32 +9,44 @@ import { defaultCliDeps } from './omb-cli.ts'
 import { claudeEnvironment, defaultServerDeps, isPluginServer } from './omb-server.ts'
 
 export type Tool = { name: string; source: string }
-export type ImportResult = { added: string[]; skipped: { name: string; reason: 'already here' | 'failed' }[] }
 export type ImportDeps = EnvironmentDeps & {
   read: (path: string) => string
   exists: (path: string) => boolean
   claudeEnv: () => NodeJS.ProcessEnv
   listCodex: (file: string, env: NodeJS.ProcessEnv) => Promise<unknown>
   owned: (port: number) => Promise<boolean>
-  request: (port: number, path: string, method: 'GET' | 'POST' | 'PATCH', body?: object) => Promise<unknown>
+  request: (
+    port: number,
+    path: string,
+    method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
+    body?: object
+  ) => Promise<unknown>
 }
 type Definition =
   | { command: string; args: string[]; env?: Record<string, string> }
   | { url: string; headers?: Record<string, string> }
-type Candidate = Tool & { definition: Definition }
+export type Candidate = Tool & { rawName: string; definition: Definition }
 const validName = /^[a-z][a-z0-9_-]{0,31}$/
-const object = (v: unknown): v is Record<string, any> => !!v && typeof v === 'object' && !Array.isArray(v)
+const object = (v: unknown): v is Record<string, any> =>
+  !!v && typeof v === 'object' && !Array.isArray(v)
 const strings = (v: unknown): v is Record<string, string> =>
   object(v) && Object.values(v).every((x) => typeof x === 'string')
-function nameOf(raw: string): string | undefined {
-  const name = raw
+export function nameOf(raw: string): string | undefined {
+  const slug = raw
+    .trim()
     .toLowerCase()
-    .replace(/[^a-z0-9_-]/g, '-')
-    .replace(/^[^a-z]+/, '')
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
     .slice(0, 32)
-  return validName.test(name) ? name : undefined
+    .replace(/-+$/, '')
+  const name = /^[a-z]/.test(slug)
+    ? slug
+    : slug
+      ? `mcp-${slug}`.slice(0, 32).replace(/-+$/, '')
+      : ''
+  return name ? (reservedNames.has(name) ? `mcp-${name}`.slice(0, 32) : name) : undefined
 }
-function definition(raw: unknown): Definition | undefined {
+export function definition(raw: unknown): Definition | undefined {
   if (!object(raw) || raw.enabled === false || raw.disabled === true) return
   if (typeof raw.command === 'string' && raw.command && raw.url === undefined) {
     const args = raw.args ?? []
@@ -58,8 +70,9 @@ function definition(raw: unknown): Definition | undefined {
     return { url: raw.url, ...(raw.headers ? { headers: raw.headers } : {}) }
   }
 }
-const identity = (d: Definition) => ('url' in d ? JSON.stringify(d.url) : JSON.stringify([d.command, d.args]))
-const canonical = (v: any): string =>
+export const identity = (d: Definition) =>
+  'url' in d ? JSON.stringify(d.url) : JSON.stringify([d.command, d.args])
+export const canonical = (v: any): string =>
   JSON.stringify(v, (_, x) =>
     object(x)
       ? Object.fromEntries(
@@ -69,6 +82,30 @@ const canonical = (v: any): string =>
         )
       : x
   )
+export const reservedNames = new Set([
+  'ogb',
+  'computer',
+  'agents',
+  'composio',
+  'data',
+  'browser',
+  'email',
+  'device',
+  'phone',
+  'dweb',
+  'openmausbot_connectors',
+  'openmausbot_phone'
+])
+export function uniqueName(base: string, provider: string, taken: Set<string>): string {
+  const suffix = '-' + (nameOf(provider) ?? 'connector')
+  const stem = nameOf(base.slice(0, 32 - suffix.length) + suffix)!
+  let name = stem
+  for (let n = 2; taken.has(name) || reservedNames.has(name); n++) {
+    const end = `-${n}`
+    name = nameOf(stem.slice(0, 32 - end.length) + end)!
+  }
+  return name
+}
 export function defaultImportDeps(): ImportDeps {
   if (process.env.NODE_TEST_CONTEXT) throw new Error('Tests must inject tool import dependencies')
   const cli = defaultCliDeps(),
@@ -102,25 +139,28 @@ export function defaultImportDeps(): ImportDeps {
         headers: body ? { 'content-type': 'application/json' } : {},
         body: body ? JSON.stringify(body) : undefined
       })
-      if (!response.ok) throw new Error('Could not import tools.')
+      if (!response.ok) throw new Error(requestFailure(response.status, path, method))
+      if (response.status === 204) return {}
       return response.json()
     }
   }
 }
-async function candidates(deps: ImportDeps): Promise<Candidate[]> {
+export async function candidates(deps: ImportDeps): Promise<Candidate[]> {
   const found: Candidate[] = [],
     names = new Set<string>(),
     definitions = new Set<string>()
   const add = (rawName: unknown, raw: unknown, source: string) => {
     if (typeof rawName !== 'string') return
-    const name = nameOf(rawName),
-      d = definition(raw)
-    if (!name || name === MCP_ENTRY_NAME || !d || names.has(name)) return
-    names.add(name)
+    let name = nameOf(rawName)
+    const d = definition(raw)
+    if (!name || name === MCP_ENTRY_NAME || !d) return
     const key = canonical(d)
     if (definitions.has(key)) return
     definitions.add(key)
-    found.push({ name, source, definition: d })
+    const provider = source.startsWith('Claude Code') ? 'Claude Code' : source
+    if (names.has(name) || reservedNames.has(name)) name = uniqueName(name, provider, names)
+    names.add(name)
+    found.push({ name, source, rawName, definition: d })
   }
   const files: [string, string][] = []
   try {
@@ -199,80 +239,17 @@ async function candidates(deps: ImportDeps): Promise<Candidate[]> {
             { command: entry.command[0], args: entry.command.slice(1), env: entry.environment },
             spec.label
           )
-        } else if (entry.type === 'remote') add(name, { url: entry.url, headers: entry.headers }, spec.label)
+        } else if (entry.type === 'remote')
+          add(name, { url: entry.url, headers: entry.headers }, spec.label)
       }
     } catch {}
   }
   return found
 }
-export async function findTools(deps: ImportDeps = defaultImportDeps()): Promise<Tool[]> {
-  return (await candidates(deps)).map(({ name, source }) => ({ name, source }))
-}
-export async function importTools(
-  port: number,
-  deps: ImportDeps = defaultImportDeps()
-): Promise<ImportResult> {
-  try {
-    if (!Number.isInteger(port) || port < 1 || port > 65535 || !(await deps.owned(port))) throw new Error()
-  } catch {
-    throw new Error('Tools can only be imported into a server Bot Team for Orca started.')
-  }
-  let existing: any[]
-  try {
-    const response = await deps.request(port, '/api/mcp/servers', 'GET')
-    if (!object(response) || !Array.isArray(response.servers)) throw new Error()
-    existing = response.servers
-  } catch {
-    throw new Error('Could not check existing tools.')
-  }
-  const result: ImportResult = { added: [], skipped: [] }
-  const keys = new Set(
-    existing.flatMap((e) => {
-      const d = definition({ ...e, enabled: true })
-      return d ? [identity(d)] : []
-    })
-  )
-  const taken = new Set(existing.map((e) => e?.name))
-  for (const candidate of await candidates(deps)) {
-    let { name } = candidate
-    const key = identity(candidate.definition)
-    if (keys.has(key)) {
-      result.skipped.push({ name, reason: 'already here' })
-      continue
-    }
-    for (let i = 2; taken.has(name); i++) name = `${candidate.name.slice(0, 32 - String(i).length - 1)}-${i}`
-    try {
-      const response = await deps.request(port, '/api/mcp/servers/import', 'POST', {
-        json: JSON.stringify({ mcpServers: { [name]: candidate.definition } })
-      })
-      if (
-        !object(response) ||
-        !Array.isArray(response.added) ||
-        response.added.length !== 1 ||
-        typeof response.added[0] !== 'string' ||
-        !validName.test(response.added[0]) ||
-        taken.has(response.added[0])
-      )
-        throw new Error()
-      name = response.added[0]
-      taken.add(name)
-      keys.add(key)
-      await deps.request(port, `/api/mcp/servers/${name}`, 'PATCH', { enabled: false })
-      result.added.push(name)
-    } catch {
-      result.skipped.push({ name, reason: 'failed' })
-    }
-  }
-  return result
-}
-export function importMessage(result: ImportResult): string {
-  const failed = result.skipped.filter((s) => s.reason === 'failed').length
-  return (
-    (result.added.length
-      ? `Brought in ${result.added.length} ${result.added.length === 1 ? 'tool' : 'tools'}, switched off. Turn them on per bot in the Bot Dashboard.`
-      : 'Nothing new to bring in.') +
-    (failed
-      ? ` ${failed} ${failed === 1 ? 'tool' : 'tools'} failed to import or switch off; check them in the Bot Dashboard.`
-      : '')
-  )
+export function requestFailure(status: number, path: string, method: string): string {
+  if (status === 409)
+    return method === 'PATCH' && path.startsWith('/api/bots/')
+      ? 'A bot is currently working. Retry once all bots are idle.'
+      : 'The connector conflicts with the current server configuration. Refresh and try again.'
+  return 'Could not update MCP connectors. Refresh and retry.'
 }

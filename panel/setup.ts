@@ -1,20 +1,15 @@
 import { agents as catalog, agentKeys } from '../shared/agents.ts'
-import type { Tool, ImportResult } from '../worker/import-tools.ts'
 import type { Setup, SetupAnswer } from '../worker/protocol.ts'
 
 export function agentNames(agents: Setup['agents']): string {
   const names = agentKeys.filter((key) => agents[key]).map((key) => catalog[key].label)
-  return names.length > 2 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : names.join(' and ')
+  return names.length > 2
+    ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`
+    : names.join(' and ')
 }
 
-export function createSetup(
-  send: (answer: SetupAnswer) => Promise<unknown>,
-  bringTools?: () => Promise<ImportResult>
-) {
+export function createSetup(send: (answer: SetupAnswer) => Promise<unknown>) {
   const state = {
-    toolsLoaded: false,
-    tools: [] as Tool[],
-    importTools: true,
     loaded: false,
     answered: false,
     agents: { claude: false, codex: false } as Setup['agents'],
@@ -25,10 +20,6 @@ export function createSetup(
   }
   return {
     state,
-    loadTools(tools: Tool[]) {
-      state.tools = tools
-      state.toolsLoaded = true
-    },
     load(setup: Setup) {
       if (!state.loaded) {
         state.shareTools = setup.shareTools ?? false
@@ -49,16 +40,6 @@ export function createSetup(
         })
         state.answered = true
         state.message = ''
-        if (allow && state.importTools && state.tools.length && bringTools) {
-          try {
-            const result = await bringTools()
-            if (result.skipped.some((s) => s.reason === 'failed'))
-              state.message =
-                'Some tools could not be imported or switched off; check the Bot Dashboard.'
-          } catch {
-            state.message = 'Tools could not be imported or switched off; check the Bot Dashboard.'
-          }
-        }
       } catch {
         state.message = 'Could not finish setup. Please try again.'
       } finally {

@@ -1,4 +1,6 @@
 const safeErrors: Record<string, string> = {
+  'serverError.model.accountUpdating': 'The provider is updating. Wait a moment and try again.',
+  'serverError.model.botBusy': 'This bot is working. Wait until it finishes, then try again.',
   'serverError.department.duplicate': 'A group with that name already exists.',
   'serverError.department.renameBusy': 'Stop this group’s active work before renaming it.',
   'serverError.department.nameLength': 'Enter a group name between 1 and 60 characters.',

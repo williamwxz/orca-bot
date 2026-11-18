@@ -312,6 +312,40 @@ test('paired launcher detaches with fake process dependencies and validates the 
   }
 })
 
+test('MCP menu requests and busy failures traverse paired terminal relay unchanged', async () => {
+  const rows = { connectors: [{ name: 'mail', rawName: 'mail', provider: 'Cursor', enabled: true, present: true, bots: [] }], bots: [{ id: 'a', name: 'Work' }] }
+  const actions: unknown[] = []
+  const server = fakeServer({
+    'mcp.list': () => rows,
+    'mcp.act': input => {
+      actions.push(input)
+      if (input.action === 'assign') throw new Error('A bot is currently working. Retry once all bots are idle.')
+      return rows
+    }
+  })
+  const link = createTerminalLink(linkDeps(server))
+  assert.deepEqual(await link.request(host, 'mcp.list', {}), rows)
+  const action = { action: 'group', provider: 'Cursor', enabled: true }
+  assert.deepEqual(await link.request(host, 'mcp.act', action), rows)
+  assert.deepEqual(actions, [action])
+  await assert.rejects(link.request(host, 'mcp.act', { action: 'assign', name: 'mail', bots: ['a'] }), /currently working/)
+})
+
+test('MCP actions have headroom beyond the ordinary 30 second relay timeout', async () => {
+  let finish: ((value: unknown) => void) | undefined
+  const server = fakeServer({ 'mcp.act': () => new Promise(resolve => { finish = resolve }) })
+  const deps = linkDeps(server)
+  let clock = 0
+  deps.now = () => clock
+  deps.sleep = async ms => {
+    clock += ms
+    if (clock > 35000 && finish) { finish({ connectors: [], bots: [] }); finish = undefined }
+  }
+  const link = createTerminalLink(deps)
+  assert.deepEqual(await link.request(host, 'mcp.act', { action: 'group', provider: 'Cursor', targets: [], enabled: true }), { connectors: [], bots: [] })
+  assert.ok(clock > 30000)
+})
+
 test('group rename crosses terminal relay and preserves server refusal messages', async () => {
   const calls: unknown[] = []
   let status = 200
@@ -336,5 +370,25 @@ test('group rename crosses terminal relay and preserves server refusal messages'
     await assert.rejects(link.request(host, 'groups.rename', { section: 'Ops', name: 'New' }), /no longer exists/)
     status = 409
     await assert.rejects(link.request(host, 'groups.rename', { section: 'Ops', name: 'New' }), /refused.*busy/)
+  } finally { await link.disconnect() }
+})
+
+test('models and thread-aware model actions traverse the paired relay with validation and safe refusals', async () => {
+  const groups = { groups: [{ instanceId: 'claude.work', label: 'Claude Work', models: [{ id: 'anthropic/sonnet', label: 'Sonnet' }] }] }
+  const actions: unknown[] = []
+  const server = fakeServer({ 'models.list': () => groups, 'bots.act': input => {
+    actions.push(input)
+    if (input.model === 'busy') throw new Error('This bot is busy. Wait until it finishes.')
+    return { ok: true }
+  } })
+  const link = createTerminalLink(linkDeps(server))
+  try {
+    assert.deepEqual(await link.request(host, 'models.list', {}), groups)
+    const input = { botId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', action: 'model', instanceId: 'claude.work', model: 'anthropic/sonnet' }
+    assert.deepEqual(await link.request(host, 'bots.act', input), { ok: true })
+    assert.deepEqual(actions, [input])
+    await assert.rejects(link.request(host, 'bots.act', { ...input, instanceId: '../bad' }), /valid provider/)
+    assert.equal(actions.length, 1)
+    await assert.rejects(link.request(host, 'bots.act', { ...input, model: 'busy' }), /busy/)
   } finally { await link.disconnect() }
 })

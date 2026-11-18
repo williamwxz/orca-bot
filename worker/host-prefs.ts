@@ -3,7 +3,10 @@ import * as fs from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 
+export type Provenance = Record<string, { provider: string; rawName: string; fingerprint: string }>
 export type StoredPrefs = {
+  connectorKey?: string
+  connectors?: Provenance
   shareTools?: boolean
   linkAgents?: boolean
   setupAnswered?: boolean
@@ -20,11 +23,31 @@ function cleanPrefs(raw: unknown): StoredPrefs | undefined {
   if (!raw || typeof raw !== 'object') return undefined
   const bag = raw as Record<string, unknown>
   const out: StoredPrefs = {}
+  if (typeof bag.connectorKey === 'string' && /^[a-f0-9]{64}$/.test(bag.connectorKey))
+    out.connectorKey = bag.connectorKey
   if (typeof bag.shareTools === 'boolean') out.shareTools = bag.shareTools
   if (typeof bag.linkAgents === 'boolean') out.linkAgents = bag.linkAgents
   if (typeof bag.setupAnswered === 'boolean') out.setupAnswered = bag.setupAnswered
   if (typeof bag.stopped === 'boolean') out.stopped = bag.stopped
   if (typeof bag.installConsent === 'boolean') out.installConsent = bag.installConsent
+  if (bag.connectors && typeof bag.connectors === 'object' && !Array.isArray(bag.connectors)) {
+    out.connectors = {}
+    for (const [name, value] of Object.entries(bag.connectors)) {
+      const v = value as any
+      if (
+        /^[a-z][a-z0-9_-]{0,31}$/.test(name) &&
+        v &&
+        typeof v.provider === 'string' &&
+        typeof v.rawName === 'string' &&
+        /^[a-f0-9]{64}$/.test(v.fingerprint)
+      )
+        out.connectors[name] = {
+          provider: v.provider,
+          rawName: v.rawName,
+          fingerprint: v.fingerprint
+        }
+    }
+  }
   return Object.keys(out).length ? out : undefined
 }
 
@@ -60,6 +83,10 @@ export function fileHostPrefs(
       ] as const) {
         if (typeof patch[key] === 'boolean') next[key] = patch[key]
       }
+      if (patch.connectorKey && /^[a-f0-9]{64}$/.test(patch.connectorKey))
+        next.connectorKey = patch.connectorKey
+      if (patch.connectors)
+        next.connectors = cleanPrefs({ connectors: patch.connectors })?.connectors ?? {}
       const temporary = `${file}.${randomUUID()}.tmp`
       try {
         io.mkdirSync(dirname(file), { recursive: true })
