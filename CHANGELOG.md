@@ -1,10 +1,21 @@
 # Changelog
 
-## Unreleased
+## 0.1.4 (17 November 2026)
 
 - **OpenMausBot 0.1.169**: updates the tested OpenMausBot version from 0.1.158
   to 0.1.169, and switches an existing plugin-started server to the new version
-  once bots are idle.
+  once bots are idle and installation has been approved. The replacement is
+  verified before stopping the old server, and idle state is checked again.
+- **Explicit installation approval**: an **Install OpenMausBot** button explains
+  the npm package, approximate 75 MB download and `~/.orca-bot` destination.
+  Opening the panel, polling status, importing tools or connecting a paired
+  client cannot approve a download. Existing installations remain usable.
+- **Verified downloads**: a committed lockfile pins SHA-512 integrity for
+  OpenMausBot and its dependencies (27 resolved packages). Installation uses
+  `npm ci --ignore-scripts`; integrity mismatches abort and clean staging files.
+- **Agent links**: settings name Claude, Codex, opencode and Antigravity. The
+  README explains that `orca-bot` links survive uninstall and gives removal
+  steps for all four. Missing pinned binaries cannot replace working links.
 - **Settings** in the panel: where the bots run, the setup card's permissions
   (now changeable at any time), updates, and stopping OpenMausBot.
 - **Updates**: a banner asks when a new version is out, or turn on **Install
@@ -12,7 +23,8 @@
   panel is open.
 - **Bots run on**: pick this computer or a paired Orca server in the panel.
   The server needs Orca, Node.js 24 or newer and one project in Orca; it does
-  not need this plugin. Chat and the bot list work from the client; setup,
+  not need this plugin, but OpenMausBot must already be installed there.
+  Chat and the bot list work from the client; setup,
   tool imports, the Bot Dashboard and stopping OpenMausBot stay on the server.
   Not yet tested between two computers.
 
