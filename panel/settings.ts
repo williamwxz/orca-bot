@@ -1,10 +1,12 @@
+import { INSTALL_NOTICE } from '../shared/omb-version.ts'
 import { agentNames } from './setup.ts'
 import type { FrameApi } from './chat-view.ts'
 import type { Preferences, Status } from '../worker/protocol.ts'
 import type { Updates } from '../worker/updates.ts'
 
 type Elements = (id: string) => HTMLElement
-const failure = (error: unknown, fallback: string) => (error instanceof Error && error.message) || fallback
+const failure = (error: unknown, fallback: string) =>
+  (error instanceof Error && error.message) || fallback
 
 /**
  * The settings screen: permissions, updates and OpenMausBot. Where the bots run is chosen
@@ -42,6 +44,12 @@ export function createSettings(frame: FrameApi, element: Elements, changed: () =
         : status
           ? `Not running${where}.`
           : ''
+    const needsInstall = !remote && (status?.state === 'needs_install' || status?.needsInstall)
+    for (const id of ['install-card', 'settings-install-card']) {
+      element(id).hidden = !needsInstall
+      element(`${id}-notice`).textContent = INSTALL_NOTICE
+    }
+    if (needsInstall) element('omb-status').textContent = 'Installation needs your approval.'
     button('stop-server').hidden = !!remote
     button('stop-server').disabled = status?.state !== 'running'
   }
@@ -82,7 +90,11 @@ export function createSettings(frame: FrameApi, element: Elements, changed: () =
     input(key === 'shareTools' ? 'pref-share-tools' : 'pref-link-agents').disabled = true
     try {
       renderPreferences(await frame.plugin.request('prefs.set', { [key]: value }))
-      note(key === 'shareTools' ? 'Saved. OpenMausBot restarts to apply it when no bot is working.' : 'Saved.')
+      note(
+        key === 'shareTools'
+          ? 'Saved. OpenMausBot restarts to apply it when no bot is working.'
+          : 'Saved.'
+      )
     } catch (error) {
       note(failure(error, 'Could not save.'))
       await loadPreferences()
@@ -104,8 +116,28 @@ export function createSettings(frame: FrameApi, element: Elements, changed: () =
     element('update-banner-text').textContent = updates?.message ?? ''
   }
 
-  input('pref-share-tools').addEventListener('change', () => void setPreference('shareTools', input('pref-share-tools').checked))
-  input('pref-link-agents').addEventListener('change', () => void setPreference('linkAgents', input('pref-link-agents').checked))
+  for (const id of ['install-omb', 'settings-install-omb']) {
+    button(id).addEventListener('click', async () => {
+      button('install-omb').disabled = button('settings-install-omb').disabled = true
+      try {
+        await frame.plugin.request('server.install', {})
+        await changed()
+      } catch (error) {
+        note(failure(error, 'Could not approve installation. Please retry.'))
+      } finally {
+        button('install-omb').disabled = button('settings-install-omb').disabled = false
+      }
+    })
+  }
+
+  input('pref-share-tools').addEventListener(
+    'change',
+    () => void setPreference('shareTools', input('pref-share-tools').checked)
+  )
+  input('pref-link-agents').addEventListener(
+    'change',
+    () => void setPreference('linkAgents', input('pref-link-agents').checked)
+  )
   button('pref-import').addEventListener('click', async () => {
     button('pref-import').disabled = true
     note('Bringing in tools…')
@@ -114,8 +146,9 @@ export function createSettings(frame: FrameApi, element: Elements, changed: () =
       const added = result.added.length
       const failed = result.skipped.some((tool) => tool.reason === 'failed')
       note(
-        (added ? `Brought in ${added} ${added === 1 ? 'tool' : 'tools'}, switched off. Turn them on per bot in the Bot Dashboard.` : 'No new tools to bring in.') +
-          (failed ? ' Some could not be brought in.' : '')
+        (added
+          ? `Brought in ${added} ${added === 1 ? 'tool' : 'tools'}, switched off. Turn them on per bot in the Bot Dashboard.`
+          : 'No new tools to bring in.') + (failed ? ' Some could not be brought in.' : '')
       )
     } catch (error) {
       note(failure(error, 'Could not bring in tools.'))

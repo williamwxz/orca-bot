@@ -80,7 +80,10 @@ test('worker preserves failure until explicit Retry', async () => {
     await new Promise<void>((resolve) => queueMicrotask(resolve))
     assert.equal(((await worker.request('status', {})) as { state: string }).state, 'needs_node')
     assert.equal(calls, 1)
-    assert.equal(((await worker.request('status', { retry: true })) as { state: string }).state, 'starting')
+    assert.equal(
+      ((await worker.request('status', { retry: true })) as { state: string }).state,
+      'starting'
+    )
   } finally {
     await worker.deactivate()
   }
@@ -210,7 +213,12 @@ test('bot chat resolves its thread from the last worker roster, never panel inpu
     assert.deepEqual(calls[0], { port: 18799, startedByPlugin: true, botId })
     await worker.request('bots.list', {})
     await worker.request('chat.open', { botId, activeTaskId: 'panel-thread' })
-    assert.deepEqual(calls[1], { port: 18799, startedByPlugin: true, botId, activeTaskId: 'server-thread' })
+    assert.deepEqual(calls[1], {
+      port: 18799,
+      startedByPlugin: true,
+      botId,
+      activeTaskId: 'server-thread'
+    })
     failRefresh = true
     await assert.rejects(worker.request('bots.list', {}), /Offline/)
     await worker.request('chat.open', { botId })
@@ -244,7 +252,15 @@ test('thread and send require a roster bot, with fresh worker-generated send IDs
           openChat: async () => ({ message: '' }),
           addMausBot: async () => {},
           listBots: async () => [
-            { id: botId, name: 'Bot', title: '', main: false, state: 'idle', unread: false, modelLabel: '' }
+            {
+              id: botId,
+              name: 'Bot',
+              title: '',
+              main: false,
+              state: 'idle',
+              unread: false,
+              modelLabel: ''
+            }
           ],
           readThread: async (input) => {
             calls.push(input)
@@ -350,7 +366,12 @@ test('status restarts owned mismatched setup only after idle, reflects setting c
                 starts++
                 choices.push(share)
                 mismatch = false
-                return { port: 18799, version: testedVersion, started: starts > 1, startedByPlugin: owned }
+                return {
+                  port: 18799,
+                  version: testedVersion,
+                  started: starts > 1,
+                  startedByPlugin: owned
+                }
               },
               claudeSetupStatus: async (_port, share) => {
                 inspections++
@@ -493,10 +514,16 @@ test('setup.answer writes both choices then persists answer and cannot answer tw
     const host = mockHost()
     const worker = await mountWorker({ default: (orca) => register(orca, setupDeps()) }, { host })
     try {
-      await assert.rejects(worker.request('setup.answer', { shareTools: 'yes', linkAgents: true }), /Choose/)
-      assert.deepEqual(await worker.request('setup.answer', { shareTools: allowed, linkAgents: allowed }), {
-        answered: true
-      })
+      await assert.rejects(
+        worker.request('setup.answer', { shareTools: 'yes', linkAgents: true }),
+        /Choose/
+      )
+      assert.deepEqual(
+        await worker.request('setup.answer', { shareTools: allowed, linkAgents: allowed }),
+        {
+          answered: true
+        }
+      )
       assert.deepEqual(host.data().settings, { shareClaudeSetup: allowed, linkAgents: allowed })
       assert.equal(host.data().storage.setupAnswered, true)
       await worker.request('setup.answer', { shareTools: !allowed, linkAgents: !allowed })
@@ -810,7 +837,12 @@ test('background repair and explicit opens share the guard in both directions', 
   const deps = {
     ...setupDeps(),
     now: () => now,
-    ensureServer: async () => ({ port: 8799, version: testedVersion, started: false, startedByPlugin: true }),
+    ensureServer: async () => ({
+      port: 8799,
+      version: testedVersion,
+      started: false,
+      startedByPlugin: true
+    }),
     repairChat: async () => {
       repairs++
       await gate
@@ -943,7 +975,10 @@ test('outdated owned server defers agent linking until updated when idle', async
     stops = 0
   const links: boolean[] = []
   let release!: () => void
-  const host = mockHost({ storage: { setupAnswered: true }, settings: { linkAgents: true } })
+  const host = mockHost({
+    storage: { setupAnswered: true, openmausbotInstallConsent: true },
+    settings: { linkAgents: true }
+  })
   const worker = await mountWorker(
     {
       default: (orca) =>
@@ -1000,6 +1035,153 @@ test('outdated owned server defers agent linking until updated when idle', async
     assert.deepEqual(links, [true])
   } finally {
     release?.()
+    await worker.deactivate()
+  }
+})
+
+test('polls and tool import cannot approve installation; the explicit action persists consent', async () => {
+  const host = mockHost()
+  const permissions: boolean[] = []
+  const worker = await mountWorker(
+    {
+      default: (orca) =>
+        register(orca, {
+          ...setupDeps(),
+          ensureServer: async (_share, allowInstall) => {
+            permissions.push(allowInstall === true)
+            if (!allowInstall) throw new ServerError('needs_install', 'Install OpenMausBot.')
+            return { port: 8799, version: testedVersion, started: true, startedByPlugin: true }
+          },
+          importTools: async () => ({ added: [], skipped: [] })
+        })
+    },
+    { host }
+  )
+  try {
+    await worker.request('status', {})
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    assert.equal(((await worker.request('status', {})) as any).state, 'needs_install')
+    await assert.rejects(worker.request('tools.import', {}))
+    assert.deepEqual(permissions, [false, false])
+    await worker.request('server.install', {})
+    await worker.request('status', {})
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    assert.equal(((await worker.request('status', {})) as any).state, 'running')
+    assert.deepEqual(permissions, [false, false, true])
+    await worker.request('server.stop', {})
+    await worker.request('status', { retry: true })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    assert.equal(permissions.at(-1), true)
+  } finally {
+    await worker.deactivate()
+  }
+})
+
+test('idle update requires consent, preserves old server on integrity failure and rechecks busy', async () => {
+  for (const scenario of ['no-consent', 'integrity', 'became-busy', 'success']) {
+    let stops = 0,
+      prepares = 0,
+      probes = 0
+    const events: string[] = []
+    const worker = await mountWorker(
+      {
+        default: (orca) =>
+          register(orca, {
+            ...setupDeps(),
+            ensureServer: async () => ({
+              port: 8799,
+              version: stops ? testedVersion : '0.1.158',
+              started: stops > 0,
+              startedByPlugin: true
+            }),
+            claudeSetupStatus: async () => ({
+              restart: !stops,
+              updating: !stops,
+              message: 'Update pending.'
+            }),
+            rosterBusy: async () => {
+              probes++
+              events.push('busy')
+              return scenario === 'became-busy' && probes > 1
+            },
+            prepareServer: async (allow) => {
+              assert.equal(allow, true)
+              prepares++
+              events.push('verify')
+              if (scenario === 'integrity')
+                throw new ServerError('install_failed', 'Integrity mismatch.')
+            },
+            stopServer: async () => {
+              stops++
+              events.push('stop')
+              return { stopped: true, message: '' }
+            }
+          })
+      },
+      { host: mockHost({ storage: { openmausbotInstallConsent: scenario !== 'no-consent' } }) }
+    )
+    try {
+      await worker.request('status', {})
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      await worker.request('status', {})
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      const state = (await worker.request('status', {})) as any
+      assert.equal(state.state, 'running')
+      assert.equal(prepares, scenario === 'no-consent' ? 0 : 1)
+      assert.equal(stops, scenario === 'success' ? 1 : 0)
+      if (scenario === 'no-consent') assert.equal(state.needsInstall, true)
+      if (scenario === 'integrity') assert.match(state.message, /Integrity mismatch/)
+      if (scenario === 'success') assert.deepEqual(events, ['busy', 'verify', 'busy', 'stop'])
+    } finally {
+      await worker.deactivate()
+    }
+  }
+})
+
+test('an in-flight send prevents idle restart even before the server reports busy', async () => {
+  let now = 0,
+    stops = 0
+  let finish!: () => void
+  const botId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+  const worker = await mountWorker(
+    {
+      default: (orca) =>
+        register(orca, {
+          ...setupDeps(),
+          now: () => now,
+          claudeSetupStatus: async () => ({ restart: true, message: 'Apply setup.' }),
+          rosterBusy: async () => false,
+          listBots: async () => [{ id: botId, name: 'Bot', state: 'idle' } as any],
+          sendMessage: async () => {
+            await new Promise<void>((resolve) => {
+              finish = resolve
+            })
+            return { sendId: 'fake-send-id-000000' }
+          },
+          stopServer: async () => {
+            stops++
+            return { stopped: false, message: '' }
+          }
+        })
+    },
+    { host: mockHost() }
+  )
+  try {
+    await worker.request('status', {})
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    await worker.request('bots.list', {})
+    const sending = worker.request('message.send', { botId, text: 'Work' })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    await worker.request('status', {})
+    assert.equal(stops, 0)
+    finish()
+    await sending
+    now = 2000
+    await worker.request('status', {})
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    assert.equal(stops, 1)
+  } finally {
+    finish?.()
     await worker.deactivate()
   }
 })

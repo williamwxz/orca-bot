@@ -11,7 +11,7 @@ function fake(agents = ['claude', 'codex']) {
     env: { PATH: '/fake/bin' },
     userInfo: () => ({ username: 'fake', shell: '/fake/sh' }),
     bin: '/fake/pinned/openmausbot',
-    exists: (path) => agents.some((agent) => path === `/fake/bin/${agent}`),
+    exists: (path) => path === deps.bin || agents.some((agent) => path === `/fake/bin/${agent}`),
     read: () => record,
     write: (value) => {
       record = value
@@ -58,7 +58,10 @@ test('adds exact agent commands and records only port and bin', async () => {
     ]
   )
   assert.equal(calls[0].env.CLAUDE_CONFIG_DIR, '/fake/profile')
-  assert.deepEqual(record(), { claude: { port: 8799, bin: deps.bin }, codex: { port: 8799, bin: deps.bin } })
+  assert.deepEqual(record(), {
+    claude: { port: 8799, bin: deps.bin },
+    codex: { port: 8799, bin: deps.bin }
+  })
 })
 test('matching record is a no-op', async () => {
   const { deps, calls } = fake()
@@ -107,7 +110,9 @@ test('unowned servers never read records or run commands', async () => {
 test('existing unrecorded Codex orca-bot entry is preserved', async () => {
   const { deps, calls } = fake(['codex'])
   deps.codexEntryExists = async () => true
-  await assert.rejects(syncAgentLinks(input, deps), { message: 'Could not add Bot Team for Orca to Codex.' })
+  await assert.rejects(syncAgentLinks(input, deps), {
+    message: 'Could not add Bot Team for Orca to Codex.'
+  })
   assert.deepEqual(calls, [])
 })
 test('failures contain only the generic agent sentence and preserve successful entries', async () => {
@@ -115,13 +120,17 @@ test('failures contain only the generic agent sentence and preserve successful e
   deps.execFile = async (file) => {
     if (file.endsWith('codex')) throw new Error('private-output')
   }
-  await assert.rejects(syncAgentLinks(input, deps), { message: 'Could not add Bot Team for Orca to Codex.' })
+  await assert.rejects(syncAgentLinks(input, deps), {
+    message: 'Could not add Bot Team for Orca to Codex.'
+  })
   assert.deepEqual(record(), { claude: { port: 8799, bin: deps.bin } })
 })
 test('corrupt ownership record fails closed', async () => {
   const { deps, calls } = fake()
   deps.read = () => '{bad record'
-  await assert.rejects(syncAgentLinks(input, deps), { message: 'Could not read Bot Team for Orca setup.' })
+  await assert.rejects(syncAgentLinks(input, deps), {
+    message: 'Could not read Bot Team for Orca setup.'
+  })
   assert.deepEqual(calls, [])
 })
 
@@ -190,7 +199,10 @@ for (const [agent, program, label] of [
     deps.listAgent = async () => {
       throw new Error('SECRET_FAKE_TOKEN')
     }
-    await assert.rejects(syncAgentLinks(input, deps), (error) => !String(error).includes('SECRET_FAKE_TOKEN'))
+    await assert.rejects(
+      syncAgentLinks(input, deps),
+      (error) => !String(error).includes('SECRET_FAKE_TOKEN')
+    )
   })
 }
 test('opencode removal supports legacy and V2, preserves other keys and refuses comments or mismatches', async () => {
@@ -284,4 +296,16 @@ test('atomic config replacement preserves mode and cleans up on failed rename us
       ['unlink', '/fake/temp']
     ])
   }
+})
+
+test('missing pinned binary cannot replace working links with a nonexistent executable', async () => {
+  const { deps, calls, record } = fake()
+  await syncAgentLinks(input, deps)
+  const before = record()
+  calls.length = 0
+  const exists = deps.exists
+  deps.exists = (path) => path !== deps.bin && exists(path)
+  await assert.rejects(syncAgentLinks(input, deps), /not installed/)
+  assert.deepEqual(calls, [])
+  assert.deepEqual(record(), before)
 })

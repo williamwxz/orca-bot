@@ -12,7 +12,12 @@ import type { ServerDeps } from './omb-server.ts'
 import { NEXT, PING, RELAYED, WINDOW, frames, lineReader, unpack } from './relay-frames.ts'
 
 type Store = { storage: Record<string, unknown>; settings: Record<string, unknown> }
-export type RelayIo = { write(text: string): void; load(): Store | undefined; save(store: Store): void; hash: string }
+export type RelayIo = {
+  write(text: string): void
+  load(): Store | undefined
+  save(store: Store): void
+  hash: string
+}
 
 /**
  * The server's own Orca (and its copy of the plugin, if any) owns OpenMausBot's setup. A paired
@@ -32,6 +37,7 @@ export function pairedClientDeps(
     syncAgentLinks: undefined,
     claudeSetupStatus: undefined,
     repairChat: undefined,
+    prepareServer: undefined,
     stopServer: async () => ({ stopped: false, message: 'Stop OpenMausBot in Orca on this server.' }),
     openChat: async () => ({ message: 'Open the Bot Dashboard in Orca on this server.' })
   }
@@ -46,17 +52,23 @@ export function pairedClientDeps(
 export function orphanSpawn(
   file: string,
   args: string[],
-  options: { env: NodeJS.ProcessEnv; stdio: ['ignore', number, number] }
+  options: { env: NodeJS.ProcessEnv; stdio: ['ignore', number, number] },
+  spawnChild?: typeof spawn
 ): Promise<{ pid: number; unref(): void }> {
+  if (!spawnChild && process.env.NODE_TEST_CONTEXT)
+    throw new Error('Tests must inject relay spawn dependencies')
+  const launch = spawnChild ?? spawn
   const script = '"$0" "$@" </dev/null >&3 2>&3 3>&- & echo $!'
   return new Promise((resolve, reject) => {
-    const shell = spawn('/bin/sh', ['-c', script, file, ...args], {
+    const shell = launch('/bin/sh', ['-c', script, file, ...args], {
       env: options.env,
       detached: true,
       stdio: ['ignore', 'pipe', 'ignore', options.stdio[1]]
     })
     let output = ''
-    shell.stdout!.setEncoding('utf8').on('data', (chunk: string) => { output += chunk })
+    shell.stdout!.setEncoding('utf8').on('data', (chunk: string) => {
+      output += chunk
+    })
     shell.once('error', reject)
     shell.once('close', (code) => {
       const pid = Number(output.trim())
@@ -66,40 +78,74 @@ export function orphanSpawn(
   })
 }
 
-export function createRelay(io: RelayIo, host: (api: OrcaWorkerApi) => void = api => register(api, pairedClientDeps())): (chunk: string) => void {
+export function createRelay(
+  io: RelayIo,
+  host: (api: OrcaWorkerApi) => void = (api) => register(api, pairedClientDeps())
+): (chunk: string) => void {
   const handlers = new Map<string, (input: unknown, context: unknown) => unknown>()
   const store: Store = io.load() ?? { storage: {}, settings: {} }
-  const value = (bag: Record<string, unknown>, key: string) => Promise.resolve(key in bag ? bag[key] : null)
-  const set = (bag: Record<string, unknown>, key: string, next: unknown) => { bag[key] = next; io.save(store); return Promise.resolve() }
+  const value = (bag: Record<string, unknown>, key: string) =>
+    Promise.resolve(key in bag ? bag[key] : null)
+  const set = (bag: Record<string, unknown>, key: string, next: unknown) => {
+    bag[key] = next
+    io.save(store)
+    return Promise.resolve()
+  }
   const disposable = { dispose() {} }
   host({
-    panels: { handle: (name: string, handler: (input: unknown, context: unknown) => unknown) => { handlers.set(name, handler); return disposable } },
+    panels: {
+      handle: (name: string, handler: (input: unknown, context: unknown) => unknown) => {
+        handlers.set(name, handler)
+        return disposable
+      }
+    },
     commands: { register: () => disposable },
-    storage: { get: (key: string) => value(store.storage, key), set: (key: string, next: unknown) => set(store.storage, key, next) },
-    settings: { get: (key: string) => value(store.settings, key), set: (key: string, next: unknown) => set(store.settings, key, next) }
+    storage: {
+      get: (key: string) => value(store.storage, key),
+      set: (key: string, next: unknown) => set(store.storage, key, next)
+    },
+    settings: {
+      get: (key: string) => value(store.settings, key),
+      set: (key: string, next: unknown) => set(store.settings, key, next)
+    }
   } as unknown as OrcaWorkerApi)
 
   let reply: { lines: string[]; at: number } | undefined
   const flush = () => {
     if (!reply) return
     const end = Math.min(reply.lines.length, reply.at + WINDOW)
-    io.write(reply.lines.slice(reply.at, end).map(line => `${line}\r\n`).join(''))
+    io.write(
+      reply.lines
+        .slice(reply.at, end)
+        .map((line) => `${line}\r\n`)
+        .join('')
+    )
     reply.at = end
     if (end === reply.lines.length) reply = undefined
   }
   let queue = Promise.resolve()
-  return lineReader(line => {
+  return lineReader((line) => {
     if (line === NEXT) return flush()
     let request: { id?: unknown; name?: unknown; input?: unknown }
-    try { request = unpack(line) } catch { return }
+    try {
+      request = unpack(line)
+    } catch {
+      return
+    }
     const id = request?.id
     if (typeof id !== 'string' || !/^[A-Za-z0-9-]{1,40}$/.test(id)) return
     queue = queue.then(async () => {
       let answer: { output?: unknown; error?: string }
       try {
         if (request.name === PING) answer = { output: { hash: io.hash } }
-        else if (!(RELAYED as readonly unknown[]).includes(request.name)) throw new Error('Unsupported bot request.')
-        else answer = { output: await handlers.get(request.name as string)!(request.input ?? {}, { panelId: 'paired-client' }) }
+        else if (!(RELAYED as readonly unknown[]).includes(request.name))
+          throw new Error('Unsupported bot request.')
+        else
+          answer = {
+            output: await handlers.get(request.name as string)!(request.input ?? {}, {
+              panelId: 'paired-client'
+            })
+          }
       } catch (error) {
         answer = { error: error instanceof Error ? error.message : 'The bot request failed.' }
       }
@@ -116,14 +162,28 @@ export function start(rest: string, hash: string): void {
   // Earlier versions' code is no longer used once this one runs.
   try {
     for (const old of fs.readdirSync(join(folder, 'relay'))) {
-      if (old !== hash && /^[0-9a-f]{16}$/.test(old)) fs.rmSync(join(folder, 'relay', old), { recursive: true, force: true })
+      if (old !== hash && /^[0-9a-f]{16}$/.test(old))
+        fs.rmSync(join(folder, 'relay', old), { recursive: true, force: true })
     }
-  } catch { /* Nothing to tidy. */ }
+  } catch {
+    /* Nothing to tidy. */
+  }
   const feed = createRelay({
     hash,
-    write: text => { process.stdout.write(text) },
-    load: () => { try { return JSON.parse(fs.readFileSync(file, 'utf8')) } catch { return undefined } },
-    save: store => { fs.mkdirSync(folder, { recursive: true }); fs.writeFileSync(file, JSON.stringify(store), { mode: 0o600 }) }
+    write: (text) => {
+      process.stdout.write(text)
+    },
+    load: () => {
+      try {
+        return JSON.parse(fs.readFileSync(file, 'utf8'))
+      } catch {
+        return undefined
+      }
+    },
+    save: (store) => {
+      fs.mkdirSync(folder, { recursive: true })
+      fs.writeFileSync(file, JSON.stringify(store), { mode: 0o600 })
+    }
   })
   process.stdin.setEncoding('utf8')
   process.stdin.on('data', feed)

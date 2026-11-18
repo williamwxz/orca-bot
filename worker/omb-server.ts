@@ -1,16 +1,20 @@
 import { execFile, spawn } from 'node:child_process'
 import * as fs from 'node:fs'
 import { homedir, userInfo } from 'node:os'
+import { ombBinary } from './omb-cli.ts'
 import { childEnvironment } from './child-environment.ts'
 import { join, posix, win32 } from 'node:path'
 import { createServer } from 'node:net'
-import { TESTED_OPENMAUSBOT_VERSION, compareVersions } from '../shared/omb-version.ts'
+import { TESTED_OPENMAUSBOT_VERSION, compareVersions, INSTALL_NOTICE } from '../shared/omb-version.ts'
 
 export type Server = { port: number; version: string }
 export type ServerResult = Server & { started: boolean; startedByPlugin: boolean }
 export type StopResult = { stopped: boolean; message: string }
 export type ServerDeps = {
-  fetch: (url: string, options: { signal: AbortSignal }) => Promise<{ ok: boolean; json(): Promise<unknown> }>
+  fetch: (
+    url: string,
+    options: { signal: AbortSignal }
+  ) => Promise<{ ok: boolean; json(): Promise<unknown> }>
   execFile: (
     file: string,
     args: string[],
@@ -24,12 +28,16 @@ export type ServerDeps = {
   isDirectory: (path: string) => boolean
   realpath: (path: string) => string
   exists: (path: string) => boolean
+  readdir?: (path: string) => string[]
   mkdir: (path: string) => void
   open: (path: string) => number
   close: (fd: number) => void
   read: (path: string) => string
   write: (path: string, value: string) => void
   remove: (path: string) => void
+  removeTree: (path: string) => void
+  rename: (from: string, to: string) => void
+  installAsset: (name: string) => string
   kill: (pid: number) => void
   processAlive: (pid: number) => boolean
   portFree: (port: number) => Promise<boolean>
@@ -44,7 +52,7 @@ export type ServerDeps = {
 }
 
 export class ServerError extends Error {
-  state: 'needs_node' | 'install_failed' | 'start_failed'
+  state: 'needs_install' | 'needs_node' | 'install_failed' | 'start_failed'
   constructor(state: ServerError['state'], message: string) {
     super(message)
     this.state = state
@@ -72,6 +80,7 @@ export function defaultServerDeps(): ServerDeps {
     isDirectory: (path) => fs.statSync(path).isDirectory(),
     realpath: fs.realpathSync,
     exists: fs.existsSync,
+    readdir: fs.readdirSync,
     mkdir: (path) => {
       fs.mkdirSync(path, { recursive: true, mode: 0o700 })
     },
@@ -80,6 +89,10 @@ export function defaultServerDeps(): ServerDeps {
     read: (path) => fs.readFileSync(path, 'utf8'),
     write: (path, value) => fs.writeFileSync(path, value, { mode: 0o600 }),
     remove: fs.unlinkSync,
+    removeTree: (path) => fs.rmSync(path, { recursive: true, force: true }),
+    rename: fs.renameSync,
+    installAsset: (name) =>
+      fs.readFileSync(new URL(`./install-assets/${name}`, import.meta.url), 'utf8'),
     kill: (pid) => {
       process.kill(pid, 'SIGTERM')
     },
@@ -123,11 +136,14 @@ async function health(port: number, deps: ServerDeps, timeoutMs = 1500): Promise
       }, timeoutMs)
     })
     const request = async (): Promise<Health | undefined> => {
-      const response = await deps.fetch(`http://127.0.0.1:${port}/api/health`, { signal: controller.signal })
+      const response = await deps.fetch(`http://127.0.0.1:${port}/api/health`, {
+        signal: controller.signal
+      })
       if (!response.ok) return undefined
       const value = (await response.json()) as Partial<Health> | null
       if (value?.app !== 'openmausbot') return undefined
-      const version = typeof value.version === 'string' && value.version.trim() ? value.version : 'unknown'
+      const version =
+        typeof value.version === 'string' && value.version.trim() ? value.version : 'unknown'
       return { app: 'openmausbot', version, pid: value.pid }
     }
     return await Promise.race([request(), timeout])
@@ -138,7 +154,10 @@ async function health(port: number, deps: ServerDeps, timeoutMs = 1500): Promise
   }
 }
 
-export async function serverHealthy(port: number, deps: ServerDeps = defaultServerDeps()): Promise<boolean> {
+export async function serverHealthy(
+  port: number,
+  deps: ServerDeps = defaultServerDeps()
+): Promise<boolean> {
   return !!(await health(port, deps, 1000))
 }
 
@@ -169,7 +188,10 @@ export function claudeEnvironment(
     const inside = (root: string, target: string) => {
       const relative = path.relative(root, target)
       return (
-        !!relative && relative !== '..' && !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative)
+        !!relative &&
+        relative !== '..' &&
+        !relative.startsWith('..' + path.sep) &&
+        !path.isAbsolute(relative)
       )
     }
     if (
@@ -235,7 +257,9 @@ export async function claudeSetupStatus(
 export async function checkNode(deps: ServerDeps = defaultServerDeps()): Promise<string> {
   let version: string
   try {
-    version = (await deps.execFile('node', ['--version'], { env: childEnvironment(deps), timeout: 10000 }))
+    version = (
+      await deps.execFile('node', ['--version'], { env: childEnvironment(deps), timeout: 10000 })
+    )
       .trim()
       .replace(/^v/, '')
   } catch {
@@ -253,47 +277,80 @@ export async function checkNode(deps: ServerDeps = defaultServerDeps()): Promise
   return version
 }
 
-function redact(error: unknown): string {
-  return String(error instanceof Error ? error.message : error)
-    .replace(/Bearer\s+\S+/gi, 'Bearer [REDACTED]')
-    .replace(/((?:[\w-]*token|password|secret|authorization|_auth)\s*[=:]\s*)\S+/gi, '$1[REDACTED]')
-    .replace(/\b(?:npm_|gh[pousr]_|github_pat_|sk-)[A-Za-z0-9_-]+/g, '[REDACTED]')
-    .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '[REDACTED]')
-    .replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1[REDACTED]@')
-    .split('\n')
-    .slice(-12)
-    .join('\n')
+export function validateInstallLock(manifest: string, source: string, version: string): void {
+  const pkg = JSON.parse(manifest)
+  const lock = JSON.parse(source)
+  if (
+    version !== TESTED_OPENMAUSBOT_VERSION ||
+    pkg.dependencies?.openmausbot !== version ||
+    lock.lockfileVersion !== 3 ||
+    lock.packages?.[''].dependencies?.openmausbot !== version ||
+    lock.packages?.['node_modules/openmausbot']?.version !== version
+  )
+    throw new Error('Invalid pinned OpenMausBot lockfile.')
+  for (const [name, entry] of Object.entries(lock.packages) as [string, any][]) {
+    if (!name) continue
+    if (
+      !/^sha512-[A-Za-z0-9+/]{86}==$/.test(entry.integrity ?? '') ||
+      !entry.resolved?.startsWith('https://registry.npmjs.org/')
+    )
+      throw new Error('Every installed package must have a pinned npm SHA-512 integrity hash.')
+  }
 }
 
 export async function ensureInstalled(
   version: string,
-  deps: ServerDeps = defaultServerDeps()
+  deps: ServerDeps = defaultServerDeps(),
+  allowInstall = false
 ): Promise<string> {
-  if (!/^\d+(\.\d+)*$/.test(version)) throw new ServerError('install_failed', 'Invalid OpenMausBot version.')
+  if (version !== TESTED_OPENMAUSBOT_VERSION)
+    throw new ServerError('install_failed', 'Invalid OpenMausBot version.')
   const folder = join(deps.home, '.orca-bot/openmausbot', version)
   const bin = join(folder, 'node_modules/.bin/openmausbot')
   if (deps.exists(bin)) return bin
+  if (!allowInstall) throw new ServerError('needs_install', INSTALL_NOTICE)
+  const staging = `${folder}.staging`
   try {
+    const manifest = deps.installAsset('package.json')
+    const lock = deps.installAsset('package-lock.json')
+    validateInstallLock(manifest, lock, version)
+    deps.removeTree(staging)
+    deps.mkdir(staging)
+    deps.write(join(staging, 'package.json'), manifest)
+    deps.write(join(staging, 'package-lock.json'), lock)
+    // npm ci checks every fetched tarball against the committed SHA-512 hashes.
+    // No lifecycle scripts or mutable dependency resolution run during installation.
     await deps.execFile(
       'npm',
       [
-        'install',
+        'ci',
         '--prefix',
-        folder,
+        staging,
+        '--ignore-scripts',
         '--no-audit',
         '--no-fund',
-        '--ignore-scripts',
-        `openmausbot@${version}`
+        '--registry=https://registry.npmjs.org',
+        '--cache',
+        join(staging, '.npm-cache')
       ],
       { env: childEnvironment(deps), timeout: 300000 }
     )
-    if (!deps.exists(bin)) throw new Error('npm finished without installing the OpenMausBot binary.')
+    if (!deps.exists(join(staging, 'node_modules/.bin/openmausbot')))
+      throw new Error('Missing OpenMausBot binary.')
+    deps.removeTree(join(staging, '.npm-cache'))
+    deps.removeTree(folder)
+    deps.rename(staging, folder)
     return bin
   } catch (error) {
+    const integrity = /integrity|EINTEGRITY|sha512/i.test(String(error))
     throw new ServerError(
       'install_failed',
-      `Could not install OpenMausBot. Check your network and npm setup, then press Retry.\n${redact(error)}`
+      integrity
+        ? 'OpenMausBot integrity verification failed. Installation was refused; please retry.'
+        : 'Could not install verified OpenMausBot. Check Node.js and your network, then press Retry.'
     )
+  } finally {
+    deps.removeTree(staging)
   }
 }
 
@@ -354,20 +411,33 @@ export async function startServer(
   }
 }
 
-export async function isPluginServer(port: number, deps: ServerDeps = defaultServerDeps()): Promise<boolean> {
+export async function isPluginServer(
+  port: number,
+  deps: ServerDeps = defaultServerDeps()
+): Promise<boolean> {
   return !!(await ownedServer(port, deps))
 }
 
 const attempts = new WeakMap<ServerDeps, Promise<ServerResult>>()
-export function ensureServer(deps: ServerDeps = defaultServerDeps(), share = false): Promise<ServerResult> {
+export function ensureServer(
+  deps: ServerDeps = defaultServerDeps(),
+  share = false,
+  allowInstall = false
+): Promise<ServerResult> {
   const existing = attempts.get(deps)
   if (existing) return existing
   const attempt = async (): Promise<ServerResult> => {
     const running = await findServer(deps)
     if (running)
       return { ...running, started: false, startedByPlugin: await isPluginServer(running.port, deps) }
+    const existingBin = ombBinary(deps)
+    if (!allowInstall && !deps.exists(existingBin))
+      throw new ServerError('needs_install', INSTALL_NOTICE)
     await checkNode(deps)
-    const bin = await ensureInstalled(TESTED_OPENMAUSBOT_VERSION, deps)
+    const bin =
+      !allowInstall && deps.exists(existingBin)
+        ? existingBin
+        : await ensureInstalled(TESTED_OPENMAUSBOT_VERSION, deps, allowInstall)
     for (const port of ports) {
       if (!(await deps.portFree(port))) continue
       return { ...(await startServer(bin, port, deps, share)), started: true, startedByPlugin: true }
@@ -385,7 +455,11 @@ export function ensureServer(deps: ServerDeps = defaultServerDeps(), share = fal
 export async function stopServer(deps: ServerDeps = defaultServerDeps()): Promise<StopResult> {
   const path = join(deps.home, '.orca-bot/server.pid')
   try {
-    const record = JSON.parse(deps.read(path)) as { launcherPid: number; serverPid: number; port: number }
+    const record = JSON.parse(deps.read(path)) as {
+      launcherPid: number
+      serverPid: number
+      port: number
+    }
     if (
       !Number.isSafeInteger(record.launcherPid) ||
       record.launcherPid <= 0 ||
@@ -396,7 +470,10 @@ export async function stopServer(deps: ServerDeps = defaultServerDeps()): Promis
       throw new Error('Invalid pid file')
     const result = await health(record.port, deps)
     if (!result || result.pid !== record.serverPid || !deps.processAlive(record.launcherPid))
-      return { stopped: false, message: 'Server identity did not match the pid file; no signal was sent.' }
+      return {
+        stopped: false,
+        message: 'Server identity did not match the pid file; no signal was sent.'
+      }
     deps.kill(record.launcherPid)
     const deadline = deps.now() + 10000
     while (deps.now() < deadline) {
@@ -415,7 +492,10 @@ export async function stopServer(deps: ServerDeps = defaultServerDeps()): Promis
   } catch {
     return {
       stopped: false,
-      message: 'Could not verify or stop a server started by Bot Team for Orca; no other server was touched.'
+      message:
+        'Could not verify or stop a server started by Bot Team for Orca; no other server was touched.'
     }
   }
 }
+
+export { INSTALL_NOTICE } from '../shared/omb-version.ts'
