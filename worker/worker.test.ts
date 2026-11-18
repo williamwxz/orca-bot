@@ -935,3 +935,71 @@ test('health recovery checks immediately after starting our replacement server',
     await worker.deactivate()
   }
 })
+
+test('outdated owned server defers agent linking until updated when idle', async () => {
+  let now = 0,
+    busy = true,
+    current = '0.1.158',
+    stops = 0
+  const links: boolean[] = []
+  let release!: () => void
+  const host = mockHost({ storage: { setupAnswered: true }, settings: { linkAgents: true } })
+  const worker = await mountWorker(
+    {
+      default: (orca) =>
+        register(orca, {
+          ...setupDeps(),
+          now: () => now,
+          ensureServer: async () => ({
+            port: 8799,
+            version: current,
+            started: stops > 0,
+            startedByPlugin: true
+          }),
+          claudeSetupStatus: async () =>
+            current === testedVersion
+              ? { restart: false, message: '' }
+              : {
+                  restart: true,
+                  updating: true,
+                  message: `OpenMausBot will update to ${testedVersion} when bots are idle.`
+                },
+          rosterBusy: async () => busy,
+          stopServer: async () => {
+            stops++
+            await new Promise<void>((resolve) => {
+              release = resolve
+            })
+            current = testedVersion
+            return { stopped: true, message: '' }
+          },
+          syncAgentLinks: async ({ enabled }) => {
+            links.push(enabled)
+          }
+        })
+    },
+    { host }
+  )
+  try {
+    await worker.request('status', {})
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    let status = (await worker.request('status', {})) as any
+    assert.equal(status.state, 'running')
+    assert.equal(status.message, `OpenMausBot will update to ${testedVersion} when bots are idle.`)
+    assert.deepEqual(links, [])
+    busy = false
+    now = 2000
+    status = (await worker.request('status', {})) as any
+    assert.equal(status.state, 'starting')
+    assert.equal(status.message, `Updating OpenMausBot to ${testedVersion}…`)
+    release()
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    status = (await worker.request('status', {})) as any
+    assert.equal(status.state, 'running')
+    assert.equal(status.version, testedVersion)
+    assert.deepEqual(links, [true])
+  } finally {
+    release?.()
+    await worker.deactivate()
+  }
+})

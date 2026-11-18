@@ -191,26 +191,44 @@ export function claudeEnvironment(
   return { env, flags: { claudeHome: !!env.CLAUDE_CONFIG_DIR, inherit: share }, found: !!home }
 }
 
+async function ownedServer(
+  port: number,
+  deps: ServerDeps
+): Promise<{ record: Record<string, any>; running: Health } | undefined> {
+  try {
+    const record = JSON.parse(deps.read(join(deps.home, '.orca-bot/server.pid')))
+    if (record.port !== port || !Number.isSafeInteger(record.serverPid) || record.serverPid <= 0)
+      return undefined
+    const running = await health(port, deps)
+    return running?.pid === record.serverPid ? { record, running } : undefined
+  } catch {
+    return undefined
+  }
+}
+
 export async function claudeSetupStatus(
   port: number,
   share: boolean,
   deps: ServerDeps = defaultServerDeps()
-): Promise<{ restart: boolean; message: string }> {
-  if (!(await isPluginServer(port, deps))) return { restart: false, message: '' }
-  const { flags, found } = claudeEnvironment(deps, share)
-  try {
-    const record = JSON.parse(deps.read(join(deps.home, '.orca-bot/server.pid')))
-    const restart =
-      !Number.isInteger(record.env) ||
-      record.env < ENV_VERSION ||
-      record.claudeHome !== flags.claudeHome ||
-      record.inherit !== flags.inherit
+): Promise<{ restart: boolean; message: string; updating?: boolean }> {
+  const owned = await ownedServer(port, deps)
+  if (!owned) return { restart: false, message: '' }
+  if ((compareVersions(owned.running.version, TESTED_OPENMAUSBOT_VERSION) ?? 0) < 0)
     return {
-      restart,
-      message: !found ? '' : restart ? 'Claude setup changes will apply when bots are idle.' : ''
+      restart: true,
+      updating: true,
+      message: `OpenMausBot will update to ${TESTED_OPENMAUSBOT_VERSION} when bots are idle.`
     }
-  } catch {
-    return { restart: false, message: '' }
+  const { flags, found } = claudeEnvironment(deps, share)
+  const { record } = owned
+  const restart =
+    !Number.isInteger(record.env) ||
+    record.env < ENV_VERSION ||
+    record.claudeHome !== flags.claudeHome ||
+    record.inherit !== flags.inherit
+  return {
+    restart,
+    message: !found ? '' : restart ? 'Claude setup changes will apply when bots are idle.' : ''
   }
 }
 
@@ -337,14 +355,7 @@ export async function startServer(
 }
 
 export async function isPluginServer(port: number, deps: ServerDeps = defaultServerDeps()): Promise<boolean> {
-  try {
-    const record = JSON.parse(deps.read(join(deps.home, '.orca-bot/server.pid')))
-    if (record.port !== port || !Number.isSafeInteger(record.serverPid) || record.serverPid <= 0) return false
-    const running = await health(port, deps)
-    return running?.pid === record.serverPid
-  } catch {
-    return false
-  }
+  return !!(await ownedServer(port, deps))
 }
 
 const attempts = new WeakMap<ServerDeps, Promise<ServerResult>>()

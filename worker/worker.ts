@@ -34,7 +34,10 @@ export type WorkerDeps = {
   checkHealth: (port: number) => Promise<boolean>
   now: () => number
   ensureServer: (share: boolean) => Promise<ServerResult>
-  claudeSetupStatus?: (port: number, share: boolean) => Promise<{ restart: boolean; message: string }>
+  claudeSetupStatus?: (
+    port: number,
+    share: boolean
+  ) => Promise<{ restart: boolean; message: string; updating?: boolean }>
   rosterBusy?: (port: number) => Promise<boolean>
   stopServer: () => Promise<StopResult>
   openChat: (input: OpenInput) => Promise<OpenResult>
@@ -156,7 +159,11 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
         linkSetting = input.linkAgents
         if (status?.state === 'running' && startedByPlugin) {
           await checking
-          if (status?.state === 'running' && startedByPlugin)
+          if (
+            status?.state === 'running' &&
+            startedByPlugin &&
+            (!input.linkAgents || (compareVersions(status.version!, TESTED_OPENMAUSBOT_VERSION) ?? 0) >= 0)
+          )
             await updateLinks(input.linkAgents, status.port!)
         }
         await orca.storage.set('setupAnswered', true)
@@ -195,9 +202,11 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
               return
             }
             if (!startedByPlugin || answering) return
-            if (deps.now() >= linkRetryAt) {
+            const wantLinks = answered && nextLinkSetting
+            const outdated = (compareVersions(checked.version!, TESTED_OPENMAUSBOT_VERSION) ?? 0) < 0
+            if ((!wantLinks || !outdated) && deps.now() >= linkRetryAt) {
               try {
-                await updateLinks(answered && nextLinkSetting, checked.port!)
+                await updateLinks(wantLinks, checked.port!)
               } catch {
                 /* Keep the failure visible while waiting to retry. */
               }
@@ -208,7 +217,11 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
               message: ''
             }
             if (status !== checked) return
-            checked.message = [versionMessage(checked.version!), setup.message, linkMessage]
+            checked.message = [
+              setup.updating ? '' : versionMessage(checked.version!),
+              setup.message,
+              linkMessage
+            ]
               .filter(Boolean)
               .join(' ')
             if (importing || !setup.restart || !deps.rosterBusy || (await deps.rosterBusy(checked.port!)))
@@ -218,7 +231,9 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
             status = {
               ...checked,
               state: 'starting',
-              message: 'Restarting OpenMausBot to apply your Claude setup…'
+              message: setup.updating
+                ? `Updating OpenMausBot to ${TESTED_OPENMAUSBOT_VERSION}…`
+                : 'Restarting OpenMausBot to apply your Claude setup…'
             }
             pending = Promise.resolve()
               .then(async () => {
@@ -231,6 +246,7 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
                 lastRoster = []
                 const server = await deps.ensureServer(restartShare)
                 startedByPlugin = server.startedByPlugin
+                lastHealthCheck = -Infinity
                 status = {
                   state: 'running',
                   message: versionMessage(server.version),

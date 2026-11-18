@@ -6,7 +6,7 @@ import { opencodeEntries, replaceConfigAtomically } from './agent-config.ts'
 import type { Agent } from '../shared/agents.ts'
 import { join } from 'node:path'
 import { childEnvironment } from './child-environment.ts'
-import { defaultCliDeps, ombBinary } from './omb-cli.ts'
+import { defaultCliDeps, pinnedOmbBinary } from './omb-cli.ts'
 import { claudeEnvironment, defaultServerDeps } from './omb-server.ts'
 import type { EnvironmentDeps } from './child-environment.ts'
 
@@ -32,7 +32,7 @@ export function defaultLinkDeps(): LinkDeps {
   const file = join(cli.home, '.orca-bot/agent-link.json')
   return {
     ...cli,
-    bin: ombBinary(cli),
+    bin: pinnedOmbBinary(cli),
     claudeEnv: () => claudeEnvironment(server, false).env,
     read: () => {
       try {

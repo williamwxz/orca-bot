@@ -578,3 +578,21 @@ test('environment version migrates owned records once even when Claude flags mat
   assert.doesNotMatch(JSON.stringify(record), /fake-user|fake\/shell|USER|LOGNAME|SHELL|LANG/)
   assert.equal((await claudeSetupStatus(8799, false, deps)).restart, false)
 })
+
+test('outdated owned server requests an idle update while unowned or newer servers do not', async () => {
+  const { deps, files } = fake()
+  files.set(
+    '/fake/.orca-bot/server.pid',
+    JSON.stringify({ launcherPid: 42, serverPid: 43, port: 8799, claudeHome: false, inherit: false, env: 2 })
+  )
+  deps.fetch = async () => response({ app: 'openmausbot', version: '0.1.158', pid: 43 })
+  assert.deepEqual(await claudeSetupStatus(8799, false, deps), {
+    restart: true,
+    updating: true,
+    message: `OpenMausBot will update to ${version} when bots are idle.`
+  })
+  deps.fetch = async () => response({ app: 'openmausbot', version: '0.1.158', pid: 99 })
+  assert.deepEqual(await claudeSetupStatus(8799, false, deps), { restart: false, message: '' })
+  deps.fetch = async () => response({ app: 'openmausbot', version: '99.0.0', pid: 43 })
+  assert.deepEqual(await claudeSetupStatus(8799, false, deps), { restart: false, message: '' })
+})
