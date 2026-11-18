@@ -100,7 +100,7 @@ test('MCP menu provides host-aware groups, zero-bot prompt, assignments, loading
         }
       }
     } as any,
-    get as any
+    get as any, () => {}
   )
   try {
     view.hostChanged('remote', 'Remote workstation')
@@ -252,7 +252,7 @@ test('same-host resumes retain menu and in-flight state, true host changes resto
         }
       }
     } as any,
-    get as any
+    get as any, () => {}
   )
   try {
     view.hostChanged('local')
@@ -403,7 +403,7 @@ test('two-way access preserves other bots, clean catalog jumps to auditing witho
         }
       }
     } as any,
-    get as any
+    get as any, () => {}
   )
   const find = (key: string) => all(get('mcp-groups')).find((n) => n.dataset.focus === key)!
   try {

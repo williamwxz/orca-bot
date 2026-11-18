@@ -445,3 +445,12 @@ test('relay state saves atomically and cleans private temp files on failed repla
   assert.deepEqual([...files.keys()], [file])
   assert.throws(() => saveRelayStore(file, store), /Tests must inject/)
 })
+
+test('paired create validates optional names and sections at the relay boundary', async () => {
+  const { RELAYED, validateRelayInput } = await import('./relay-frames.ts')
+  assert.ok(RELAYED.includes('bots.create'))
+  validateRelayInput('bots.create', {})
+  validateRelayInput('bots.create', { name: 'Momo', section: 'Research' })
+  for (const input of [null, [], { name: 'a\nb' }, { section: ' ' }])
+    assert.throws(() => validateRelayInput('bots.create', input))
+})

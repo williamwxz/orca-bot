@@ -1,3 +1,4 @@
+import { createToast } from './toast.ts'
 import { createMcpView } from './mcp-view.ts'
 import { createSetup, agentNames } from './setup.ts'
 import { createChatView } from './chat-view.ts'
@@ -17,7 +18,18 @@ const retry = element<HTMLButtonElement>('retry')
 const running = element<HTMLElement>('running')
 const roster = element<HTMLElement>('roster')
 const refreshNote = element<HTMLElement>('refresh-note')
-const result = element<HTMLElement>('result')
+const toast = createToast(element('toast'))
+const addButton = element<HTMLButtonElement>('add-bot')
+let creating = false
+let serverRunning = false
+function updateAddButton() {
+  addButton.disabled = creating || !serverRunning
+  addButton.setAttribute('aria-busy', String(creating))
+}
+addButton.addEventListener('click', event => {
+  event.stopPropagation()
+  if (!addButton.disabled) botMenu.openCreate(addButton)
+})
 const setup = createSetup((answer) => frame.plugin.request('setup.answer', answer))
 const shareTools = element<HTMLInputElement>('share-tools')
 const linkAgents = element<HTMLInputElement>('link-agents')
@@ -51,7 +63,7 @@ async function answerSetup(allow: boolean): Promise<void> {
   const applying = setup.answer(allow)
   renderSetup()
   await applying
-  if (setup.state.answered && setup.state.message) result.textContent = setup.state.message
+  if (setup.state.answered && setup.state.message) toast.show(setup.state.message)
   renderSetup()
   await refreshAfterChange()
 }
@@ -79,6 +91,9 @@ function updateConnectorHost(id: string, name?: string): void {
   if (connectorHostId === id) return
   if (connectorHostId !== undefined) {
     hostGeneration++
+    creating = serverRunning = false
+    updateAddButton()
+    toast.hide()
     botMenu.close()
     chatView.close()
     bots = []
@@ -105,6 +120,9 @@ let hostGeneration = 0
 async function chooseHost(id: string): Promise<void> {
   if (!id) return
   hostGeneration++
+  creating = serverRunning = false
+  updateAddButton()
+  toast.hide()
   botMenu.close()
   hostSelect.disabled = true
   const nextRemote = hosts?.hosts.find((host) => host.id === id)?.name
@@ -121,7 +139,6 @@ async function chooseHost(id: string): Promise<void> {
   chatView.update(bots)
   renderBots()
   running.hidden = true
-  result.textContent = ''
   message.hidden = false
   message.textContent = 'Connecting\u2026'
   try {
@@ -139,8 +156,8 @@ async function chooseHost(id: string): Promise<void> {
   await mcp.refresh()
 }
 hostSelect.addEventListener('change', () => void chooseHost(hostSelect.value))
-const mcp = createMcpView(frame, element)
-const settings = createSettings(frame, element, () => refreshAfterChange())
+const mcp = createMcpView(frame, element, toast.show)
+const settings = createSettings(frame, element, () => refreshAfterChange(), toast.show)
 let settingsShown = false
 let mcpStatus = ''
 function showSettings(show: boolean): void {
@@ -197,15 +214,14 @@ function manageCapabilities(botId: string, enabled: boolean, fromChat = false) {
 }
 const botMenu = createBotMenu(element('bot-menu'), async (input: BotAction) => {
   if (changing.has(input.botId)) return
+  const generation = hostGeneration
   changing.add(input.botId)
   if (input.action === 'delete') deleting.add(input.botId)
   renderBots()
   try {
     const target = bots.find((bot) => bot.id === input.botId)
-    result.textContent = input.action === 'delete'
-      ? `${target?.defaultBot ? 'Hiding' : 'Deleting'} ${target?.name ?? 'bot'}…`
-      : ''
     await frame.plugin.request('bots.act', input)
+    if (generation !== hostGeneration) return
     if (input.action === 'delete') {
       if (selected === input.botId) selected = undefined
       bots = bots.flatMap((bot) => {
@@ -216,17 +232,21 @@ const botMenu = createBotMenu(element('bot-menu'), async (input: BotAction) => {
       renderBots()
     }
     await refreshAfterChange()
+    if (generation !== hostGeneration) return
     if (input.action === 'delete')
-      result.textContent = `${target?.defaultBot ? 'Hidden' : 'Deleted'} ${target?.name ?? 'bot'}.`
+      toast.show(`${target?.defaultBot ? 'Hidden' : 'Deleted'} ${target?.name ?? 'bot'}.`)
+    else toast.show(input.action === 'rename' ? `Renamed to ${input.name}.` : input.action === 'pin' ? (input.pinned ? 'Pinned.' : 'Unpinned.') : input.action === 'model' ? 'Model updated.' : 'Group updated.')
   } catch (error) {
-    result.textContent = error instanceof Error ? error.message : 'Could not update this bot.'
+    if (generation === hostGeneration) toast.show(error instanceof Error ? error.message : 'Could not update this bot.')
   } finally {
     deleting.delete(input.botId)
     changing.delete(input.botId)
     renderBots()
   }
 }, async (input) => {
+  const generation = hostGeneration
   await frame.plugin.request('groups.rename', input)
+  if (generation !== hostGeneration) return
   bots = bots.map((bot) => ({
     ...bot,
     section: bot.section === input.section ? input.name : bot.section,
@@ -234,6 +254,8 @@ const botMenu = createBotMenu(element('bot-menu'), async (input: BotAction) => {
   }))
   renderBots()
   await refreshAfterChange()
+  if (generation !== hostGeneration) return
+  toast.show(`Renamed group to ${input.name}.`)
   return Array.from(roster.querySelectorAll<HTMLElement>('[data-focus]')).find(
     (node) => node.dataset.focus === `group-${input.name}`
   )
@@ -241,7 +263,25 @@ const botMenu = createBotMenu(element('bot-menu'), async (input: BotAction) => {
   list: () => frame.plugin.request('mcp.list', {}),
   act: input => frame.plugin.request('mcp.act', input),
   manage: (botId, enabled) => manageCapabilities(botId, enabled)
-}, { frame, hooks: { changed: refreshCapabilities, manage: (botId, enabled) => manageCapabilities(botId, enabled), hostGeneration: () => hostGeneration } }
+}, { frame, hooks: { notify: toast.show, changed: refreshCapabilities, manage: (botId, enabled) => manageCapabilities(botId, enabled), hostGeneration: () => hostGeneration } }, async input => {
+  if (creating || !serverRunning) throw new Error('Wait until the server is ready.')
+  const generation = hostGeneration
+  creating = true
+  updateAddButton()
+  try {
+    const created = await frame.plugin.request('bots.create', input)
+    if (generation !== hostGeneration) return
+    const bot: Bot = { id: created.botId, name: created.name, title: '', state: 'idle',
+      unread: false, main: false, modelLabel: '', section: input.section }
+    bots = [...bots.filter(item => item.id !== bot.id), bot]
+    chatView.update(bots)
+    renderBots()
+    showBot(bot)
+    toast.show(`Created ${created.name}.`)
+  } finally {
+    if (generation === hostGeneration) { creating = false; updateAddButton() }
+  }
+}
 )
 
 const chatView = createChatView(
@@ -260,7 +300,7 @@ const chatView = createChatView(
     if (preview) previews.set(id, preview)
     else previews.delete(id)
   },
-  { changed: refreshCapabilities, manage: (botId, enabled) => manageCapabilities(botId, enabled, true), hostGeneration: () => hostGeneration }
+  { notify: toast.show, changed: refreshCapabilities, manage: (botId, enabled) => manageCapabilities(botId, enabled, true), hostGeneration: () => hostGeneration }
 )
 function showBot(bot: Bot): void {
   botMenu.close()
@@ -306,17 +346,18 @@ function icon(kind: keyof typeof icons): SVGElement {
   span.innerHTML = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[kind]}</svg>`
   return span.firstElementChild as SVGElement
 }
-async function open(botId?: string): Promise<void> {
+async function open(botId?: string, success?: string): Promise<void> {
   if (opening) return
+  const generation = hostGeneration
   opening = true
   element<HTMLButtonElement>('open-page').disabled = true
   selected = botId
   renderBots()
-  result.textContent = 'Opening\u2026'
   try {
-    result.textContent = (await frame.plugin.request('chat.open', botId ? { botId } : {})).message
+    const reply = await frame.plugin.request('chat.open', botId ? { botId } : {})
+    if (generation === hostGeneration) toast.show(success ?? reply.message)
   } catch (error) {
-    result.textContent = error instanceof Error ? error.message : 'Could not open chat.'
+    if (generation === hostGeneration) toast.show(error instanceof Error ? error.message : 'Could not open chat.')
   } finally {
     opening = false
     element<HTMLButtonElement>('open-page').disabled = false
@@ -326,14 +367,15 @@ async function open(botId?: string): Promise<void> {
 
 async function addMausBot(bot: Bot): Promise<void> {
   if (changing.has(bot.id)) return
+  const generation = hostGeneration
   changing.add(bot.id)
   renderBots()
   try {
     await frame.plugin.request('bots.addMausBot', { botId: bot.id })
     await refreshAfterChange()
-    await open(bot.id)
+    if (generation === hostGeneration) await open(bot.id, `Added ${bot.name}.`)
   } catch (error) {
-    result.textContent = error instanceof Error ? error.message : 'Could not add MausBot.'
+    toast.show(error instanceof Error ? error.message : 'Could not add MausBot.')
   } finally {
     changing.delete(bot.id)
     renderBots()
@@ -403,7 +445,7 @@ function makeBotRow(bot: Bot, sections: string[]): HTMLElement {
 }
 
 function renderBots(): void {
-  const key = JSON.stringify([bots, selected, opening, [...changing], [...deleting], [...readBots], [...previews]])
+  const key = JSON.stringify([bots, addButton.disabled, selected, opening, [...changing], [...deleting], [...readBots], [...previews]])
   if (key === rosterKey) return
   rosterKey = key
   const focused = (document.activeElement as HTMLElement)?.dataset.focus
@@ -419,7 +461,13 @@ function renderBots(): void {
     openButton.textContent = 'Jump to Bot Dashboard'
     openButton.disabled = opening
     openButton.addEventListener('click', () => void open())
-    roster.append(openButton)
+    const add = document.createElement('button')
+    add.type = 'button'
+    add.className = 'bot-menu-btn primary'
+    add.textContent = 'Add bot'
+    add.disabled = addButton.disabled
+    add.addEventListener('click', event => { event.stopPropagation(); botMenu.openCreate(add) })
+    roster.append(add, openButton)
   }
   for (const bot of grouped.ungroupedTop) {
     roster.append(makeBotRow(bot, grouped.sections))
@@ -495,6 +543,8 @@ async function refreshNow(explicitRetry: boolean): Promise<void> {
     }
     const status = await frame.plugin.request('status', { retry: explicitRetry })
     if (!current()) return
+    serverRunning = status.state === 'running'
+    updateAddButton()
     settings.setStatus(status, remoteName())
     const connectorStatus = JSON.stringify([status.state, status.port, remoteName()])
     if (connectorStatus !== mcpStatus) {
@@ -535,6 +585,8 @@ async function refreshNow(explicitRetry: boolean): Promise<void> {
   } catch {
     if (!current()) return
     message.hidden = false
+    serverRunning = false
+    updateAddButton()
     message.textContent = 'Could not read status. Please retry.'
     retry.hidden = false
   } finally {

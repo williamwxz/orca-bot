@@ -90,3 +90,17 @@ export function groupRoster(bots: Bot[]): GroupedRoster {
 export function stateLabel(state: Bot['state']): string {
   return state === 'working' ? 'Working' : state === 'waiting' ? 'Waiting' : ''
 }
+
+export type BotCreate = { name?: string; section?: string }
+export type BotCreated = { botId: string; name: string }
+
+export function validateBotCreate(value: unknown): BotCreate {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    throw new Error('Invalid new bot details.')
+  const { name, section } = value as BotCreate
+  if (name !== undefined && (typeof name !== 'string' || !name.trim() ||
+      name.trim().length > 80 || /[\r\n]/.test(name)))
+    throw new Error('Enter a single-line bot name between 1 and 80 characters.')
+  return { ...(name !== undefined && { name: name.trim() }),
+    ...(section !== undefined && { section: validateGroupName(section) }) }
+}

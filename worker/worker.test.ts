@@ -255,6 +255,7 @@ test('thread and send require a roster bot, with fresh worker-generated send IDs
           stopServer: async () => ({ stopped: false, message: '' }),
           openChat: async () => ({ message: '' }),
           addMausBot: async () => {},
+          createBot: async () => ({ botId, name: 'Bot' }),
           listBots: async () => [
             {
               id: botId,
@@ -286,7 +287,7 @@ test('thread and send require a roster bot, with fresh worker-generated send IDs
       await assert.rejects(worker.request(name, { botId: 'bad', text: 'Hello' }), /Invalid bot ID/)
     }
     assert.equal(calls.length, 0)
-    await worker.request('bots.list', {})
+    assert.deepEqual(await worker.request('bots.create', {}), { botId, name: 'Bot' })
     await worker.request('thread.read', { botId, limit: 20 })
     await worker.request('message.send', { botId, text: 'Hello', sendId: 'untrusted-panel-value' })
     await worker.request('message.send', { botId, text: 'Again' })

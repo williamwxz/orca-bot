@@ -1,8 +1,8 @@
 import { validateModelSelection } from '../shared/models.ts'
 import { defaultHttpDeps, HttpStatusError } from './omb-http.ts'
 import type { HttpDeps } from './omb-http.ts'
-import { mainFirst, validateGroupName } from '../shared/roster.ts'
-import type { Bot, BotAction, GroupRename } from '../shared/roster.ts'
+import { mainFirst, validateBotCreate, validateGroupName } from '../shared/roster.ts'
+import type { BotCreate, BotCreated, Bot, BotAction, GroupRename } from '../shared/roster.ts'
 import { validBotId } from './omb-open.ts'
 import { addableMausBot, visibleBot } from '../shared/appearance.ts'
 
@@ -280,5 +280,37 @@ export async function renameGroup(
         throw new Error('Enter a valid group name between 1 and 60 characters.')
     }
     throw new Error('Could not rename this group. Try again.')
+  }
+}
+
+export async function createBot(
+  input: BotCreate & { port: number; excludeMcp?: string[] },
+  deps: HttpDeps = defaultHttpDeps()
+): Promise<BotCreated> {
+  const body = validateBotCreate(input)
+  const defaults = await deps.request(input.port, '/api/bot-defaults').catch(() => undefined) as
+    { defaults?: { profile?: Record<string, unknown> } } | undefined
+  const profile = defaults?.defaults?.profile ?? {}
+  const settings: Record<string, unknown> = {}
+  if (profile.approvalMode === 'custom' || (profile.approvalMode === 'auto' && profile.computer === 'local'))
+    settings.approvalMode = 'ask'
+  if (input.excludeMcp) {
+    const excluded = new Set(input.excludeMcp)
+    settings.mcpServers = Array.isArray(profile.mcpServers)
+      ? profile.mcpServers.filter(name => typeof name === 'string' && !excluded.has(name))
+      : []
+  }
+  try {
+    const reply = await deps.request(input.port, '/api/bots',
+      { ...body, name: body.name ?? '', settings }, 'POST') as { bot?: { id?: string; name?: string } }
+    if (!validBotId(reply?.bot?.id) || typeof reply.bot?.name !== 'string')
+      throw new Error('Invalid create response.')
+    return { botId: reply.bot.id!, name: reply.bot.name }
+  } catch (error) {
+    if (error instanceof HttpStatusError) {
+      if (error.status === 409) throw new Error('Bot creation conflicted. Check the workspace bot limit.')
+      if ([400, 403].includes(error.status)) throw new Error('Check the bot name, group and creation defaults.')
+    }
+    throw new Error('Could not confirm bot creation. Check the roster before retrying.')
   }
 }

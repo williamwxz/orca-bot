@@ -14,6 +14,9 @@
         <h1 id="list-title">Bot Team for Orca</h1>
         <div class="header-actions">
           <button id="open-page" type="button" disabled>Jump to Bot Dashboard</button>
+          <button id="add-bot" type="button" aria-label="Add bot" title="Add bot" disabled>
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10" /></svg>
+          </button>
           <button id="open-settings" type="button" aria-label="Settings" title="Settings">
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M6.8 1.3h2.4l.3 1.5a5.1 5.1 0 0 1 1.1.5l1.3-.9 1.7 1.7-.9 1.3a5.1 5.1 0 0 1 .5 1.1l1.5.3v2.4l-1.5.3a5.1 5.1 0 0 1-.5 1.1l.9 1.3-1.7 1.7-1.3-.9a5.1 5.1 0 0 1-1.1.5l-.3 1.5H6.8l-.3-1.5a5.1 5.1 0 0 1-1.1-.5l-1.3.9-1.7-1.7.9-1.3a5.1 5.1 0 0 1-.5-1.1L1.3 9.2V6.8l1.5-.3a5.1 5.1 0 0 1 .5-1.1l-.9-1.3 1.7-1.7 1.3.9a5.1 5.1 0 0 1 1.1-.5Z" />
@@ -55,7 +58,6 @@
       <p id="refresh-note" role="status"></p>
       </div>
       <section id="bot-view" aria-label="Bot conversation" hidden></section>
-      <p id="result" role="status" aria-live="polite"></p>
     </section>
     <button id="retry" type="button" hidden>Retry</button>
     </div>
@@ -107,7 +109,6 @@
         </div>
         <button id="stop-server" type="button">Stop OpenMausBot</button>
       </div>
-      <p id="settings-message" role="status" aria-live="polite"></p>
     </section>
     <section id="mcp-view" aria-labelledby="mcp-title" hidden>
       <div class="settings-header">
@@ -120,9 +121,9 @@
         </button>
       </div>
       <p id="mcp-security" class="settings-note"></p>
-      <p id="mcp-message" role="status" aria-live="polite"></p>
       <div id="mcp-groups"></div>
     </section>
+    <div id="toast" role="status" aria-live="polite" hidden></div>
     <div id="bot-menu" class="bot-menu" role="menu" hidden></div>
   </main>
   <script type="module" src="app.ts"></script>

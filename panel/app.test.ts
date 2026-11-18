@@ -70,7 +70,7 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
     createElement: () => new Element(),
     createTextNode: (text: string) => Object.assign(new Element(), { textContent: text })
   })
-  const win = new Element()
+  const win = Object.assign(new Element(), { setTimeout: () => 1 })
   const calls: { name: string; input: unknown }[] = []
   let installed = false
   let needsInstall = false
@@ -175,6 +175,7 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
               modelLabel: 'Codex'
             }
           ]
+        if (name === 'bots.create') return { botId: 'new-bot', name: (input as any).name || 'Momo' }
         if (name === 'chat.open' && holdOpen)
           return new Promise((resolve) => {
             finishOpen = () => resolve({ message: '' })
@@ -214,6 +215,7 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
   try {
     await import('./app.ts')
     await flush()
+    assert.equal(get('add-bot').disabled, true)
     assert.equal(get('install-card').hidden, false)
     assert.equal(get('message').textContent, '')
     assert.equal(get('message').hidden, true)
@@ -316,7 +318,7 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
     assert.equal(get('update-banner').hidden, false)
     assert.match(get('update-banner-text').textContent, /^Updated/)
     assert.equal(get('update-banner-install').hidden, true)
-    assert.match(get('settings-message').textContent, /^Updated/)
+    assert.match(get('toast').children[0].textContent, /^Updated/)
     get('settings-back').emit('click')
     assert.deepEqual([get('main-view').hidden, get('settings-view').hidden], [false, true])
     const listed = calls.filter((call) => call.name === 'bots.list').length
@@ -350,7 +352,7 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
     assert.equal(calls.some((call) => call.name === 'tools.import'), false)
     get('open-page').emit('click')
     await flush()
-    assert.equal(get('result').textContent, '')
+    assert.match(get('toast').children[0].textContent, /^Saved/)
     // The same single install card handles an existing server that needs an update.
     for (const target of ['local', 'mini-1']) {
       host = target
@@ -500,7 +502,7 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
     const deletingRow = () => get('roster').children.find((child) => child.className.startsWith('bot-row'))!
     const spinner = () => deletingRow().children.at(-1)!.children.find((child) => child.className === 'deleting-spinner')
     assert.equal(spinner()?.attributes.get('aria-hidden'), 'true')
-    assert.match(get('result').textContent, /^Deleting .*…$/)
+    assert.doesNotMatch(get('toast').children[0].textContent, /^Deleting .*…$/)
     assert.equal(deletingRow().children[0].attributes.get('aria-busy'), 'true')
     holdNextBots = true
     finishAct!()
@@ -517,7 +519,7 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
     assert.ok(spinner())
     await flush()
     assert.equal(spinner(), undefined)
-    assert.equal(get('result').textContent, 'Delete failed')
+    assert.equal(get('toast').children[0].textContent, 'Delete failed')
     failAct = false
     failList = true
     openMenu()
@@ -526,6 +528,7 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
     await flush()
     assert.equal(get('roster').children.some((child) => child.className.startsWith('bot-row')), false)
     assert.match(get('refresh-note').textContent, /Could not refresh/)
+    assert.match(get('toast').children[0].textContent, /^Deleted /)
     failList = false
     assert.equal(
       (calls.filter((call) => call.name === 'bots.act').at(-1)?.input as any).action,
@@ -537,13 +540,17 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
     await flush()
     assert.equal(get('roster').children[0].textContent, 'Research')
     const groupHeading = () => get('roster').children.find((child) => child.className === 'roster-group-title')!
+    groupHeading().emit('contextmenu')
+    clickLabel(menu, 'Add bot')
+    assert.equal(menu.children[0].textContent, 'New bot in Research')
+    doc.emit('keydown', { key: 'Escape' })
     for (const event of ['contextmenu', 'ContextMenu', 'F10', 'Enter', ' ']) {
       const header = groupHeading()
       assert.ok(header.dataset.focus)
       assert.equal(header.attributes.get('role'), 'button')
       if (event === 'contextmenu') header.emit(event)
       else header.emit('keydown', { key: event, shiftKey: true })
-      assert.deepEqual(menu.children.map((child) => child.textContent), ['Rename'])
+      assert.deepEqual(menu.children.map((child) => child.textContent), ['Add bot', 'Rename'])
       clickLabel(menu, 'Rename')
       assert.equal(menu.children[0].textContent, 'Rename group')
       assert.equal(menu.children[1].value, section)
@@ -611,7 +618,7 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
     failList = true
     clickLabel(menu, 'Hide from list')
     assert.ok(spinner())
-    assert.match(get('result').textContent, /^Hiding .*…$/)
+    assert.doesNotMatch(get('toast').children[0].textContent, /^Hiding .*…$/)
     await flush()
     assert.ok(get('roster').children.some((child) => child.className === 'add-mausbot'))
     assert.equal(get('roster').children.some((child) => child.className.startsWith('bot-row')), false)
@@ -629,7 +636,7 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
     get('host').emit('change')
     await flush()
     await flush()
-    assert.match(get('settings-message').textContent, /Pairing unavailable/)
+    assert.match(get('toast').children[0].textContent, /Pairing unavailable/)
     selectionFails = false
     // Switching clears the old host's bots at once, and a late answer from that host is dropped.
     holdNextBots = true
@@ -670,7 +677,7 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
     assert.deepEqual(botNames(get('roster')), ['Fake bot'])
     assert.equal(get('pref-share-tools').disabled, false)
     assert.equal(get('permissions-note').textContent, '')
-    assert.equal(get('settings-message').textContent, '')
+    assert.equal(get('toast').children[0].textContent, '')
     // Chat capability management returns to the same conversation with Back.
     get('settings-back').emit('click')
     get('roster').children.find(c => c.className.startsWith('bot-row'))!.children[0].emit('click')
@@ -721,11 +728,75 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
     await flush()
     assert.equal(get('mcp-view').hidden, true)
     assert.equal(get('settings-view').hidden, false)
+    get('settings-back').emit('click')
+    const add = get('add-bot')
+    assert.equal(add.disabled, false)
+    for (const dismiss of ['outside', 'Escape']) {
+      add.emit('click')
+      assert.equal(menu.children[0].textContent, 'New bot')
+      assert.equal(menu.children.some(child => child.textContent === 'Cancel'), false)
+      if (dismiss === 'Escape') doc.emit('keydown', { key: 'Escape' })
+      else doc.emit('click', { target: doc })
+      assert.equal(menu.hidden, true)
+      assert.equal((doc as any).activeElement, add)
+    }
+    for (const name of ['', 'Nova']) {
+      add.emit('click')
+      const input = menu.children[1]
+      input.value = name
+      input.emit('keydown', { key: 'Enter', preventDefault() {} })
+      menu.children.at(-1)!.emit('click')
+      assert.equal(add.disabled, true)
+      await flush()
+      assert.equal(menu.hidden, true)
+      assert.equal(get('bot-view').hidden, false)
+      assert.equal(get('toast').children[0].textContent, `Created ${name || 'Momo'}.`)
+      assert.equal(add.disabled, false)
+      get('bot-view').children[0].children[0].emit('click')
+    }
+    assert.deepEqual(calls.filter(c => c.name === 'bots.create').map(c => c.input), [{}, { name: 'Nova' }])
   } finally {
     win.emit('pagehide')
     keys.forEach((key, i) => {
       if (originals[i]) Object.defineProperty(globalThis, key, originals[i]!)
       else Reflect.deleteProperty(globalThis, key)
     })
+  }
+})
+
+test('toast replaces its three-second timer and dismisses immediately from the close button', async () => {
+  const { createToast } = await import('./toast.ts')
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'document')
+  Object.defineProperty(globalThis, 'document', { configurable: true, value: { createElement: () => new Element() } })
+  try {
+    const root = new Element()
+    let now = 0
+    let next = 0
+    const timers = new Map<number, { deadline: number; callback: () => void }>()
+    const advance = (elapsed: number) => {
+      now += elapsed
+      for (const item of timers.values()) if (item.deadline <= now) item.callback()
+    }
+    const toast = createToast(root as unknown as HTMLElement, {
+      setTimer(callback, ms) { timers.set(++next, { callback, deadline: now + ms }); return next },
+      clearTimer: id => { timers.delete(id) }
+    })
+    toast.show('First')
+    advance(2000)
+    toast.show('Second')
+    assert.equal(timers.size, 1)
+    advance(2999)
+    assert.equal(root.hidden, false)
+    assert.equal(root.children[0].textContent, 'Second')
+    advance(1)
+    assert.equal(root.hidden, true)
+    toast.show('Third')
+    assert.equal(root.children[1].attributes.get('aria-label'), 'Dismiss notification')
+    root.children[1].emit('click')
+    assert.equal(timers.size, 0)
+    assert.equal(root.hidden, true)
+  } finally {
+    if (original) Object.defineProperty(globalThis, 'document', original)
+    else Reflect.deleteProperty(globalThis, 'document')
   }
 })
