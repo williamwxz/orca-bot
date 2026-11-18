@@ -13,3 +13,15 @@ test('connector names take priority over definition hints and aliases match whol
     'connector'
   )
 })
+
+test('short aliases match complete segments', () => {
+  for (const name of ['sandbox', 'inbox', 'example', 'my- team-sync', 'pacific-nook'])
+    assert.equal(detectConnectorIcon(name, name), 'connector')
+  for (const [name, expected] of [
+    ['exa', 'search'],
+    ['dropbox', 'filesystem'],
+    ['box-mcp', 'filesystem'],
+    ['memory', 'memory']
+  ])
+    assert.equal(detectConnectorIcon(name, name), expected)
+})

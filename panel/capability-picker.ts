@@ -179,7 +179,11 @@ export function createCapabilityPicker(
           )
           const label = node('span', choice.textContent ?? '', 'mcp-choice-label')
           choice.replaceChildren(connectorIcon(row, true), label)
-          if (allowed) choice.append(node('span', '✓', 'mcp-choice-check'))
+          if (allowed) {
+            const check = node('span', '✓', 'mcp-choice-check')
+            check.setAttribute('aria-hidden', 'true')
+            choice.append(check)
+          }
           choice.className += ' mcp-choice'
           choice.dataset.key = row.name
           choice.disabled ||= !!row.bot

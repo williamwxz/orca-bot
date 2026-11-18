@@ -7,6 +7,7 @@ import { visibleBot } from '../shared/appearance.ts'
 import { detectConnectorIcon, type ConnectorIcon } from '../shared/connector-icons.ts'
 
 export type Connector = {
+  removable?: boolean
   icon?: ConnectorIcon
   name: string
   fingerprint: string
@@ -246,6 +247,7 @@ export function createConnectors(deps: ImportDeps, prefs: HostPrefs) {
         provider: c ? providerOf(c) : 'OpenMausBot',
         enabled: s.enabled,
         present: true,
+        removable: !recorded || !c,
         ...(s.bot ? { bot: s.bot } : {}),
         bots: state.bots
           .filter(
@@ -277,6 +279,7 @@ export function createConnectors(deps: ImportDeps, prefs: HostPrefs) {
       ...state,
       local,
       available,
+      provenance,
       public: {
         connectors: rows,
         bots: state.bots
@@ -379,10 +382,7 @@ export function createConnectors(deps: ImportDeps, prefs: HostPrefs) {
           const targetNames = new Set(targets.map((c) => c.name))
           const enabling = (input.action === 'toggle' || input.action === 'group') && input.enabled
           const newlyEnabled = targets.filter((c) => enabling && !c.enabled).map((c) => c.name)
-          if (
-            input.action === 'remove' &&
-            (!targets[0].present || targets[0].provider !== 'OpenMausBot')
-          )
+          if (input.action === 'remove' && (!targets[0].present || !targets[0].removable))
             throw new Error(changed)
           const purge = new Set(
             targets
@@ -391,6 +391,8 @@ export function createConnectors(deps: ImportDeps, prefs: HostPrefs) {
                   input.action === 'remove' ||
                   ((input.action === 'group' || input.action === 'toggle') &&
                     !input.enabled &&
+                    Object.hasOwn(state.provenance, row.name) &&
+                    !row.bot &&
                     row.present &&
                     row.provider !== 'OpenMausBot')
               )

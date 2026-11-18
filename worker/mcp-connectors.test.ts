@@ -728,3 +728,55 @@ test('custom servers survive individual and group disable with credentials intac
     assert.ok(!f.calls.some((c) => c.method === 'DELETE'))
   }
 })
+
+test('matching local transport never authorizes purging user-created credentials', async () => {
+  for (const bot of [undefined, 'a']) {
+    for (const action of ['toggle', 'group']) {
+      const f = fixture()
+      const custom = {
+        name: 'private-mail',
+        command: 'mail',
+        args: [],
+        env: { TOKEN: 'omb-only' },
+        bot,
+        enabled: true
+      }
+      f.servers.push(custom)
+      const before = await f.service.list(1234)
+      const row = before.connectors.find((c) => c.name === custom.name)!
+      assert.equal(row.provider, 'Claude Desktop')
+      assert.equal(row.removable, true)
+      if (bot && action === 'group') {
+        // Groups exclude pinned rows, including stale or forged requests naming one.
+        await assert.rejects(
+          f.service.act(1234, { action, provider: row.provider, enabled: false, targets: [row] })
+        )
+        assert.equal(custom.enabled, true)
+      } else {
+        await f.act(1234, { action, name: row.name, provider: row.provider, enabled: false })
+        assert.equal(custom.enabled, false)
+        const writes = f.calls.filter((c) => c.path.endsWith('/private-mail') && c.method !== 'GET')
+        assert.deepEqual(
+          writes.map((c) => [c.method, c.body]),
+          [['PATCH', { enabled: false }]]
+        )
+      }
+      assert.ok(!f.calls.some((c) => c.method === 'DELETE'))
+      assert.deepEqual(custom.env, { TOKEN: 'omb-only' })
+      await f.act(1234, { action: 'remove', name: row.name })
+      assert.ok(!f.servers.includes(custom))
+    }
+  }
+})
+
+test('pinning a recorded import preserves its credentials on disable', async () => {
+  const f = fixture()
+  await f.act(1234, { action: 'toggle', name: 'gmail', enabled: true })
+  const row = f.servers.find((s) => s.name === 'gmail')
+  row.bot = 'a'
+  await f.act(1234, { action: 'toggle', name: 'gmail', enabled: false })
+  assert.equal(row.enabled, false)
+  assert.ok(f.servers.includes(row))
+  assert.ok(f.prefs.read().connectors!.gmail)
+  assert.ok(!f.calls.some((c) => c.method === 'DELETE'))
+})

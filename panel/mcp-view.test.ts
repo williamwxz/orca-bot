@@ -158,7 +158,17 @@ test('MCP menu provides host-aware groups, zero-bot prompt, assignments, loading
       .emit()
     assert.ok(all(get('mcp-groups')).some((n) => n.dataset.icon === 'mail'))
     assert.ok(!all(get('mcp-groups')).some((n) => n.dataset.focus === 'mail-remove'))
-    data.connectors[0].provider = 'OpenMausBot'
+    data.connectors[0].name = 'mail-renamed'
+    await view.refresh()
+    const renamed = all(get('mcp-groups')).find((n) => n.dataset.focus === 'mail-renamed-toggle')!
+    renamed.focus()
+    renamed.checked = false
+    renamed.emit('change')
+    data.connectors[0].name = 'mail'
+    complete!()
+    await flush()
+    assert.equal((document as any).activeElement.dataset.focus, 'mail-toggle')
+    data.connectors[0].removable = true
     await view.refresh()
     all(get('mcp-groups'))
       .find((n) => n.textContent === 'Remove')!
@@ -256,7 +266,7 @@ test('same-host resumes retain menu and in-flight state, true host changes resto
     nodes.find((n) => n.dataset.focus === 'native-remove')!.emit()
     assert.equal(actions.length, 0)
     nodes = all(get('mcp-groups'))
-    assert.ok(nodes.some((n) => n.textContent.includes('permanently deleted. No local source')))
+    assert.ok(nodes.some((n) => n.textContent.includes('permanently deleted.')))
     assert.equal((document as any).activeElement.dataset.focus, 'native-cancel')
     nodes.find((n) => n.dataset.focus === 'native-cancel')!.emit()
     assert.equal((document as any).activeElement.dataset.focus, 'native-remove')

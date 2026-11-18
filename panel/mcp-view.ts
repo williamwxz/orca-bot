@@ -116,7 +116,9 @@ export function createMcpView(frame: FrameApi, element: (id: string) => HTMLElem
           busy() ||
           !selectable.length ||
           selectable.every(
-            (c) => c.enabled === enabled && (enabled || !c.present || provider === 'OpenMausBot')
+            (c) =>
+              c.enabled === enabled &&
+              (enabled || !c.present || (c.removable ?? provider === 'OpenMausBot'))
           )
         controls.append(control)
       }
@@ -137,7 +139,7 @@ export function createMcpView(frame: FrameApi, element: (id: string) => HTMLElem
         line.className = 'mcp-row-head'
         const actions = node('div')
         actions.className = 'mcp-actions'
-        const removable = row.present && row.provider === 'OpenMausBot'
+        const removable = row.present && (row.removable ?? row.provider === 'OpenMausBot')
         if (removable) {
           const remove = actionButton(
             'Remove',
@@ -179,10 +181,7 @@ export function createMcpView(frame: FrameApi, element: (id: string) => HTMLElem
           confirmation.className = 'mcp-confirm'
           confirmation.append(
             node('strong', `Remove ${row.name}?`),
-            node(
-              'p',
-              'Its saved credentials in OpenMausBot will be permanently deleted. No local source is available to restore them.'
-            )
+            node('p', 'Its saved credentials in OpenMausBot will be permanently deleted.')
           )
           const actions = node('div')
           actions.className = 'bot-menu-actions'
@@ -357,6 +356,18 @@ export function createMcpView(frame: FrameApi, element: (id: string) => HTMLElem
     try {
       const next = await frame.plugin.request('mcp.act', input)
       if (current !== generation) return
+      if (
+        input.action === 'toggle' &&
+        !input.enabled &&
+        focusedKey === `${input.name}-toggle` &&
+        !next.connectors.some((row) => row.name === input.name)
+      ) {
+        const previous = data?.connectors.find((row) => row.name === input.name)
+        const local = next.connectors.find(
+          (row) => row.provider === previous?.provider && row.rawName === previous?.rawName
+        )
+        if (local) focusedKey = `${local.name}-toggle`
+      }
       data = next
       if (input.action === 'remove') {
         removing = undefined

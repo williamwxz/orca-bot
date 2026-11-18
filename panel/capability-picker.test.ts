@@ -155,6 +155,12 @@ test('capability pickers group models, retain missing current choice, assign rep
     assert.deepEqual(data.connectors[0].bots, ['b', 'a'])
     assert.equal(root.hidden, false)
     assert.equal(item('work-mail').attrs.get('aria-checked'), 'true')
+    assert.equal(
+      item('work-mail')
+        .children.find((n) => n.textContent === '✓')
+        ?.attrs.get('aria-hidden'),
+      'true'
+    )
     item('work-mail').emit()
     await flush()
     assert.deepEqual(data.connectors[0].bots, ['b'])
