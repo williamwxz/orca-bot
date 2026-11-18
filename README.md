@@ -116,7 +116,7 @@ the plugin does; OpenMausBot and the model providers have their own terms.
 | Messages, replies, files a bot reads | To the model provider of that bot (Anthropic, OpenAI or xAI), under your own account. This is how any bot works. |
 | Chat history, bot settings, memory | Stays on this computer in `~/.orca-bot/data`, readable only by your user account. |
 | Anything a tool or connector touches | To that service (for example Gmail or Linear) when a bot uses the tool. |
-| Bot Team for Orca itself | No analytics, no account and no server. It asks GitHub for the newest public release, at most every six hours while its panel is open; the request carries nothing about you. |
+| Bot Team for Orca itself | No analytics, no account and no server. It asks GitHub for the newest public release, every six hours (retrying network failures after one minute) while its panel is open; the request carries nothing about you. |
 
 The panel cannot reach the network at all. In local mode the worker talks to
 `127.0.0.1`, npm to download OpenMausBot, Orca's CLI, and GitHub's API to

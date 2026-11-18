@@ -14,7 +14,7 @@ export type Status = {
   testedVersion: string
 }
 
-export type Setup = { answered: boolean; agents: FoundAgents }
+export type Setup = { answered: boolean; agents: FoundAgents } & Partial<SetupAnswer>
 export type SetupAnswer = { shareTools: boolean; linkAgents: boolean }
 export type Preferences = SetupAnswer & { agents: FoundAgents }
 

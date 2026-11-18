@@ -54,7 +54,7 @@
         "type": "boolean",
         "default": false,
         "title": "Install updates automatically",
-        "description": "Bot Team for Orca checks GitHub for a newer release at most every six hours while its panel is open. Turn on to install it without asking. An update that asks for new access always waits for your approval."
+        "description": "Bot Team for Orca checks GitHub for a newer release every six hours while its panel is open, retrying network failures after one minute. Turn on to install it without asking. An update that asks for new access always waits for your approval."
       },
       {
         "key": "linkAgents",

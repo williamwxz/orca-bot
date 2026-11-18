@@ -21,19 +21,27 @@ export function createSettings(frame: FrameApi, element: Elements, changed: () =
   let remote: string | undefined
   let status: Status | undefined
   let updates: Updates | undefined
+  let preferencesGeneration = 0
+  let updateGeneration = 0
+  let installing = false
+  let bannerFeedback = ''
 
   function renderUpdates(): void {
-    const banner = !!updates && updates.state === 'available'
+    const available = updates?.state === 'available'
+    const show =
+      !!bannerFeedback ||
+      (!!updates && ['available', 'updating', 'updated', 'approval_required'].includes(updates.state))
     element('update-status').textContent = updates
       ? `Version ${updates.version}. ${updates.message}`
       : 'Checking for updates…'
-    button('update-install').hidden = !banner
-    button('update-install').disabled = updates?.state === 'updating'
+    for (const id of ['update-install', 'update-banner-install']) {
+      button(id).hidden = !available
+      button(id).disabled = installing || !available
+    }
     input('update-auto').checked = !!updates?.autoUpdate
     input('update-auto').disabled = !updates || updates.state === 'dev'
-    // The main view asks once a new version is out, unless updates install by themselves.
-    element('update-banner').hidden = !banner
-    element('update-banner-text').textContent = banner ? updates!.message : ''
+    element('update-banner').hidden = !show
+    element('update-banner-text').textContent = bannerFeedback || (show ? (updates?.message ?? '') : '')
   }
 
   function renderServer(): void {
@@ -50,6 +58,8 @@ export function createSettings(frame: FrameApi, element: Elements, changed: () =
       element(`${id}-notice`).textContent = INSTALL_NOTICE
     }
     if (needsInstall) element('omb-status').textContent = 'Installation needs your approval.'
+    else if (status && status.state !== 'running')
+      element('omb-status').textContent = status.message || `Not running${where}.`
     button('stop-server').hidden = !!remote
     button('stop-server').disabled = status?.state !== 'running'
   }
@@ -58,7 +68,10 @@ export function createSettings(frame: FrameApi, element: Elements, changed: () =
     element('permissions-note').textContent = problem
     for (const id of ['pref-share-tools', 'pref-link-agents']) input(id).disabled = !prefs
     button('pref-import').disabled = !prefs
-    if (!prefs) return
+    if (!prefs) {
+      input('pref-share-tools').checked = input('pref-link-agents').checked = false
+      return
+    }
     input('pref-share-tools').checked = prefs.shareTools
     input('pref-link-agents').checked = prefs.linkAgents
     element('pref-link-agents-label').hidden = !agentNames(prefs.agents)
@@ -66,36 +79,47 @@ export function createSettings(frame: FrameApi, element: Elements, changed: () =
   }
 
   async function loadPreferences(): Promise<void> {
+    const generation = ++preferencesGeneration
     try {
-      renderPreferences(await frame.plugin.request('prefs.get', {}))
+      const prefs = await frame.plugin.request('prefs.get', {})
+      if (generation === preferencesGeneration) renderPreferences(prefs)
     } catch (error) {
       // On a paired server, these are set in Orca there.
-      renderPreferences(undefined, failure(error, 'Could not read your permissions.'))
+      if (generation === preferencesGeneration)
+        renderPreferences(undefined, failure(error, 'Could not read your permissions.'))
     }
   }
 
   async function loadUpdates(check = false): Promise<void> {
+    if (installing) return
+    const generation = ++updateGeneration
     try {
-      updates = await frame.plugin.request('updates.get', check ? { check: true } : {})
+      const next = await frame.plugin.request('updates.get', check ? { check: true } : {})
+      if (generation !== updateGeneration) return
+      if (check || next.latest !== updates?.latest) bannerFeedback = ''
+      updates = next
     } catch {
-      updates = undefined
+      if (generation !== updateGeneration) return
       element('update-status').textContent = 'Could not check for updates.'
-      element('update-banner').hidden = true
       return
     }
     renderUpdates()
   }
 
   async function setPreference(key: 'shareTools' | 'linkAgents', value: boolean): Promise<void> {
+    const generation = preferencesGeneration
     input(key === 'shareTools' ? 'pref-share-tools' : 'pref-link-agents').disabled = true
     try {
-      renderPreferences(await frame.plugin.request('prefs.set', { [key]: value }))
+      const prefs = await frame.plugin.request('prefs.set', { [key]: value })
+      if (generation !== preferencesGeneration) return
+      renderPreferences(prefs)
       note(
         key === 'shareTools'
           ? 'Saved. OpenMausBot restarts to apply it when no bot is working.'
           : 'Saved.'
       )
     } catch (error) {
+      if (generation !== preferencesGeneration) return
       note(failure(error, 'Could not save.'))
       await loadPreferences()
     }
@@ -103,17 +127,22 @@ export function createSettings(frame: FrameApi, element: Elements, changed: () =
   }
 
   async function install(): Promise<void> {
-    button('update-install').disabled = true
-    button('update-banner-install').disabled = true
+    if (installing || updates?.state !== 'available') return
+    installing = true
+    ++updateGeneration
+    bannerFeedback = 'Updating…'
+    renderUpdates()
     try {
       updates = await frame.plugin.request('updates.install', {})
+      bannerFeedback = updates.message
       note(updates.message)
     } catch (error) {
-      note(failure(error, 'Could not update.'))
+      bannerFeedback = failure(error, 'Could not update. Please retry.')
+      note(bannerFeedback)
+    } finally {
+      installing = false
+      renderUpdates()
     }
-    button('update-banner-install').disabled = false
-    renderUpdates()
-    element('update-banner-text').textContent = updates?.message ?? ''
   }
 
   for (const id of ['install-omb', 'settings-install-omb']) {
@@ -182,13 +211,23 @@ export function createSettings(frame: FrameApi, element: Elements, changed: () =
   })
 
   return {
+    beginHostChange(): void {
+      ++preferencesGeneration
+      renderPreferences(undefined, 'Changing where bots run…')
+      note('Connecting…')
+    },
+    async hostChanged(problem = ''): Promise<void> {
+      const generation = preferencesGeneration + 1
+      await loadPreferences()
+      if (generation === preferencesGeneration) note(problem)
+    },
     /** Fills the screen each time it opens: permissions and updates can change elsewhere. */
     async open(): Promise<void> {
       note('')
       renderServer()
       await Promise.all([loadPreferences(), loadUpdates()])
     },
-    /** Checks for a new version for the banner; GitHub is asked at most every six hours. */
+    /** Checks for a new version; successful results are cached for six hours. */
     checkUpdates: () => loadUpdates(),
     setStatus(next: Status | undefined, remoteName: string | undefined): void {
       status = next

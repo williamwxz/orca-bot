@@ -81,6 +81,9 @@ async function chooseHost(id: string): Promise<void> {
   if (!id) return
   hostGeneration++
   hostSelect.disabled = true
+  settings.beginHostChange()
+  setup.state.loaded = false
+  let hostProblem = ''
   // Clear the old host's bots at once, so nothing of theirs can be clicked while switching.
   bots = []
   selected = undefined
@@ -95,14 +98,15 @@ async function chooseHost(id: string): Promise<void> {
   try {
     hosts = await frame.plugin.request('hosts.select', { id })
   } catch (error) {
-    message.textContent =
-      error instanceof Error ? error.message : 'Could not change where your bots run.'
+    hostProblem = error instanceof Error ? error.message : 'Could not change where your bots run.'
+    message.textContent = hostProblem
     await loadHosts()
   } finally {
     hostSelect.disabled = false
     renderHosts()
   }
   await refreshAfterChange()
+  await settings.hostChanged(hostProblem)
 }
 hostSelect.addEventListener('change', () => void chooseHost(hostSelect.value))
 const remoteName = () =>
@@ -337,7 +341,12 @@ async function refreshNow(explicitRetry: boolean): Promise<void> {
     // Ask Orca again while the chosen server is unknown, so a passing failure recovers by itself.
     if (!hostChosen()) await loadHosts()
     try {
+      const initial = !setup.state.loaded
       setup.load(await frame.plugin.request('setup.get', {}))
+      if (initial) {
+        shareTools.checked = setup.state.shareTools
+        linkAgents.checked = setup.state.linkAgents
+      }
       if (!setup.state.answered && !setup.state.toolsLoaded)
         setup.loadTools((await frame.plugin.request('tools.find', {})).tools)
       renderSetup()

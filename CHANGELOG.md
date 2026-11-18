@@ -17,10 +17,14 @@
   README explains that `orca-bot` links survive uninstall and gives removal
   steps for all four. Missing pinned binaries cannot replace working links.
 - **Settings** in the panel: where the bots run, the setup card's permissions
-  (now changeable at any time), updates, and stopping OpenMausBot.
+  (now changeable at any time), updates, and stopping OpenMausBot. Switching
+  hosts refreshes permissions and shows errors in Settings; initial permission
+  choices match the saved values and default to off.
 - **Updates**: a banner asks when a new version is out, or turn on **Install
   updates automatically**. Checks GitHub at most every six hours while the
-  panel is open.
+  panel is open; temporary network failures retry after one minute. Failed
+  installs do not block future checks, and approval-required updates wait
+  for approval in Orca. The main banner keeps success and error feedback visible.
 - **Bots run on**: pick this computer or a paired Orca server in the panel.
   The server needs Orca, Node.js 24 or newer and one project in Orca; it does
   not need this plugin, but OpenMausBot must already be installed there.
