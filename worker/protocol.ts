@@ -2,7 +2,7 @@ import type { Models } from '../shared/models.ts'
 import type { Connectors, ConnectorAction } from './mcp-connectors.ts'
 import type { FoundAgents } from '../shared/agents.ts'
 import type { Thread } from '../shared/chat.ts'
-import type { Bot, BotAction, GroupRename } from '../shared/roster.ts'
+import type { BotCreate, BotCreated, Bot, BotAction, GroupRename } from '../shared/roster.ts'
 import type { Hosts } from './paired-host.ts'
 import type { Updates } from './updates.ts'
 
@@ -31,6 +31,7 @@ export type Requests = {
   'bots.addMausBot': { input: { botId: string }; output: { message: string } }
   'groups.rename': { input: GroupRename; output: { ok: true } }
   'bots.act': { input: BotAction; output: { ok: true } }
+  'bots.create': { input: BotCreate; output: BotCreated }
   'bots.list': { input: Record<string, never>; output: Bot[] }
   status: { input: { retry?: boolean }; output: Status }
   'prefs.get': { input: Record<string, never>; output: Preferences }

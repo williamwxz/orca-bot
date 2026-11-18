@@ -56,7 +56,7 @@ function fake() {
   let changed = 0
   const settings = createSettings(frame, element as any, async () => {
     changed++
-  })
+  }, text => { element('settings-message').textContent = text })
   return { element, state, settings, requests, changed: () => changed }
 }
 

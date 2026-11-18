@@ -6,6 +6,7 @@ import type { FrameApi } from './chat-view.ts'
 
 export type CapabilityHooks = {
   connectorCountChanged?(botId: string, count: number): void
+  notify?(message: string): void
   busyChanged?(): void
   changed(): Promise<void>
   manage(botId: string, enabled: boolean): void
@@ -218,10 +219,12 @@ export function createCapabilityPicker(
       try {
         await operation()
         if (!current()) return
+        hooks.notify?.(kind === 'model' ? 'Model updated.' : 'Connector access updated.')
         await hooks.changed()
       } catch (error) {
         if (!current()) return
         problem = error instanceof Error ? error.message : 'Could not save. Refresh and try again.'
+        if (hooks.notify) { hooks.notify(problem); problem = '' }
         if (kind === 'connectors') {
           try {
             const next = await frame.plugin.request('mcp.list', {})

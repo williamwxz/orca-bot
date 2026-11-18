@@ -2,7 +2,8 @@ import { connectorIcon } from './connector-icon.ts'
 import type { FrameApi } from './chat-view.ts'
 import type { Connector, Connectors, ConnectorAction } from '../worker/mcp-connectors.ts'
 
-export function createMcpView(frame: FrameApi, element: (id: string) => HTMLElement) {
+export function createMcpView(frame: FrameApi, element: (id: string) => HTMLElement, message: (text: string) => void) {
+  let loadProblem = ''
   let data: Connectors | undefined
   let generation = 0
   let pendingGeneration: number | undefined
@@ -12,9 +13,6 @@ export function createMcpView(frame: FrameApi, element: (id: string) => HTMLElem
   let removing: string | undefined
   let remote: string | undefined
   const button = (id: string) => element(id) as HTMLButtonElement
-  const message = (text: string) => {
-    element('mcp-message').textContent = text
-  }
   const node = <K extends keyof HTMLElementTagNameMap>(tag: K, text?: string) => {
     const el = document.createElement(tag)
     if (text) el.textContent = text
@@ -272,7 +270,10 @@ export function createMcpView(frame: FrameApi, element: (id: string) => HTMLElem
       ? `${data.connectors.filter((c) => c.enabled).length} enabled · ${data.connectors.length} available on ${target}`
       : `MCP connectors unavailable on ${target}. Start OpenMausBot with this plugin, then refresh.`
     root.replaceChildren()
-    if (!data) return
+    if (!data) {
+      if (loadProblem) root.append(node('p', loadProblem))
+      return
+    }
     const tabs = node('div')
     tabs.className = 'mcp-tabs'
     tabs.setAttribute('role', 'tablist')
@@ -326,7 +327,7 @@ export function createMcpView(frame: FrameApi, element: (id: string) => HTMLElem
       } else button('mcp-refresh').focus()
     }
   }
-  async function refresh() {
+  async function refresh(explicit = false) {
     if (busy()) return
     const current = ++generation
     pendingGeneration = current
@@ -334,13 +335,15 @@ export function createMcpView(frame: FrameApi, element: (id: string) => HTMLElem
     try {
       const next = await frame.plugin.request('mcp.list', {})
       if (current !== generation) return
+      loadProblem = ''
       data = next
       removing = undefined
-      message('')
+      if (explicit) message('Connectors refreshed.')
     } catch (error) {
       if (current !== generation) return
       data = undefined
-      message(error instanceof Error ? error.message : 'Could not load MCP connectors.')
+      loadProblem = error instanceof Error ? error.message : 'Could not load MCP connectors.'
+      if (explicit) message(loadProblem)
     } finally {
       if (current === generation) {
         pendingGeneration = undefined
@@ -353,7 +356,6 @@ export function createMcpView(frame: FrameApi, element: (id: string) => HTMLElem
     focusedKey = (document.activeElement as HTMLElement | null)?.dataset?.focus ?? focusedKey
     const current = generation
     pendingGeneration = current
-    message('Saving…')
     render()
     try {
       const next = await frame.plugin.request('mcp.act', input)
@@ -419,7 +421,7 @@ export function createMcpView(frame: FrameApi, element: (id: string) => HTMLElem
     element('settings-view').hidden = false
     button('mcp-manage').focus()
   })
-  button('mcp-refresh').addEventListener('click', () => void refresh())
+  button('mcp-refresh').addEventListener('click', () => void refresh(true))
   return {
     refresh,
     open,
@@ -432,7 +434,7 @@ export function createMcpView(frame: FrameApi, element: (id: string) => HTMLElem
       data = undefined
       selectedBot = undefined
       tab = 'provider'
-      message('')
+      loadProblem = ''
       removing = undefined
       focusedKey = undefined
       if (!element('mcp-view').hidden) element('settings-view').hidden = false

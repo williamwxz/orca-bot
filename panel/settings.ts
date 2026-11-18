@@ -12,12 +12,9 @@ const failure = (error: unknown, fallback: string) =>
  * The settings screen: permissions, updates and OpenMausBot. Where the bots run is chosen
  * by app.ts, which also clears the bot list when it changes.
  */
-export function createSettings(frame: FrameApi, element: Elements, changed: () => Promise<void>) {
+export function createSettings(frame: FrameApi, element: Elements, changed: () => Promise<void>, note: (text: string) => void) {
   const input = (id: string) => element(id) as HTMLInputElement
   const button = (id: string) => element(id) as HTMLButtonElement
-  const note = (text: string) => {
-    element('settings-message').textContent = text
-  }
   let remote: string | undefined
   let status: Status | undefined
   let updates: Updates | undefined
@@ -111,9 +108,11 @@ export function createSettings(frame: FrameApi, element: Elements, changed: () =
       if (generation !== updateGeneration) return
       if (check || next.latest !== updates?.latest) bannerFeedback = ''
       updates = next
+      if (check) note(next.message)
     } catch {
       if (generation !== updateGeneration) return
-      element('update-status').textContent = 'Could not check for updates.'
+      if (check) note('Could not check for updates.')
+      renderUpdates()
       return
     }
     renderUpdates()
@@ -192,6 +191,7 @@ export function createSettings(frame: FrameApi, element: Elements, changed: () =
     try {
       updates = await frame.plugin.request('updates.auto', { on: input('update-auto').checked })
       renderUpdates()
+      note('Saved.')
     } catch (error) {
       note(failure(error, 'Could not save.'))
     }
@@ -211,7 +211,6 @@ export function createSettings(frame: FrameApi, element: Elements, changed: () =
       remote = nextRemote
       ++preferencesGeneration
       renderPreferences(undefined, 'Changing where bots run\u2026')
-      note('Connecting\u2026')
     },
     async hostChanged(problem = ''): Promise<void> {
       const generation = preferencesGeneration + 1

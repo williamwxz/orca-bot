@@ -1,3 +1,4 @@
+import { validateBotCreate } from '../shared/roster.ts'
 import { validateModelSelection } from '../shared/models.ts'
 import { gunzipSync, gzipSync } from 'node:zlib'
 
@@ -46,6 +47,7 @@ export const RELAYED = [
   'mcp.act',
   'status',
   'bots.list',
+  'bots.create',
   'bots.act',
   'groups.rename',
   'thread.read',
@@ -62,6 +64,7 @@ export const RELAYED = [
 export const PING = 'relay.ping'
 
 export function validateRelayInput(name: unknown, input: unknown): void {
+  if (name === 'bots.create') validateBotCreate(input)
   if (name !== 'bots.act' || !input || typeof input !== 'object') return
   const action = input as Record<string, unknown>
   if (action.action === 'model') validateModelSelection(action.instanceId, action.model)

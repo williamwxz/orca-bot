@@ -15,8 +15,8 @@ import { readThread, sendMessage, newSendId } from './omb-chat.ts'
 import type { OrcaWorkerApi } from 'orca/worker'
 import { openChat, repairChat, validBotId } from './omb-open.ts'
 import type { OpenInput, OpenResult } from './omb-open.ts'
-import { listBots, addMausBot, actOnBot, validateBotAction, rosterBusy, renameGroup } from './omb-roster.ts'
-import { validateGroupName } from '../shared/roster.ts'
+import { createBot, listBots, addMausBot, actOnBot, validateBotAction, rosterBusy, renameGroup } from './omb-roster.ts'
+import { validateBotCreate, validateGroupName } from '../shared/roster.ts'
 import { defaultHttpDeps } from './omb-http.ts'
 import { defaultCliDeps } from './omb-cli.ts'
 import type { Bot, BotAction, GroupRename } from '../shared/roster.ts'
@@ -37,6 +37,7 @@ import type { ServerResult, StopResult } from './omb-server.ts'
 import { TESTED_OPENMAUSBOT_VERSION, compareVersions } from '../shared/omb-version.ts'
 
 export type WorkerDeps = {
+  createBot?: typeof createBot
   listModels?: (port: number) => Promise<Models>
   connectors?: {
     list(port: number): Promise<Connectors>
@@ -112,6 +113,7 @@ export function defaultWorkerDeps(): WorkerDeps {
         },
         cli
       ),
+    createBot: input => createBot(input, http),
     addMausBot: (input) => addMausBot(input, http),
     renameGroup: (input) => renameGroup(input, http),
     listModels: (port) => listModels(port, http),
@@ -141,6 +143,7 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
   let stopped = false
   let startedByPlugin = false
   let lastRoster: Bot[] = []
+  let rosterRevision = 0
   let sends = 0
   let opening: Promise<OpenResult> | undefined
   let repairAt = -Infinity
@@ -628,8 +631,28 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
     return deps.listModels(port)
   })
   let reconciling: Promise<void> | undefined
+  orca.panels.handle('bots.create', (input: unknown) => lifecycle(async () => {
+    const port = runningPort()
+    const details = validateBotCreate(input)
+    if (!deps.createBot) throw new Error('Bot creation is unavailable.')
+    const created = await deps.createBot({
+      ...details,
+      port,
+      ...(startedByPlugin && { excludeMcp: Object.keys(deps.hostPrefs?.read()?.connectors ?? {}) })
+    })
+    const bot: Bot = {
+      id: created.botId, name: created.name, title: '', main: false,
+      state: 'idle', unread: false, modelLabel: '', section: created.section ?? details.section
+    }
+    // An older poll must not evict the new bot while the panel opens its thread.
+    ++rosterRevision
+    const refreshed = await deps.listBots({ port }).catch(() => lastRoster)
+    lastRoster = refreshed.some(item => item.id === bot.id) ? refreshed : [...refreshed, bot]
+    return created
+  }))
   orca.panels.handle('bots.list', async () => {
     const port = runningPort()
+    const revision = rosterRevision
     const bots = await deps.listBots({ port })
     // A successful roster read confirms this server is reachable. Background maintenance
     // is coalesced and detached so network failures and busy locks never block recovery.
@@ -647,7 +670,7 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
           reconciling = undefined
         })
     }
-    if (status?.state === 'running' && status.port === port) lastRoster = bots
+    if (status?.state === 'running' && status.port === port && revision === rosterRevision) lastRoster = bots
     return bots
   })
   orca.panels.handle('bots.addMausBot', async (input: { botId: string }) => {

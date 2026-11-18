@@ -1,5 +1,5 @@
 import { assert, test } from 'orca/testing'
-import { listBots, addMausBot, actOnBot, rosterBusy, renameGroup } from './omb-roster.ts'
+import { createBot, listBots, addMausBot, actOnBot, rosterBusy, renameGroup } from './omb-roster.ts'
 import { HttpStatusError } from './omb-http.ts'
 import { groupRoster } from '../shared/roster.ts'
 import type { HttpDeps } from './omb-http.ts'
@@ -355,4 +355,39 @@ test('roster connector counts respect enabled, pinned, allowlist and offFor rule
     return { bots }
   }
   assert.ok((await listBots({ port: 1 }, deps)).every((b) => b.connectorCount === undefined))
+})
+
+test('creation overrides unsafe saved defaults before posting and validates caller input', async () => {
+  for (const [approvalMode, mcpServers, expected] of [
+    ['custom', null, []], ['auto', ['local', 'imported'], ['local']]
+  ]) {
+    const deps = fake([]).deps
+    deps.request = async (_, path, body, method) => {
+      if (path === '/api/bot-defaults') return { defaults: { profile: {
+        computer: 'local', approvalMode, mcpServers, name: 'Helper'
+      } } }
+      assert.equal(path, '/api/bots')
+      assert.equal(method, 'POST')
+      assert.deepEqual(body, { name: '', section: 'Design',
+        settings: { approvalMode: 'ask', mcpServers: expected } })
+      return { bot: { id, name: 'Momo', section: 'Saved group' } }
+    }
+    assert.deepEqual(await createBot({ port: 1, section: ' Design ', excludeMcp: ['imported'] }, deps),
+      { botId: id, name: 'Momo', section: 'Saved group' })
+  }
+  for (const details of [{ name: 'a\nb' }, { name: 'a\tb' }, { name: 'a\u2028b' }, { name: 'a\u2029b' }, { name: 'a'.repeat(81) }, { name: ' ' }, { section: '' }])
+    await assert.rejects(createBot({ port: 1, ...details }, fake([]).deps), /name/)
+})
+
+test('creation handles missing defaults, custom names and safe HTTP errors', async () => {
+  for (const status of [400, 403, 409]) {
+    const deps = fake([]).deps
+    deps.request = async (_, path, body) => {
+      if (path === '/api/bot-defaults') throw new Error('unavailable')
+      assert.deepEqual(body, { name: 'Helper', settings: { mcpServers: [] } })
+      throw new HttpStatusError(status)
+    }
+    await assert.rejects(createBot({ port: 1, name: ' Helper ', excludeMcp: [] }, deps),
+      status === 409 ? /workspace bot limit/ : /creation defaults/)
+  }
 })

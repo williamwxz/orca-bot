@@ -2,7 +2,7 @@ import { createCapabilityPicker } from './capability-picker.ts'
 import type { FrameApi } from './chat-view.ts'
 import type { CapabilityHooks } from './capability-picker.ts'
 import type { Connectors, ConnectorAction } from '../worker/mcp-connectors.ts'
-import { validateGroupName } from '../shared/roster.ts'
+import { validateBotCreate, validateGroupName } from '../shared/roster.ts'
 import type { Bot, BotAction, GroupRename } from '../shared/roster.ts'
 
 type MenuEvent = {
@@ -23,9 +23,11 @@ export function createBotMenu(
     act(input: ConnectorAction): Promise<Connectors>
     manage(botId: string, enabled: boolean): void
   },
-  models?: { frame: FrameApi; hooks: CapabilityHooks }
+  models?: { frame: FrameApi; hooks: CapabilityHooks },
+  create?: (input: { name?: string; section?: string }) => Promise<void>
 ) {
   const modelPicker = models ? createCapabilityPicker(menu, models.frame, models.hooks) : undefined
+  let createForm = false
   let revision = 0
   let busy = false
   let disabled = false
@@ -35,6 +37,7 @@ export function createBotMenu(
   function close(restoreFocus = false): void {
     modelPicker?.close(false)
     if (restoreFocus) trigger?.focus()
+    createForm = false
     ++revision
     menu.hidden = true
     menu.replaceChildren()
@@ -119,6 +122,7 @@ export function createBotMenu(
               })
               if (current !== revision) return
               data = next
+              models?.hooks.notify?.('Connector access updated.')
             } catch (error) {
               problem =
                 error instanceof Error ? error.message : 'Could not update connector access.'
@@ -131,6 +135,10 @@ export function createBotMenu(
               }
             } finally {
               saving = false
+              if (problem && models?.hooks.notify && current === revision) {
+                models.hooks.notify(problem)
+                problem = ''
+              }
               draw(problem, row.name)
             }
           }
@@ -338,6 +346,7 @@ export function createBotMenu(
       return
     }
     modelPicker?.close(false)
+    createForm = false
     ++revision
     disabled = busy || isDisabled
     trigger = from
@@ -404,7 +413,7 @@ export function createBotMenu(
       | { closest?: (selector: string) => unknown }
       | undefined
     if (target?.closest?.('#bot-menu')) return
-    close()
+    close(createForm)
   })
   document.addEventListener('keydown', (rawEvent) => {
     if (menu.hidden) return
@@ -430,12 +439,67 @@ export function createBotMenu(
   window.addEventListener('blur', () => close())
   window.addEventListener('resize', () => close())
 
-  function openGroup(section: string, rawEvent?: unknown, from?: HTMLElement): void {
+  function openCreate(from: HTMLElement, section?: string) {
+    if (!create) return
+    close()
+    createForm = true
+    trigger = from
+    const current = revision
+    const host = models?.hooks.hostGeneration?.()
+    const title = document.createElement('div')
+    title.className = 'bot-menu-title'
+    title.textContent = section ? `New bot in ${section}` : 'New bot'
+    const input = document.createElement('input')
+    input.className = 'bot-menu-input'
+    input.maxLength = 80
+    input.placeholder = 'Name (optional)'
+    input.setAttribute('aria-label', 'Bot name')
+    const submit = document.createElement('button')
+    submit.type = 'button'
+    submit.className = 'bot-menu-btn primary'
+    submit.textContent = 'Create'
+    const note = document.createElement('p')
+    note.className = 'bot-menu-note'
+    note.setAttribute('role', 'alert')
+    note.hidden = true
+    async function save() {
+      if (submit.disabled) return
+      input.disabled = submit.disabled = true
+      submit.textContent = 'Creating…'
+      try {
+        await create!(validateBotCreate({ ...(input.value.trim() && { name: input.value }), ...(section && { section }) }))
+      } catch (error) {
+        if (host !== models?.hooks.hostGeneration?.()) return
+        const problem = error instanceof Error ? error.message : 'Could not create bot.'
+        if (current !== revision) {
+          models?.hooks.notify?.(problem)
+          return
+        }
+        note.textContent = problem
+        note.hidden = false
+        input.disabled = submit.disabled = false
+        submit.textContent = 'Create'
+        input.focus()
+      }
+    }
+    submit.addEventListener('click', () => void save())
+    input.addEventListener('keydown', event => {
+      if (event.key === 'Enter') { event.preventDefault(); void save() }
+    })
+    menu.replaceChildren(title, input, note, submit)
+    menu.hidden = false
+    const rect = from.getBoundingClientRect()
+    position(rect.left, rect.bottom)
+    input.focus()
+  }
+
+  function openGroup(section: string, rawEvent?: unknown, from?: HTMLElement, creationDisabled = false): void {
     const event = rawEvent as MenuEvent | undefined
     event?.preventDefault?.()
     event?.stopPropagation?.()
     if (busy) return
     modelPicker?.close(false)
+    createForm = false
     ++revision
     disabled = busy
     trigger = from
@@ -447,11 +511,13 @@ export function createBotMenu(
       renderRename(section)
       position(x, y)
     })
-    menu.replaceChildren(rename)
+    const add = create && from ? menuItem('Add bot', () => openCreate(from, section)) : undefined
+    if (add) add.disabled = creationDisabled
+    menu.replaceChildren(...(add ? [add] : []), rename)
     menu.hidden = false
     position(x, y)
     rename.focus()
   }
 
-  return { open, openGroup, close }
+  return { open, openGroup, openCreate, close }
 }
