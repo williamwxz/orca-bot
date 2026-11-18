@@ -445,6 +445,7 @@ export function createBotMenu(
     createForm = true
     trigger = from
     const current = revision
+    const host = models?.hooks.hostGeneration?.()
     const title = document.createElement('div')
     title.className = 'bot-menu-title'
     title.textContent = section ? `New bot in ${section}` : 'New bot'
@@ -468,8 +469,13 @@ export function createBotMenu(
       try {
         await create!(validateBotCreate({ ...(input.value.trim() && { name: input.value }), ...(section && { section }) }))
       } catch (error) {
-        if (current !== revision) return
-        note.textContent = error instanceof Error ? error.message : 'Could not create bot.'
+        if (host !== models?.hooks.hostGeneration?.()) return
+        const problem = error instanceof Error ? error.message : 'Could not create bot.'
+        if (current !== revision) {
+          models?.hooks.notify?.(problem)
+          return
+        }
+        note.textContent = problem
         note.hidden = false
         input.disabled = submit.disabled = false
         submit.textContent = 'Create'
@@ -487,7 +493,7 @@ export function createBotMenu(
     input.focus()
   }
 
-  function openGroup(section: string, rawEvent?: unknown, from?: HTMLElement): void {
+  function openGroup(section: string, rawEvent?: unknown, from?: HTMLElement, creationDisabled = false): void {
     const event = rawEvent as MenuEvent | undefined
     event?.preventDefault?.()
     event?.stopPropagation?.()
@@ -506,6 +512,7 @@ export function createBotMenu(
       position(x, y)
     })
     const add = create && from ? menuItem('Add bot', () => openCreate(from, section)) : undefined
+    if (add) add.disabled = creationDisabled
     menu.replaceChildren(...(add ? [add] : []), rename)
     menu.hidden = false
     position(x, y)

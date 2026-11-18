@@ -239,6 +239,8 @@ test('bot chat resolves its thread from the last worker roster, never panel inpu
 
 test('thread and send require a roster bot, with fresh worker-generated send IDs', async () => {
   const botId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+  let pollPending = true
+  let finishPoll!: () => void
   const calls: any[] = []
   const worker = await mountWorker(
     {
@@ -256,17 +258,24 @@ test('thread and send require a roster bot, with fresh worker-generated send IDs
           openChat: async () => ({ message: '' }),
           addMausBot: async () => {},
           createBot: async () => ({ botId, name: 'Bot' }),
-          listBots: async () => [
-            {
-              id: botId,
-              name: 'Bot',
-              title: '',
-              main: false,
-              state: 'idle',
-              unread: false,
-              modelLabel: ''
+          listBots: async () => {
+            if (pollPending) {
+              pollPending = false
+              await new Promise<void>(resolve => { finishPoll = resolve })
+              return []
             }
-          ],
+            return [
+              {
+                id: botId,
+                name: 'Bot',
+                title: '',
+                main: false,
+                state: 'idle',
+                unread: false,
+                modelLabel: ''
+              }
+            ]
+          },
           readThread: async (input) => {
             calls.push(input)
             return { messages: [], hasMore: false }
@@ -287,7 +296,11 @@ test('thread and send require a roster bot, with fresh worker-generated send IDs
       await assert.rejects(worker.request(name, { botId: 'bad', text: 'Hello' }), /Invalid bot ID/)
     }
     assert.equal(calls.length, 0)
+    const stale = worker.request('bots.list', {})
+    await new Promise<void>(resolve => setImmediate(resolve))
     assert.deepEqual(await worker.request('bots.create', {}), { botId, name: 'Bot' })
+    finishPoll()
+    await stale
     await worker.request('thread.read', { botId, limit: 20 })
     await worker.request('message.send', { botId, text: 'Hello', sendId: 'untrusted-panel-value' })
     await worker.request('message.send', { botId, text: 'Again' })

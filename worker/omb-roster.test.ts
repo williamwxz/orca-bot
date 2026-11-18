@@ -370,12 +370,12 @@ test('creation overrides unsafe saved defaults before posting and validates call
       assert.equal(method, 'POST')
       assert.deepEqual(body, { name: '', section: 'Design',
         settings: { approvalMode: 'ask', mcpServers: expected } })
-      return { bot: { id, name: 'Momo' } }
+      return { bot: { id, name: 'Momo', section: 'Saved group' } }
     }
     assert.deepEqual(await createBot({ port: 1, section: ' Design ', excludeMcp: ['imported'] }, deps),
-      { botId: id, name: 'Momo' })
+      { botId: id, name: 'Momo', section: 'Saved group' })
   }
-  for (const details of [{ name: 'a\nb' }, { name: 'a'.repeat(81) }, { name: ' ' }, { section: '' }])
+  for (const details of [{ name: 'a\nb' }, { name: 'a\tb' }, { name: 'a\u2028b' }, { name: 'a\u2029b' }, { name: 'a'.repeat(81) }, { name: ' ' }, { section: '' }])
     await assert.rejects(createBot({ port: 1, ...details }, fake([]).deps), /name/)
 })
 

@@ -92,6 +92,8 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
   const prefs = { shareTools: true, linkAgents: false }
   let hostsBroken = false
   let selectionFails = false
+  let failCreate = false
+  let createdName = ''
   let holdNextBots = false
   let holdBots: ((bots: unknown) => void) | undefined
   const frame = {
@@ -116,6 +118,7 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
             holdBots = done
           })
         }
+        if (name === 'bots.list' && createdName) return [{ id: 'new-bot', name: createdName, state: 'idle', section: 'Studio' }]
         if (name === 'bots.list' && host !== 'local')
           return [
             {
@@ -175,7 +178,11 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
               modelLabel: 'Codex'
             }
           ]
-        if (name === 'bots.create') return { botId: 'new-bot', name: (input as any).name || 'Momo' }
+        if (name === 'bots.create') {
+          if (failCreate) throw new Error('Creation failed.')
+          createdName = (input as any).name || 'Momo'
+          return { botId: 'new-bot', name: createdName, section: 'Studio' }
+        }
         if (name === 'chat.open' && holdOpen)
           return new Promise((resolve) => {
             finishOpen = () => resolve({ message: '' })
@@ -740,6 +747,17 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
       assert.equal(menu.hidden, true)
       assert.equal((doc as any).activeElement, add)
     }
+    failCreate = true
+    add.emit('click')
+    menu.children.at(-1)!.emit('click')
+    doc.emit('keydown', { key: 'Escape' })
+    await flush()
+    assert.equal(get('toast').children[0].textContent, 'Creation failed.')
+    failCreate = false
+    holdNextBots = true
+    win.emit('pageshow')
+    await flush()
+    assert.equal(holdNextBots, false)
     for (const name of ['', 'Nova']) {
       add.emit('click')
       const input = menu.children[1]
@@ -752,9 +770,17 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
       assert.equal(get('bot-view').hidden, false)
       assert.equal(get('toast').children[0].textContent, `Created ${name || 'Momo'}.`)
       assert.equal(add.disabled, false)
+      if (!name) {
+        assert.ok(get('roster').children.some(node => node.textContent === 'Studio'))
+        const reads = calls.filter(c => c.name === 'bots.list').length
+        holdBots!([])
+        await flush()
+        assert.equal(calls.filter(c => c.name === 'bots.list').length, reads + 1)
+        assert.equal(get('bot-view').hidden, false)
+      }
       get('bot-view').children[0].children[0].emit('click')
     }
-    assert.deepEqual(calls.filter(c => c.name === 'bots.create').map(c => c.input), [{}, { name: 'Nova' }])
+    assert.deepEqual(calls.filter(c => c.name === 'bots.create').map(c => c.input), [{}, {}, { name: 'Nova' }])
   } finally {
     win.emit('pagehide')
     keys.forEach((key, i) => {

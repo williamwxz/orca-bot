@@ -642,7 +642,7 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
     })
     const bot: Bot = {
       id: created.botId, name: created.name, title: '', main: false,
-      state: 'idle', unread: false, modelLabel: '', section: details.section
+      state: 'idle', unread: false, modelLabel: '', section: created.section ?? details.section
     }
     // An older poll must not evict the new bot while the panel opens its thread.
     ++rosterRevision

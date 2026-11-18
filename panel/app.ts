@@ -193,9 +193,21 @@ const readBots = new Set<string>()
 const previews = new Map<string, string>()
 const rosterView = element<HTMLElement>('roster-view')
 
+let rosterRevision = 0
+async function readRoster(): Promise<Bot[]> {
+  const generation = hostGeneration
+  let revision: number
+  let next: Bot[]
+  do {
+    revision = rosterRevision
+    next = await frame.plugin.request('bots.list', {})
+  } while (generation === hostGeneration && revision !== rosterRevision)
+  return next
+}
+
 async function refreshCapabilities(): Promise<void> {
   const generation = hostGeneration
-  const next = await frame.plugin.request('bots.list', {})
+  const next = await readRoster()
   if (generation !== hostGeneration) return
   bots = next
   chatView.update(bots)
@@ -270,18 +282,20 @@ const botMenu = createBotMenu(element('bot-menu'), async (input: BotAction) => {
   const generation = hostGeneration
   creating = true
   updateAddButton()
+  renderBots()
   try {
     const created = await frame.plugin.request('bots.create', input)
     if (generation !== hostGeneration) return
+    ++rosterRevision
     const bot: Bot = { id: created.botId, name: created.name, title: '', state: 'idle',
-      unread: false, main: false, modelLabel: '', section: input.section }
+      unread: false, main: false, modelLabel: '', section: created.section ?? input.section }
     bots = [...bots.filter(item => item.id !== bot.id), bot]
     chatView.update(bots)
     renderBots()
     showBot(bot)
     toast.show(`Created ${created.name}.`)
   } finally {
-    if (generation === hostGeneration) { creating = false; updateAddButton() }
+    if (generation === hostGeneration) { creating = false; updateAddButton(); renderBots() }
   }
 }
 )
@@ -377,7 +391,7 @@ async function addMausBot(bot: Bot): Promise<void> {
     await refreshAfterChange()
     if (generation === hostGeneration) await open(bot.id, `Added ${bot.name}.`)
   } catch (error) {
-    toast.show(error instanceof Error ? error.message : 'Could not add MausBot.')
+    if (generation === hostGeneration) toast.show(error instanceof Error ? error.message : 'Could not add MausBot.')
   } finally {
     changing.delete(bot.id)
     renderBots()
@@ -447,7 +461,7 @@ function makeBotRow(bot: Bot, sections: string[]): HTMLElement {
 }
 
 function renderBots(): void {
-  const key = JSON.stringify([bots, addButton.disabled, selected, opening, [...changing], [...deleting], [...readBots], [...previews]])
+  const key = JSON.stringify([bots, creating, addButton.disabled, selected, opening, [...changing], [...deleting], [...readBots], [...previews]])
   if (key === rosterKey) return
   rosterKey = key
   const focused = (document.activeElement as HTMLElement)?.dataset.focus
@@ -483,7 +497,7 @@ function renderBots(): void {
       heading.setAttribute('role', 'button')
       heading.dataset.focus = `group-${group.title}`
       heading.setAttribute('aria-haspopup', 'menu')
-      const openGroup = (event: Event) => botMenu.openGroup(group.title, event, heading)
+      const openGroup = (event: Event) => botMenu.openGroup(group.title, event, heading, addButton.disabled)
       heading.addEventListener('contextmenu', openGroup)
       heading.addEventListener('keydown', (event) => {
         if (['Enter', ' ', 'ContextMenu'].includes(event.key) || (event.shiftKey && event.key === 'F10'))
@@ -573,7 +587,7 @@ async function refreshNow(explicitRetry: boolean): Promise<void> {
     if (status.state === 'starting') delay = 2000
     if (status.state === 'running') {
       try {
-        const nextBots = await frame.plugin.request('bots.list', {})
+        const nextBots = await readRoster()
         if (!current()) return
         for (const bot of nextBots) if (!bot.unread) readBots.delete(bot.id)
         bots = nextBots

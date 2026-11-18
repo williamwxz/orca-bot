@@ -3,6 +3,7 @@ import type { FrameApi } from './chat-view.ts'
 import type { Connector, Connectors, ConnectorAction } from '../worker/mcp-connectors.ts'
 
 export function createMcpView(frame: FrameApi, element: (id: string) => HTMLElement, message: (text: string) => void) {
+  let loadProblem = ''
   let data: Connectors | undefined
   let generation = 0
   let pendingGeneration: number | undefined
@@ -269,7 +270,10 @@ export function createMcpView(frame: FrameApi, element: (id: string) => HTMLElem
       ? `${data.connectors.filter((c) => c.enabled).length} enabled · ${data.connectors.length} available on ${target}`
       : `MCP connectors unavailable on ${target}. Start OpenMausBot with this plugin, then refresh.`
     root.replaceChildren()
-    if (!data) return
+    if (!data) {
+      if (loadProblem) root.append(node('p', loadProblem))
+      return
+    }
     const tabs = node('div')
     tabs.className = 'mcp-tabs'
     tabs.setAttribute('role', 'tablist')
@@ -331,13 +335,15 @@ export function createMcpView(frame: FrameApi, element: (id: string) => HTMLElem
     try {
       const next = await frame.plugin.request('mcp.list', {})
       if (current !== generation) return
+      loadProblem = ''
       data = next
       removing = undefined
       if (explicit) message('Connectors refreshed.')
     } catch (error) {
       if (current !== generation) return
       data = undefined
-      message(error instanceof Error ? error.message : 'Could not load MCP connectors.')
+      loadProblem = error instanceof Error ? error.message : 'Could not load MCP connectors.'
+      if (explicit) message(loadProblem)
     } finally {
       if (current === generation) {
         pendingGeneration = undefined
@@ -428,7 +434,7 @@ export function createMcpView(frame: FrameApi, element: (id: string) => HTMLElem
       data = undefined
       selectedBot = undefined
       tab = 'provider'
-      message('')
+      loadProblem = ''
       removing = undefined
       focusedKey = undefined
       if (!element('mcp-view').hidden) element('settings-view').hidden = false

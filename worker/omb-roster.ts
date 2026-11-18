@@ -302,11 +302,12 @@ export async function createBot(
   }
   try {
     const reply = await deps.request(input.port, '/api/bots',
-      { ...body, name: body.name ?? '', settings }, 'POST') as { bot?: { id?: string; name?: string } }
+      { ...body, name: body.name ?? '', settings }, 'POST') as { bot?: { id?: string; name?: string; section?: unknown } }
     const bot = reply?.bot
     if (!bot || !validBotId(bot.id) || typeof bot.name !== 'string')
       throw new Error('Invalid create response.')
-    return { botId: bot.id, name: bot.name }
+    const section = typeof bot.section === 'string' ? bot.section.trim() : ''
+    return { botId: bot.id, name: bot.name, ...(section && { section }) }
   } catch (error) {
     if (error instanceof HttpStatusError) {
       if (error.status === 409) throw new Error('Bot creation conflicted. Check the workspace bot limit.')

@@ -77,6 +77,7 @@ test('MCP menu provides host-aware groups, zero-bot prompt, assignments, loading
   const actions: ConnectorAction[] = []
   let complete: (() => void) | undefined
   let delayed: Promise<Connectors> | undefined
+  const messages: string[] = []
   const view = createMcpView(
     {
       plugin: {
@@ -100,7 +101,7 @@ test('MCP menu provides host-aware groups, zero-bot prompt, assignments, loading
         }
       }
     } as any,
-    get as any, () => {}
+    get as any, text => { messages.push(text) }
   )
   try {
     view.hostChanged('remote', 'Remote workstation')
@@ -200,6 +201,16 @@ test('MCP menu provides host-aware groups, zero-bot prompt, assignments, loading
     await pending
     assert.match(get('mcp-summary').textContent, /unavailable on Other host/)
     assert.equal(get('mcp-groups').children.length, 0)
+    messages.length = 0
+    delayed = Promise.reject(new Error('Server offline.'))
+    await view.refresh()
+    get('mcp-manage').emit()
+    await flush()
+    assert.deepEqual(messages, [])
+    assert.equal(get('mcp-groups').children[0].textContent, 'Server offline.')
+    get('mcp-refresh').emit()
+    await flush()
+    assert.deepEqual(messages, ['Server offline.'])
   } finally {
     if (original) Object.defineProperty(globalThis, 'document', original)
     else delete (globalThis as any).document
