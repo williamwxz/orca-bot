@@ -1,9 +1,11 @@
+import { readFileSync } from 'node:fs'
 import { register } from './worker.ts'
 import { openChat } from './omb-open.ts'
 import type { CliDeps } from './omb-cli.ts'
 import { assert, test, mockHost, mountWorker } from 'orca/testing'
 import {
   checkNode,
+  validateInstallLock,
   ensureInstalled,
   ensureServer,
   findServer,
@@ -28,7 +30,7 @@ function fake() {
     execFile: async (file, args, options) => {
       calls.push({ file, args, options })
       if (file === 'node') return 'v24.1.0\n'
-      files.set(`/fake/.orca-bot/openmausbot/${version}/node_modules/.bin/openmausbot`, '')
+      files.set(`/fake/.orca-bot/openmausbot/${version}.staging/node_modules/.bin/openmausbot`, '')
       return ''
     },
     spawn: async (file, args, options) => {
@@ -62,6 +64,18 @@ function fake() {
     },
     remove: (path) => {
       files.delete(path)
+    },
+    installAsset: (name) => readFileSync(new URL(`./install-assets/${name}`, import.meta.url), 'utf8'),
+    removeTree: (path) => {
+      for (const key of files.keys()) if (key === path || key.startsWith(path + '/')) files.delete(key)
+    },
+    rename: (from, to) => {
+      for (const [key, value] of [...files]) {
+        if (key === from || key.startsWith(from + '/')) {
+          files.set(to + key.slice(from.length), value)
+          files.delete(key)
+        }
+      }
     },
     kill: (pid) => {
       signals.push(pid)
@@ -163,36 +177,37 @@ test('ensureInstalled skips an existing binary', async () => {
   const { deps, files, calls } = fake()
   const bin = `/fake/.orca-bot/openmausbot/${version}/node_modules/.bin/openmausbot`
   files.set(bin, '')
-  assert.equal(await ensureInstalled(version, deps), bin)
+  assert.equal(await ensureInstalled(version, deps, true), bin)
   assert.equal(calls.length, 0)
 })
 
 test('ensureInstalled runs npm with exact args and a five minute limit', async () => {
   const { deps, calls } = fake()
-  await ensureInstalled(version, deps)
+  await ensureInstalled(version, deps, true)
   assert.equal(calls[0].file, 'npm')
   assert.deepEqual(calls[0].args, [
-    'install',
+    'ci',
     '--prefix',
-    `/fake/.orca-bot/openmausbot/${version}`,
+    `/fake/.orca-bot/openmausbot/${version}.staging`,
+    '--ignore-scripts',
     '--no-audit',
     '--no-fund',
-    '--ignore-scripts',
-    `openmausbot@${version}`
+    '--registry=https://registry.npmjs.org',
+    '--cache',
+    `/fake/.orca-bot/openmausbot/${version}.staging/.npm-cache`
   ])
   assert.equal((calls[0].options as { timeout: number }).timeout, 300000)
 })
 
-test('failed installation preserves files and redacts tokens from last lines', async () => {
+test('failed installation cleans staging, preserves unrelated files and hides subprocess output', async () => {
   const { deps, files } = fake()
   files.set('partial', 'keep')
   deps.execFile = async () => {
     throw new Error('old\n'.repeat(20) + 'npm_badsecret token=private Authorization: Bearer hidden')
   }
-  await assert.rejects(ensureInstalled(version, deps), (error: Error) => {
+  await assert.rejects(ensureInstalled(version, deps, true), (error: Error) => {
     assert.match(error.message, /install.*OpenMausBot/)
     assert.doesNotMatch(error.message, /badsecret|private|hidden/)
-    assert.match(error.message, /REDACTED/)
     return true
   })
   assert.equal(files.get('partial'), 'keep')
@@ -239,8 +254,8 @@ test('startServer times out without reading the log or killing another process',
 test('ensureServer shares an in-flight attempt and prefers a running server', async () => {
   const { deps, calls } = fake()
   deps.fetch = async () => healthy()
-  const first = ensureServer(deps)
-  const second = ensureServer(deps)
+  const first = ensureServer(deps, false, true)
+  const second = ensureServer(deps, false, true)
   assert.equal(first, second)
   assert.deepEqual(await first, { port: 8799, version, started: false, startedByPlugin: false })
   assert.equal(calls.length, 0)
@@ -259,8 +274,8 @@ test('ensureServer skips occupied ports and installs and starts once', async () 
     throw new Error('offline')
   }
   deps.portFree = async (port) => port === 18799
-  const first = ensureServer(deps)
-  assert.equal(first, ensureServer(deps))
+  const first = ensureServer(deps, false, true)
+  assert.equal(first, ensureServer(deps, false, true))
   assert.deepEqual(await first, { port: 18799, version, started: true, startedByPlugin: true })
   assert.equal(calls.length, 3)
   assert.deepEqual(calls[2].args, ['serve', '--port', '18799', '--data-dir', '/fake/.orca-bot/data'])
@@ -330,7 +345,7 @@ test('ensureServer reuses suffixed, unparseable and missing versions without spa
   for (const reported of ['0.2.0-beta.1', 'development', '', undefined]) {
     const { deps, calls } = fake()
     deps.fetch = async () => response({ app: 'openmausbot', version: reported, pid: 43 })
-    assert.deepEqual(await ensureServer(deps), {
+    assert.deepEqual(await ensureServer(deps, false, true), {
       port: 8799,
       version: reported || 'unknown',
       started: false,
@@ -380,7 +395,7 @@ test('fresh workers recover pairing ownership only from a matching persisted ser
           register(orca, {
             checkHealth: async () => true,
             now: () => 0,
-            ensureServer: () => ensureServer(deps),
+            ensureServer: () => ensureServer(deps, false, true),
             stopServer: async () => ({ stopped: false, message: 'Unused' }),
             openChat: (input) => openChat(input, cli),
             readThread: async () => ({ messages: [], hasMore: false }),
@@ -568,7 +583,14 @@ test('environment version migrates owned records once even when Claude flags mat
   for (const env of [undefined, 1, 2, 3]) {
     files.set(
       '/fake/.orca-bot/server.pid',
-      JSON.stringify({ launcherPid: 42, serverPid: 43, port: 8799, claudeHome: false, inherit: true, env })
+      JSON.stringify({
+        launcherPid: 42,
+        serverPid: 43,
+        port: 8799,
+        claudeHome: false,
+        inherit: true,
+        env
+      })
     )
     assert.equal((await claudeSetupStatus(8799, true, deps)).restart, env === undefined || env < 2)
   }
@@ -583,7 +605,14 @@ test('outdated owned server requests an idle update while unowned or newer serve
   const { deps, files } = fake()
   files.set(
     '/fake/.orca-bot/server.pid',
-    JSON.stringify({ launcherPid: 42, serverPid: 43, port: 8799, claudeHome: false, inherit: false, env: 2 })
+    JSON.stringify({
+      launcherPid: 42,
+      serverPid: 43,
+      port: 8799,
+      claudeHome: false,
+      inherit: false,
+      env: 2
+    })
   )
   deps.fetch = async () => response({ app: 'openmausbot', version: '0.1.158', pid: 43 })
   assert.deepEqual(await claudeSetupStatus(8799, false, deps), {
@@ -595,4 +624,49 @@ test('outdated owned server requests an idle update while unowned or newer serve
   assert.deepEqual(await claudeSetupStatus(8799, false, deps), { restart: false, message: '' })
   deps.fetch = async () => response({ app: 'openmausbot', version: '99.0.0', pid: 43 })
   assert.deepEqual(await claudeSetupStatus(8799, false, deps), { restart: false, message: '' })
+})
+
+test('fresh status and direct install require consent before any process or file write', async () => {
+  const { deps, calls, files } = fake()
+  await assert.rejects(ensureServer(deps), /Install openmausbot@0.1.169/)
+  await assert.rejects(ensureInstalled(version, deps), /Install openmausbot/)
+  assert.deepEqual(calls, [])
+  assert.equal(files.size, 0)
+})
+
+test('existing installations and unowned servers work without download consent', async () => {
+  const { deps, calls, files } = fake()
+  deps.fetch = async () => healthy(99)
+  assert.equal((await ensureServer(deps)).startedByPlugin, false)
+  assert.equal(calls.length, 0)
+  const bin = `/fake/.orca-bot/openmausbot/${version}/node_modules/.bin/openmausbot`
+  files.set(bin, '')
+  assert.equal(await ensureInstalled(version, deps), bin)
+  assert.equal(calls.length, 0)
+})
+
+test('committed lock pins every package with SHA-512 and rejects missing or altered pins', () => {
+  const { deps } = fake()
+  const pkg = deps.installAsset('package.json')
+  const source = deps.installAsset('package-lock.json')
+  validateInstallLock(pkg, source, version)
+  const lock = JSON.parse(source)
+  lock.packages['node_modules/openmausbot'].integrity = 'sha1-unverified'
+  assert.throws(() => validateInstallLock(pkg, JSON.stringify(lock), version), /SHA-512/)
+  lock.packages['node_modules/openmausbot'].version = '0.1.158'
+  assert.throws(() => validateInstallLock(pkg, JSON.stringify(lock), version), /Invalid pinned/)
+})
+
+test('npm integrity mismatch refuses publication, cleans staging and never starts a child', async () => {
+  const { deps, files, calls } = fake()
+  deps.execFile = async () => {
+    throw new Error('EINTEGRITY sha512 checksum mismatch')
+  }
+  await assert.rejects(ensureInstalled(version, deps, true), /integrity verification failed/)
+  assert.equal(
+    [...files.keys()].some((key) => key.includes('.staging')),
+    false
+  )
+  assert.equal(files.has(`/fake/.orca-bot/openmausbot/${version}/node_modules/.bin/openmausbot`), false)
+  assert.deepEqual(calls, [])
 })

@@ -29,6 +29,10 @@
         <button id="update-banner-install" type="button">Update</button>
       </div>
     </header>
+    <section id="install-card" hidden>
+      <p id="install-card-notice"></p>
+      <button id="install-omb" type="button">Install OpenMausBot</button>
+    </section>
     <section id="setup" aria-labelledby="setup-title" hidden>
       <h2 id="setup-title">Set up Bot Team for Orca</h2>
       <p class="setup-lead">Choose what to allow. You can change this later in Settings.</p>
@@ -37,7 +41,7 @@
         <input id="share-tools" class="switch" type="checkbox" role="switch" checked />
       </label>
       <label class="setup-option" id="link-agents-label">
-        <span class="setup-copy"><strong>My Orca agents can talk to the bots</strong><small>Adds Bot Team for Orca's tools to <span id="agent-names">Claude and Codex</span>, so an agent can message a bot or read its replies.</small></span>
+        <span class="setup-copy"><strong>My Orca agents can talk to the bots</strong><small>Adds Bot Team for Orca's tools to <span id="agent-names">Claude, Codex, opencode and Antigravity</span>, so an agent can message a bot or read its replies.</small></span>
         <input id="link-agents" class="switch" type="checkbox" role="switch" checked />
       </label>
       <label class="setup-option" id="import-tools-label" hidden>
@@ -78,7 +82,7 @@
           <input id="pref-share-tools" class="switch" type="checkbox" role="switch" />
         </label>
         <label class="setup-option" id="pref-link-agents-label">
-          <span class="setup-copy"><strong>My Orca agents can talk to the bots</strong><small>Adds Bot Team for Orca's tools to <span id="pref-agent-names">Claude and Codex</span>, so an agent can message a bot or read its replies.</small></span>
+          <span class="setup-copy"><strong>My Orca agents can talk to the bots</strong><small>Adds Bot Team for Orca's tools to <span id="pref-agent-names">Claude, Codex, opencode and Antigravity</span>, so an agent can message a bot or read its replies.</small></span>
           <input id="pref-link-agents" class="switch" type="checkbox" role="switch" />
         </label>
         <div class="setup-option">
@@ -101,6 +105,10 @@
       <div class="settings-group">
         <h3>OpenMausBot</h3>
         <p id="omb-status" class="settings-note"></p>
+        <div id="settings-install-card" hidden>
+          <p id="settings-install-card-notice"></p>
+          <button id="settings-install-omb" type="button">Install OpenMausBot</button>
+        </div>
         <button id="stop-server" type="button">Stop OpenMausBot</button>
       </div>
       <p id="settings-message" role="status" aria-live="polite"></p>

@@ -16,3 +16,18 @@ test('day separators show once per local day and ignore invalid timestamps', () 
   assert.equal(dayLabel(NaN, undefined, now), undefined)
   assert.equal(dayLabel(now - 86400000, undefined, now)?.startsWith('Today'), false)
 })
+
+test('install and linking copy disclose the package, destination and all four agents', async () => {
+  const { readFileSync } = await import('node:fs')
+  const manifest = JSON.parse(readFileSync(new URL('../orca-plugin.json', import.meta.url), 'utf8'))
+  const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8')
+  const setting = manifest.contributes.settings.find(
+    (item: { key: string }) => item.key === 'linkAgents'
+  )
+  for (const agent of ['Claude', 'Codex', 'opencode', 'Antigravity']) {
+    assert.ok(setting.description.includes(agent))
+    assert.ok(html.includes(agent))
+  }
+  assert.match(setting.description, /survive plugin uninstall/)
+  assert.equal((html.match(/>Install OpenMausBot<\/button>/g) ?? []).length, 2)
+})

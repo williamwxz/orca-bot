@@ -12,3 +12,7 @@ export function compareVersions(a: string, b: string): number | undefined {
   }
   return 0
 }
+
+export const INSTALL_NOTICE =
+  `Install openmausbot@${TESTED_OPENMAUSBOT_VERSION} from npm ` +
+  '(about 75 MB) into ~/.orca-bot. This also allows verified updates when bots are idle.'

@@ -27,8 +27,10 @@ Unofficial. Not made by or affiliated with Orca, OpenMausBot or the makers of th
 Grok signed in on this computer.
 
 1. Install Bot Team for Orca in Orca and open the **Bot Team for Orca** panel in the right
-   sidebar. The first start downloads OpenMausBot (about 75 MB) and can take a
-   minute. Until Bot Team for Orca is in Orca's plugin catalog, load it from a copy of
+   sidebar. Click **Install OpenMausBot** to approve downloading
+   `openmausbot@0.1.169` from npm (about 75 MB) into `~/.orca-bot`.
+   Opening the panel alone does not install it. Until Bot Team for Orca is in
+   Orca's plugin catalog, load it from a copy of
    this repository with `orca plugin dev load .`.
 2. The panel lists your bots. With none yet, press **Jump to Bot Dashboard** and
    create one there.
@@ -82,8 +84,10 @@ you only want the server's bots. With no paired servers the picker stays hidden
 and the bots run on this computer.
 
 The server needs Orca, Node.js 24 or newer, and at least one project added in
-Orca there. It does not need Bot Team for Orca installed. When you choose the
-server, the plugin opens a terminal named **Bot Team for Orca** in that
+Orca there, and an existing OpenMausBot installation or running server.
+Approve any initial installation on that server itself; the paired client
+cannot approve or download it. It does not need Bot Team for Orca installed.
+When you choose the server, the plugin opens a terminal named **Bot Team for Orca** in that
 project, through Orca's existing pairing. It copies the plugin's own worker
 code to `~/.orca-bot/relay` on the server and runs it there. It closes that
 terminal after 10 minutes without use and opens a new one, in a few seconds,
@@ -141,9 +145,12 @@ of that `orca` command on this computer.
   existing `~/.openmausbot`, so it cannot wake routines or connections you set
   up elsewhere.
 - **A pinned version.** It installs one tested OpenMausBot version (in
-  `shared/omb-version.ts`) from npm, without running install scripts.
+  `shared/omb-version.ts`) from npm using a committed lockfile with SHA-512
+  integrity hashes for every dependency and `npm ci --ignore-scripts`.
+  Integrity mismatches abort installation and remove staging files.
   OpenMausBot never updates on its own; when a plugin update changes the pinned
-  version, a server the plugin started switches to it once bots are idle.
+  version, a server the plugin started switches to it once bots are idle,
+  after you have approved installation. Existing users are asked too.
 - **Secrets stay out of sight.** The browser sign-in link is used once and is
   never shown, logged or returned by the plugin. Your message text is passed to
   OpenMausBot privately, not on a command line that other programs can read.
@@ -210,3 +217,29 @@ OpenMausBot, which is by milind-soni and contributors. The panel adapts its colo
 [NOTICE](NOTICE).
 
 The earlier Grok Bot client is kept at the tag `grok-bot-final`.
+
+### Remove surviving agent links
+
+**Agent MCP links survive plugin uninstall.** The entry is named `orca-bot`
+in **Claude, Codex, opencode and Antigravity**. Before uninstalling, open the
+plugin's Settings and turn off **My Orca agents can talk to the bots** (or
+**Let my Orca agents talk to the bots** in Orca's plugin settings). Keep the
+local server running until the setting applies; resolve any removal error
+before uninstalling.
+
+If the plugin is already uninstalled, remove only the `orca-bot` entry:
+
+- **Claude:** run `claude mcp remove --scope user orca-bot` with the same
+  Claude profile used by Orca. For manual editing, remove `mcpServers.orca-bot`
+  from that profile's `.claude.json` (normally `~/.claude.json`; if
+  `CLAUDE_CONFIG_DIR` is set, use `.claude.json` in that directory).
+- **Codex:** run `codex mcp remove orca-bot` with Orca's selected Codex home,
+  or remove `[mcp_servers.orca-bot]` and its child tables from
+  `$CODEX_HOME/config.toml` (normally `~/.codex/config.toml`).
+- **opencode:** remove `mcp["orca-bot"]` from
+  `~/.config/opencode/opencode.json`, preserving the other MCP entries.
+- **Antigravity:** run `agy mcp remove orca-bot`, or remove
+  `mcpServers["orca-bot"]` from `~/.gemini/config/mcp_config.json`.
+
+Restart the affected agents after editing their configuration. Deleting
+`~/.orca-bot` alone does not remove these links.

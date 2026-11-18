@@ -61,11 +61,15 @@ export function defaultLinkDeps(): LinkDeps {
         throw new Error('Could not read setup.')
       }
     },
-    replaceConfig: (path, value) => replaceConfigAtomically(path, value, `${path}.${randomUUID()}.tmp`, fs),
+    replaceConfig: (path, value) =>
+      replaceConfigAtomically(path, value, `${path}.${randomUUID()}.tmp`, fs),
     listAgent: (file, env) =>
       new Promise((resolve, reject) => {
-        execFile(file, ['mcp', 'list'], { env, timeout: 10000, maxBuffer: 1024 * 1024 }, (error, stdout) =>
-          error ? reject(new Error('Could not check setup.')) : resolve(stdout)
+        execFile(
+          file,
+          ['mcp', 'list'],
+          { env, timeout: 10000, maxBuffer: 1024 * 1024 },
+          (error, stdout) => (error ? reject(new Error('Could not check setup.')) : resolve(stdout))
         )
       }),
     // Codex add replaces existing entries; refuse to overwrite one we do not own.
@@ -111,6 +115,8 @@ export async function syncAgentLinks(
   deps: LinkDeps = defaultLinkDeps()
 ): Promise<void> {
   if (!input.owned) return
+  if (input.enabled && !deps.exists(deps.bin))
+    throw new Error('The pinned OpenMausBot binary is not installed; agent links were left unchanged.')
   const found = programs(deps)
   let record: Record
   try {
@@ -178,7 +184,8 @@ export async function syncAgentLinks(
             }
           }
           if (spec.check === 'list') {
-            if (!deps.listAgent || !antigravityListIsEmpty(await deps.listAgent(file, env))) throw new Error()
+            if (!deps.listAgent || !antigravityListIsEmpty(await deps.listAgent(file, env)))
+              throw new Error()
           }
         }
         await deps.execFile(file, spec.add(input.port, deps.bin), env)

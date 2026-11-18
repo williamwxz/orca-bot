@@ -6,8 +6,9 @@ import type { Hosts } from './paired-host.ts'
 import type { Updates } from './updates.ts'
 
 export type Status = {
-  state: 'running' | 'starting' | 'needs_node' | 'install_failed' | 'start_failed'
+  state: 'needs_install' | 'running' | 'starting' | 'needs_node' | 'install_failed' | 'start_failed'
   message: string
+  needsInstall?: boolean
   port?: number
   version?: string
   testedVersion: string
@@ -35,6 +36,7 @@ export type Requests = {
   'updates.auto': { input: { on: boolean }; output: Updates }
   'hosts.get': { input: Record<string, never>; output: Hosts }
   'hosts.select': { input: { id: string }; output: Hosts }
+  'server.install': { input: Record<string, never>; output: { accepted: true } }
   'server.stop': { input: Record<string, never>; output: { stopped: boolean; message: string } }
 }
 

@@ -46,19 +46,32 @@ async function answerSetup(allow: boolean): Promise<void> {
 }
 const hostSelect = element<HTMLSelectElement>('host')
 let hosts: Hosts | undefined
-const hostChosen = () => !hosts || hosts.selected === 'local' || hosts.hosts.some(host => host.id === hosts!.selected)
+const hostChosen = () =>
+  !hosts || hosts.selected === 'local' || hosts.hosts.some((host) => host.id === hosts!.selected)
 function renderHosts(): void {
   if (!hosts) return
-  const choices = [...(hostChosen() ? [] : [['', 'Choose…']]), ['local', 'This computer'], ...hosts.hosts.map(host => [host.id, host.name])]
-  hostSelect.replaceChildren(...choices.map(([value, label]) => {
-    const option = document.createElement('option')
-    option.value = value; option.textContent = label; option.disabled = !value
-    return option
-  }))
+  const choices = [
+    ...(hostChosen() ? [] : [['', 'Choose…']]),
+    ['local', 'This computer'],
+    ...hosts.hosts.map((host) => [host.id, host.name])
+  ]
+  hostSelect.replaceChildren(
+    ...choices.map(([value, label]) => {
+      const option = document.createElement('option')
+      option.value = value
+      option.textContent = label
+      option.disabled = !value
+      return option
+    })
+  )
   hostSelect.value = hostChosen() ? hosts.selected : ''
 }
 async function loadHosts(): Promise<void> {
-  try { hosts = await frame.plugin.request('hosts.get', {}) } catch { /* Keep the last choice shown; status reports the problem. */ }
+  try {
+    hosts = await frame.plugin.request('hosts.get', {})
+  } catch {
+    /* Keep the last choice shown; status reports the problem. */
+  }
   renderHosts()
   askForHost()
 }
@@ -82,7 +95,8 @@ async function chooseHost(id: string): Promise<void> {
   try {
     hosts = await frame.plugin.request('hosts.select', { id })
   } catch (error) {
-    message.textContent = error instanceof Error ? error.message : 'Could not change where your bots run.'
+    message.textContent =
+      error instanceof Error ? error.message : 'Could not change where your bots run.'
     await loadHosts()
   } finally {
     hostSelect.disabled = false
@@ -91,7 +105,10 @@ async function chooseHost(id: string): Promise<void> {
   await refreshAfterChange()
 }
 hostSelect.addEventListener('change', () => void chooseHost(hostSelect.value))
-const remoteName = () => (hosts && hosts.selected !== 'local' ? hosts.hosts.find((host) => host.id === hosts!.selected)?.name : undefined)
+const remoteName = () =>
+  hosts && hosts.selected !== 'local'
+    ? hosts.hosts.find((host) => host.id === hosts!.selected)?.name
+    : undefined
 const settings = createSettings(frame, element, () => refreshAfterChange())
 let settingsShown = false
 function showSettings(show: boolean): void {
@@ -335,7 +352,11 @@ async function refreshNow(explicitRetry: boolean): Promise<void> {
     message.hidden = !status.message
     running.hidden = status.state !== 'running'
     // While servers are listed, choosing one is the way forward; Retry is for failures.
-    retry.hidden = status.state === 'running' || status.state === 'starting' || (!hostChosen() && !!hosts?.hosts.length)
+    retry.hidden =
+      status.state === 'running' ||
+      status.state === 'starting' ||
+      status.state === 'needs_install' ||
+      (!hostChosen() && !!hosts?.hosts.length)
     if (status.state === 'starting') delay = 2000
     if (status.state === 'running') {
       try {
