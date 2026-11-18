@@ -401,3 +401,42 @@ test('relay page store is saved with paired-client state and reloads after recon
   })
   assert.equal(pages.get('http://127.0.0.1:8799'), undefined)
 })
+
+test('relay state saves atomically and cleans private temp files on failed replacement', async () => {
+  const { saveRelayStore } = await import('./relay-host.ts')
+  const file = '/fake/paired-client.json'
+  const files = new Map<string, string>([[file, 'old']])
+  const store = { storage: { clientPages: { origin: 'page' } }, settings: {} }
+  let fail = false
+  const io = {
+    mkdirSync: () => undefined,
+    writeFileSync: (path: any, content: any, options: any) => {
+      assert.notEqual(String(path), file)
+      assert.ok(String(path).startsWith(file + '.'))
+      assert.deepEqual(options, { mode: 0o600, flag: 'wx' })
+      assert.equal(files.get(file), 'old')
+      files.set(String(path), String(content))
+    },
+    renameSync: (from: any, to: any) => {
+      if (fail) throw new Error('private filesystem details')
+      assert.equal(String(to), file)
+      files.set(file, files.get(String(from))!)
+      files.delete(String(from))
+    },
+    unlinkSync: (path: any) => {
+      files.delete(String(path))
+    }
+  }
+  saveRelayStore(file, store, io)
+  assert.deepEqual(JSON.parse(files.get(file)!), store)
+  assert.deepEqual([...files.keys()], [file])
+  files.set(file, 'old')
+  fail = true
+  assert.throws(
+    () => saveRelayStore(file, store, io),
+    /^Error: Could not save paired-client state on this host\.$/
+  )
+  assert.equal(files.get(file), 'old')
+  assert.deepEqual([...files.keys()], [file])
+  assert.throws(() => saveRelayStore(file, store), /Tests must inject/)
+})

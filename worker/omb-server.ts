@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { randomUUID } from 'node:crypto'
 import { execFile, spawn } from 'node:child_process'
 import * as fs from 'node:fs'
-import { homedir, userInfo } from 'node:os'
+import { homedir, userInfo, uptime } from 'node:os'
 import { ombBinary } from './omb-cli.ts'
 import { childEnvironment } from './child-environment.ts'
 import { join, posix, win32 } from 'node:path'
@@ -18,6 +18,7 @@ export type ServerResult = Server & { started: boolean; startedByPlugin: boolean
 export type StopResult = { stopped: boolean; message: string }
 export type ServerDeps = {
   pid: number
+  uptimeMs?: () => number
   uniqueId(): string
   createExclusive(path: string, content: string): boolean
   modifiedAt(path: string): number
@@ -63,9 +64,11 @@ export type ServerDeps = {
 
 export class ServerError extends Error {
   state: 'needs_install' | 'needs_node' | 'install_failed' | 'start_failed'
-  constructor(state: ServerError['state'], message: string) {
+  busy: boolean
+  constructor(state: ServerError['state'], message: string, busy = false) {
     super(message)
     this.state = state
+    this.busy = busy
   }
 }
 
@@ -74,6 +77,7 @@ export function defaultServerDeps(): ServerDeps {
   if (process.env.NODE_TEST_CONTEXT) throw new Error('Tests must inject server dependencies')
   defaults ??= {
     pid: process.pid,
+    uptimeMs: () => uptime() * 1000,
     uniqueId: randomUUID,
     createExclusive: (path, content) => {
       let fd: number
@@ -151,6 +155,7 @@ export function defaultServerDeps(): ServerDeps {
 }
 
 // Async context makes nested lifecycle operations reentrant without admitting another request.
+const MAX_LOCK_HOLD_MS = 15 * 60 * 1000
 const heldLocks = new AsyncLocalStorage<Set<string>>()
 export async function withServerLock<T>(deps: ServerDeps, operation: () => Promise<T>): Promise<T> {
   const path = join(deps.home, '.orca-bot/server.lock')
@@ -174,14 +179,18 @@ export async function withServerLock<T>(deps: ServerDeps, operation: () => Promi
       let stale = false
       try {
         const owner = JSON.parse(text)
+        const now = deps.now()
+        const expired =
+          !Number.isFinite(owner.createdAt) || now - owner.createdAt > MAX_LOCK_HOLD_MS
+        const beforeBoot = deps.uptimeMs !== undefined && owner.createdAt < now - deps.uptimeMs()
         stale =
           Number.isSafeInteger(owner.pid) && owner.pid > 0
-            ? !deps.processAlive(owner.pid)
-            : deps.now() - deps.modifiedAt(path) > 30000
+            ? !deps.processAlive(owner.pid) || expired || beforeBoot
+            : now - deps.modifiedAt(path) > 30000
       } catch {
         stale = deps.now() - deps.modifiedAt(path) > 30000
       }
-      // Never steal a live install's lock, even when npm takes several minutes.
+      // Bound leaked locks even when the owner's PID was reused after a crash or reboot.
       if (stale && deps.read(path) === text) {
         deps.remove(path)
         continue
@@ -192,7 +201,8 @@ export async function withServerLock<T>(deps: ServerDeps, operation: () => Promi
     if (deps.now() >= deadline)
       throw new ServerError(
         'start_failed',
-        'Another bot lifecycle operation is in progress. Please retry shortly.'
+        'Another bot lifecycle operation is in progress. Please retry shortly.',
+        true
       )
     await deps.sleep(100)
   }

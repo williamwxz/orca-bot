@@ -1472,3 +1472,123 @@ test('idle restart rechecks host state under the lifecycle lock and skips an upg
     await worker.deactivate()
   }
 })
+
+test('unchanged status and preference polls write no settings, storage, or host snapshots', async () => {
+  const shared = {
+    shareTools: false,
+    linkAgents: false,
+    setupAnswered: false,
+    installConsent: false,
+    stopped: false
+  }
+  const writes: string[] = []
+  const worker = await mountWorker(
+    {
+      default: (api) =>
+        register(
+          {
+            ...api,
+            settings: {
+              ...api.settings,
+              set: async (key, value) => {
+                writes.push(`settings:${key}`)
+                await api.settings.set(key, value)
+              }
+            },
+            storage: {
+              ...api.storage,
+              set: async (key, value) => {
+                writes.push(`storage:${key}`)
+                await api.storage.set(key, value)
+              }
+            }
+          },
+          {
+            ...setupDeps(),
+            hostPrefs: {
+              read: () => ({ ...shared }),
+              write: (patch) => {
+                writes.push('host')
+                return Object.assign(shared, patch)
+              }
+            }
+          }
+        )
+    },
+    { host: mockHost() }
+  )
+  try {
+    await worker.request('prefs.get', {})
+    assert.deepEqual(writes, ['storage:syncedHostPrefs'])
+    writes.length = 0
+    for (let i = 0; i < 3; i++) {
+      await worker.request('status', {})
+      await worker.request('prefs.get', {})
+    }
+    assert.deepEqual(writes, [])
+    shared.linkAgents = true
+    await worker.request('prefs.get', {})
+    assert.deepEqual(writes, ['settings:linkAgents', 'storage:syncedHostPrefs'])
+    writes.length = 0
+    await worker.request('status', {})
+    await worker.request('prefs.get', {})
+    assert.deepEqual(writes, [])
+  } finally {
+    await worker.deactivate()
+  }
+})
+
+test('lock contention during idle restart preserves running status and rechecks on the next poll', async () => {
+  let attempts = 0
+  let healthChecks = 0
+  let busyRoster = false
+  let updated = false
+  let now = 10000
+  const worker = await mountWorker(
+    {
+      default: (api) =>
+        register(api, {
+          ...setupDeps(),
+          now: () => now,
+          checkHealth: async () => {
+            healthChecks++
+            return true
+          },
+          ensureServer: async () => ({
+            port: 8799,
+            version: updated ? testedVersion : '0.1.158',
+            started: false,
+            startedByPlugin: true
+          }),
+          claudeSetupStatus: async () => ({ restart: !updated, updating: !updated, message: '' }),
+          rosterBusy: async () => busyRoster,
+          withLifecycle: async (operation) => {
+            if (++attempts === 1) throw new ServerError('start_failed', 'Lock is busy', true)
+            updated = true
+            return operation()
+          }
+        })
+    },
+    { host: mockHost({ storage: { openmausbotInstallConsent: true } }) }
+  )
+  try {
+    await worker.request('status', {})
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    await worker.request('status', {})
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    assert.equal(attempts, 1)
+    busyRoster = true
+    const checkedBefore = healthChecks
+    const restored = (await worker.request('status', {})) as any
+    assert.equal(restored.state, 'running')
+    assert.equal(healthChecks, checkedBefore + 1)
+    busyRoster = false
+    now += 2000
+    await worker.request('status', {})
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    assert.equal(attempts, 2)
+    assert.equal(((await worker.request('status', {})) as any).version, testedVersion)
+  } finally {
+    await worker.deactivate()
+  }
+})

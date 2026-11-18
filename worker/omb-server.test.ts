@@ -838,3 +838,35 @@ test('independent lifecycle callers serialize while nested operations reuse thei
   await waiter
   assert.deepEqual(order, ['owner', 'nested', 'waiter'])
 })
+
+test('live reused PIDs do not preserve locks older than fifteen minutes or a reboot', async () => {
+  for (const mode of ['age', 'reboot', 'missing-timestamp']) {
+    const { deps, files } = fake()
+    const path = '/fake/.orca-bot/server.lock'
+    deps.now = () => 2_000_000
+    deps.processAlive = () => true
+    const createdAt = mode === 'age' ? 2_000_000 - 15 * 60 * 1000 - 1 : 1_999_000
+    if (mode === 'reboot') deps.uptimeMs = () => 500
+    files.set(
+      path,
+      JSON.stringify({ pid: 99, ...(mode !== 'missing-timestamp' ? { createdAt } : {}) })
+    )
+    let entered = false
+    await withServerLock(deps, async () => {
+      entered = true
+    })
+    assert.equal(entered, true)
+    assert.equal(files.has(path), false)
+  }
+})
+
+test('a recent live lock reports typed contention rather than being stolen', async () => {
+  const { deps, files } = fake()
+  files.set('/fake/.orca-bot/server.lock', JSON.stringify({ pid: 99, createdAt: 0 }))
+  deps.processAlive = () => true
+  await assert.rejects(
+    withServerLock(deps, async () => {}),
+    (error: any) => error.state === 'start_failed' && error.busy === true
+  )
+  assert.ok(files.has('/fake/.orca-bot/server.lock'))
+})

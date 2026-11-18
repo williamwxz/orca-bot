@@ -163,8 +163,10 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
         if (typeof prior?.[key] === 'boolean' && current[key] !== prior[key]) {
           patch[key] = current[key]
         } else if (typeof shared?.[key] === 'boolean') {
-          current[key] = shared[key]!
-          await orca[bag].set(name, current[key])
+          if (shared[key] !== current[key]) {
+            current[key] = shared[key]!
+            await orca[bag].set(name, current[key])
+          }
         } else if (current[key]) {
           patch[key] = true
         }
@@ -173,7 +175,12 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
       // Keep the previous snapshot on failure so the native change is retried next time.
       try {
         if (Object.keys(patch).length) deps.hostPrefs?.write(patch)
-        await orca.storage.set('syncedHostPrefs', current)
+        if (
+          (Object.keys(prefKeys) as (keyof StoredPrefs)[]).some(
+            (key) => current[key] !== prior?.[key]
+          )
+        )
+          await orca.storage.set('syncedHostPrefs', current)
         seenPrefs = current
         pendingPrefs = {}
       } catch {
@@ -462,7 +469,12 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
                   repair(true)
                 })
               )
-              .catch(() => {
+              .catch((error) => {
+                if (error instanceof ServerError && error.busy) {
+                  status = checked
+                  lastHealthCheck = -Infinity
+                  return
+                }
                 status = {
                   state: 'start_failed',
                   message: 'Could not restart OpenMausBot. Press Retry to try again.',
