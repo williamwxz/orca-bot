@@ -234,8 +234,12 @@ test('host preferences sync two-way between a remote host local worker and a pai
     // A fresh relay reads defaults without persisting false over an uninitialized host.
     await relayWorker.request('prefs.get', {})
     assert.equal(hostPrefs.read(), undefined)
+    // Installation can create a partial file before native Orca has synchronized.
+    hostPrefs.write({ installConsent: true })
     // Seeded from Mac Mini's local Orca settings, visible to the paired client immediately.
-    await serverLocal.request('prefs.get', {})
+    await Promise.all([serverLocal.request('prefs.get', {}), serverLocal.request('setup.get', {})])
+    assert.equal(hostPrefs.read()?.shareTools, true)
+    assert.equal(hostPrefs.read()?.setupAnswered, true)
     assert.deepEqual(await relayWorker.request('prefs.get', {}), {
       shareTools: true,
       linkAgents: false,

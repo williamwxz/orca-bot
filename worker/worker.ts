@@ -129,83 +129,104 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
   let repairFailedUntil = -Infinity
   let seenPrefs: Required<StoredPrefs> | undefined
 
-  const syncPrefs = async (): Promise<Required<StoredPrefs>> => {
-    let shareTools = (await orca.settings.get('shareClaudeSetup')) === true
-    let linkAgents = (await orca.settings.get('linkAgents')) === true
-    let setupAnswered = (await orca.storage.get('setupAnswered')) === true
-    let installConsent = (await orca.storage.get('openmausbotInstallConsent')) === true
-    const shared = deps.hostPrefs?.read()
-    if (deps.hostPrefs) {
-      if (!shared) {
-        if (setupAnswered || installConsent || shareTools || linkAgents) {
-          deps.hostPrefs.write({ shareTools, linkAgents, setupAnswered, installConsent })
-        }
-      } else {
-        const patch: Partial<StoredPrefs> = {}
-        if (seenPrefs && shareTools !== seenPrefs.shareTools) patch.shareTools = shareTools
-        else if (typeof shared.shareTools === 'boolean' && shared.shareTools !== shareTools) {
-          shareTools = shared.shareTools
-          await orca.settings.set('shareClaudeSetup', shareTools)
-        }
-        if (seenPrefs && linkAgents !== seenPrefs.linkAgents) patch.linkAgents = linkAgents
-        else if (typeof shared.linkAgents === 'boolean' && shared.linkAgents !== linkAgents) {
-          linkAgents = shared.linkAgents
-          await orca.settings.set('linkAgents', linkAgents)
-        }
-        if (seenPrefs && setupAnswered !== seenPrefs.setupAnswered)
-          patch.setupAnswered = setupAnswered
-        else if (
-          typeof shared.setupAnswered === 'boolean' &&
-          shared.setupAnswered !== setupAnswered
-        ) {
-          setupAnswered = shared.setupAnswered
-          await orca.storage.set('setupAnswered', setupAnswered)
-        }
-        if (seenPrefs && installConsent !== seenPrefs.installConsent)
-          patch.installConsent = installConsent
-        else if (
-          typeof shared.installConsent === 'boolean' &&
-          shared.installConsent !== installConsent
-        ) {
-          installConsent = shared.installConsent
-          await orca.storage.set('openmausbotInstallConsent', installConsent)
-        }
-        if (Object.keys(patch).length) deps.hostPrefs.write(patch)
-      }
-    }
-    seenPrefs = { shareTools, linkAgents, setupAnswered, installConsent }
-    return seenPrefs
+  let prefsQueue: Promise<unknown> = Promise.resolve()
+  const withPrefs = <T>(operation: () => Promise<T>): Promise<T> => {
+    const next = prefsQueue.then(operation)
+    prefsQueue = next.catch(() => {})
+    return next
   }
 
-  const writePrefs = async (patch: Partial<StoredPrefs>): Promise<void> => {
-    // Persist first: a failed disk write must not look like a successful permission change.
-    deps.hostPrefs?.write(patch)
-    if (patch.shareTools !== undefined)
-      await orca.settings.set('shareClaudeSetup', patch.shareTools)
-    if (patch.linkAgents !== undefined) await orca.settings.set('linkAgents', patch.linkAgents)
-    if (patch.setupAnswered !== undefined)
-      await orca.storage.set('setupAnswered', patch.setupAnswered)
-    if (patch.installConsent !== undefined)
-      await orca.storage.set('openmausbotInstallConsent', patch.installConsent)
-    seenPrefs = {
-      shareTools:
-        patch.shareTools ??
-        seenPrefs?.shareTools ??
-        (await orca.settings.get('shareClaudeSetup')) === true,
-      linkAgents:
-        patch.linkAgents ??
-        seenPrefs?.linkAgents ??
-        (await orca.settings.get('linkAgents')) === true,
-      setupAnswered:
-        patch.setupAnswered ??
-        seenPrefs?.setupAnswered ??
-        (await orca.storage.get('setupAnswered')) === true,
-      installConsent:
-        patch.installConsent ??
-        seenPrefs?.installConsent ??
-        (await orca.storage.get('openmausbotInstallConsent')) === true
-    }
-  }
+  const syncPrefs = (): Promise<Required<StoredPrefs>> =>
+    withPrefs(async () => {
+      let shareTools = (await orca.settings.get('shareClaudeSetup')) === true
+      let linkAgents = (await orca.settings.get('linkAgents')) === true
+      let setupAnswered = (await orca.storage.get('setupAnswered')) === true
+      let installConsent = (await orca.storage.get('openmausbotInstallConsent')) === true
+      const shared = deps.hostPrefs?.read()
+      if (deps.hostPrefs) {
+        if (!shared) {
+          if (setupAnswered || installConsent || shareTools || linkAgents) {
+            deps.hostPrefs.write({ shareTools, linkAgents, setupAnswered, installConsent })
+          }
+        } else {
+          const patch: Partial<StoredPrefs> = {}
+          // A consent-only file may predate the local worker's first sync. Migrate retained
+          // true choices for missing keys, but never seed an absent choice from relay defaults.
+          for (const [key, value] of Object.entries({
+            shareTools,
+            linkAgents,
+            setupAnswered,
+            installConsent
+          })) {
+            if (shared[key as keyof StoredPrefs] === undefined && value) {
+              patch[key as keyof StoredPrefs] = true
+            }
+          }
+          if (seenPrefs && shareTools !== seenPrefs.shareTools) patch.shareTools = shareTools
+          else if (typeof shared.shareTools === 'boolean' && shared.shareTools !== shareTools) {
+            shareTools = shared.shareTools
+            await orca.settings.set('shareClaudeSetup', shareTools)
+          }
+          if (seenPrefs && linkAgents !== seenPrefs.linkAgents) patch.linkAgents = linkAgents
+          else if (typeof shared.linkAgents === 'boolean' && shared.linkAgents !== linkAgents) {
+            linkAgents = shared.linkAgents
+            await orca.settings.set('linkAgents', linkAgents)
+          }
+          if (seenPrefs && setupAnswered !== seenPrefs.setupAnswered)
+            patch.setupAnswered = setupAnswered
+          else if (
+            typeof shared.setupAnswered === 'boolean' &&
+            shared.setupAnswered !== setupAnswered
+          ) {
+            setupAnswered = shared.setupAnswered
+            await orca.storage.set('setupAnswered', setupAnswered)
+          }
+          if (seenPrefs && installConsent !== seenPrefs.installConsent)
+            patch.installConsent = installConsent
+          else if (
+            typeof shared.installConsent === 'boolean' &&
+            shared.installConsent !== installConsent
+          ) {
+            installConsent = shared.installConsent
+            await orca.storage.set('openmausbotInstallConsent', installConsent)
+          }
+          if (Object.keys(patch).length) deps.hostPrefs.write(patch)
+        }
+      }
+      seenPrefs = { shareTools, linkAgents, setupAnswered, installConsent }
+      return seenPrefs
+    })
+
+  const writePrefs = (patch: Partial<StoredPrefs>): Promise<void> =>
+    withPrefs(async () => {
+      // Persist first: a failed disk write must not look like a successful permission change.
+      deps.hostPrefs?.write(patch)
+      if (patch.shareTools !== undefined)
+        await orca.settings.set('shareClaudeSetup', patch.shareTools)
+      if (patch.linkAgents !== undefined) await orca.settings.set('linkAgents', patch.linkAgents)
+      if (patch.setupAnswered !== undefined)
+        await orca.storage.set('setupAnswered', patch.setupAnswered)
+      if (patch.installConsent !== undefined)
+        await orca.storage.set('openmausbotInstallConsent', patch.installConsent)
+      seenPrefs = {
+        shareTools:
+          patch.shareTools ??
+          seenPrefs?.shareTools ??
+          (await orca.settings.get('shareClaudeSetup')) === true,
+        linkAgents:
+          patch.linkAgents ??
+          seenPrefs?.linkAgents ??
+          (await orca.settings.get('linkAgents')) === true,
+        setupAnswered:
+          patch.setupAnswered ??
+          seenPrefs?.setupAnswered ??
+          (await orca.storage.get('setupAnswered')) === true,
+        installConsent:
+          patch.installConsent ??
+          seenPrefs?.installConsent ??
+          (await orca.storage.get('openmausbotInstallConsent')) === true
+      }
+    })
 
   const repair = (immediate = false): void => {
     if (!deps.repairChat || !startedByPlugin || status?.state !== 'running' || opening) return
