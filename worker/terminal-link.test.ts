@@ -13,7 +13,7 @@ const bundle: Bundle = { hash: '0123456789abcdef', files: { 'worker/relay-host.t
 /** A paired server's Orca as the CLI sees it: terminals keep 2000 lines and lose some spaces. */
 function fakeServer(
   handlers: Record<string, (input: any) => unknown>,
-  options: { worktrees?: unknown[]; hosts?: string[] } = {}
+  options: { worktrees?: unknown[]; hosts?: string[]; bundles?: Bundle[]; listFails?: () => boolean } = {}
 ) {
   const terminals = new Map<
     string,
@@ -34,6 +34,13 @@ function fakeServer(
     const key = `${args[0]} ${args[1]}`
     if (key === 'worktree list')
       return { worktrees: options.worktrees ?? [{ id: 'repo::/Users/me', isMainWorktree: true }] }
+    if (key === 'terminal list') {
+      if (options.listFails?.()) throw new Error('list failed')
+      return {
+        terminals: [...terminals].filter(([, t]) => t.status === 'running').map(([handle]) => ({ handle })),
+        truncated: false
+      }
+    }
     if (key === 'terminal create') {
       const handle = `term_${++count}`
       terminals.set(handle, {
@@ -59,7 +66,7 @@ function fakeServer(
       if (!terminal.feed) {
         // The loader's job: take the bundle, then hand the terminal to relay-host.ts.
         const received = JSON.parse(gunzipSync(Buffer.from(text.trim(), 'base64')).toString())
-        assert.deepEqual(received, bundle)
+        assert.ok((options.bundles ?? [bundle]).some((b) => JSON.stringify(b) === JSON.stringify(received)))
         terminal.feed = createRelay(
           { hash: received.hash, write, load: () => undefined, save: () => {} },
           (api) => {
@@ -424,10 +431,14 @@ test('returning to a host before its desktop step ends takes back the same termi
 
 test('after a restart, one unanswered check of the saved terminal asks for a retry, and the retry takes it back', async () => {
   let running = true
-  const server = fakeServer({
-    status: () => ({ state: 'running', message: '' }),
-    'desktop.step': () => ({ step: { id: 1, action: 'prepare', running } })
-  })
+  const newer: Bundle = { ...bundle, hash: 'fedcba9876543210' }
+  const server = fakeServer(
+    {
+      status: () => ({ state: 'running', message: '' }),
+      'desktop.step': () => ({ step: { id: 1, action: 'prepare', running } })
+    },
+    { bundles: [bundle, newer] }
+  )
   const store: { saved?: Saved } = {}
   const first = createTerminalLink(linkDeps(server, store))
   await first.request(host, 'status', {})
@@ -445,14 +456,31 @@ test('after a restart, one unanswered check of the saved terminal asks for a ret
   assert.deepEqual(await restarted.request(host, 'status', {}), { state: 'running', message: '' })
   assert.equal(server.terminals.size, 1, 'no second worker')
   // A saved terminal running another plugin version is not replaced while it runs a step.
-  const old = linkDeps(server, store)
-  old.bundle = async () => ({ ...bundle, hash: 'fedcba9876543210' })
-  await assert.rejects(createTerminalLink(old).request(host, 'status', {}), /still finishing a private desktop step/)
+  const upgraded = linkDeps(server, store)
+  upgraded.bundle = async () => newer
+  await assert.rejects(createTerminalLink(upgraded).request(host, 'status', {}), /still finishing a private desktop step/)
   assert.equal(server.terminals.size, 1)
   running = false
-  // Once its step is done, a new version replaces it.
-  await assert.rejects(createTerminalLink(old).request(host, 'status', {}))
+  // Once its step is done, the new version replaces it and serves the host.
+  assert.deepEqual(await createTerminalLink(upgraded).request(host, 'status', {}), { state: 'running', message: '' })
   assert.equal(server.terminals.get('term_1')!.status, 'exited')
+  assert.equal(server.terminals.get('term_2')!.status, 'running')
+  assert.equal(store.saved?.handle, 'term_2')
+})
+
+test('a saved terminal that no longer exists is replaced; one that cannot be checked asks for a retry', async () => {
+  let listFails = true
+  const server = fakeServer({ status: () => ({ state: 'running', message: '' }) }, { listFails: () => listFails })
+  // The plugin was stopped; meanwhile the saved terminal was removed from the server.
+  const store: { saved?: Saved } = { saved: { hostId: host.id, handle: 'term_gone' } }
+  // The list of live terminals cannot be read either: nothing is known for sure.
+  await assert.rejects(createTerminalLink(linkDeps(server, store)).request(host, 'status', {}), /Try again in a moment/)
+  assert.equal(store.saved?.handle, 'term_gone')
+  assert.equal(server.terminals.size, 0)
+  // The list confirms it is gone: a fresh worker starts and is saved.
+  listFails = false
+  assert.deepEqual(await createTerminalLink(linkDeps(server, store)).request(host, 'status', {}), { state: 'running', message: '' })
+  assert.equal(store.saved?.handle, 'term_1')
 })
 
 test('paired launcher detaches with fake process dependencies and validates the returned pid', async () => {

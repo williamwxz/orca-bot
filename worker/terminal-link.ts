@@ -148,7 +148,16 @@ export function createTerminalLink(deps: LinkDeps) {
     try {
       terminal = (await deps.call(['terminal', 'read', '--limit', '1', ...at(s)]))?.terminal
     } catch {
-      throw retry
+      // Gone for sure only when a complete list of the host's live terminals leaves it out.
+      const listed = await deps
+        .call(['terminal', 'list', '--environment', host.id, '--json'])
+        .catch(() => undefined)
+      const handles = Array.isArray(listed?.terminals)
+        ? listed.terminals.map((t: { handle?: unknown }) => t?.handle)
+        : undefined
+      if (!handles || listed.truncated === true || handles.includes(s.handle)) throw retry
+      await deps.save(undefined).catch(() => {})
+      return undefined
     }
     if (terminal?.status !== 'running') {
       await close(s)
