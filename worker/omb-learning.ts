@@ -16,10 +16,11 @@ const text = (v: unknown, max: number): string => (typeof v === 'string' ? v.sli
  */
 export function skillFrom(s: Record<string, any>, engine = ''): SkillFrom {
   const source = typeof s.source === 'string' ? s.source : ''
+  // OpenMausBot's origin is authoritative: a skill moved to the library keeps its learn: or package: source.
+  if (s.origin === 'library') return 'library'
+  if (s.origin === 'project') return 'project'
   if (source.startsWith('learn:')) return 'learned'
   if (source.startsWith('package:')) return 'package'
-  if (s.origin === 'project') return 'project'
-  if (s.origin === 'library') return 'library'
   if (s.origin === 'imported') return 'computer'
   if (s.origin === 'native') {
     const path = source.replace(/\\/g, '/')

@@ -128,9 +128,9 @@ The gear button in the panel header opens Settings, in four parts:
     (`memories/`) and own skills (`skills/`) as plain files to a new folder in
     Downloads on the bot host, with `team.json` and a README. Each bot folder is
     laid out like a Hermes Agent profile, and the skills use the `SKILL.md`
-    format Claude Code and Codex read. Skills are copied from the version
-    OpenMausBot reviewed. Chats, files, credentials, connector settings and
-    library skills are not included, and anything that could not be read is
+    format Claude Code and Codex read. Each skill is the `SKILL.md` OpenMausBot
+    serves; any other files a skill has are named as not exported. Chats,
+    files, credentials, connector settings and library skills are not included, and anything that could not be read is
     listed when the export ends and in `team.json`. The export runs in the
     background on the bot host. For a full backup use OpenMausBot's own **Export
     full backup**.

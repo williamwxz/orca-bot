@@ -171,10 +171,13 @@ export function createTerminalLink(deps: LinkDeps) {
       throw retry
     }
     if (hash === bundle.hash) return s
-    // Another version of the worker: replace it only once it says no desktop step is running.
+    // Another version of the worker: replace it only once it says no desktop step or export is running.
     try {
-      if ((await exchange(s, 'desktop.step', {}, 10000))?.step?.running === true)
+      const reply = await exchange(s, 'desktop.step', {}, 10000)
+      if (reply?.step?.running === true)
         throw new Error(`${host.name} is still finishing a private desktop step. Try again when it is done.`)
+      if (reply?.exporting === true)
+        throw new Error(`${host.name} is still finishing an export. Try again when it is done.`)
     } catch (error) {
       if (!(error instanceof HostAnswer)) throw error instanceof Error && error.message.includes('still finishing') ? error : retry
     }
@@ -235,7 +238,8 @@ export function createTerminalLink(deps: LinkDeps) {
       r.probe = probe.catch(() => {})
       try {
         const reply = await probe
-        if (reply?.step?.running !== true) return 'idle'
+        // An export runs in the same worker, so it holds the terminal open just as a step does.
+        if (reply?.step?.running !== true && reply?.exporting !== true) return 'idle'
         unanswered = 0
       } catch (error) {
         // The host's worker refused (an older version with no jobs): nothing to wait for.

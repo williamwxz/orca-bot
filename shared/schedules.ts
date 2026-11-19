@@ -4,7 +4,7 @@
  */
 export type ScheduleWhen =
   | { kind: 'daily'; time: string; weekdays: number[] }
-  | { kind: 'interval'; everyMinutes: number; limited?: true }
+  | { kind: 'interval'; everyMinutes: number; limited?: true; until?: number }
   | { kind: 'once'; at: number }
   | { kind: 'cron'; expression: string }
   | { kind: 'other' }
@@ -34,7 +34,8 @@ export function whenText(when: ScheduleWhen): string {
       when.everyMinutes % 60 === 0
         ? `Every ${when.everyMinutes === 60 ? 'hour' : `${when.everyMinutes / 60} hours`}`
         : `Every ${when.everyMinutes} minutes`
-    return when.limited ? `${every}, on some days or hours only` : every
+    const until = when.until ? `, until ${new Date(when.until).toLocaleDateString(undefined, { dateStyle: 'medium' })}` : ''
+    return `${every}${when.limited ? ', on some days or hours only' : ''}${until}`
   }
   if (when.kind === 'once') return `Once, ${new Date(when.at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}`
   if (when.kind === 'cron') return `Custom (${when.expression})`

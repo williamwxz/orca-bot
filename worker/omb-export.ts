@@ -1,5 +1,4 @@
-import { createHash } from 'node:crypto'
-import { cp, lstat, mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readdir, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import path from 'node:path'
 import { defaultHttpDeps } from './omb-http.ts'
@@ -20,10 +19,6 @@ export type ExportFs = {
   mkdir(dir: string): Promise<void>
   write(file: string, text: string): Promise<void>
   exists(target: string): Promise<boolean>
-  /** Copies a skill folder without following links. False when there is no such plain folder. */
-  copyFolder(from: string, to: string): Promise<boolean>
-  /** A plain file's text, or undefined when there is none (links are not followed). */
-  readText(file: string): Promise<string | undefined>
   downloads(): Promise<string>
   now(): Date
 }
@@ -34,21 +29,6 @@ export function defaultExportFs(): ExportFs {
     mkdir: (dir) => mkdir(dir, { recursive: true, mode: 0o700 }).then(() => undefined),
     write: (file, text) => writeFile(file, text, { mode: 0o600, flag: 'wx' }),
     exists,
-    copyFolder: async (from, to) => {
-      const info = await lstat(from).catch(() => undefined)
-      if (!info?.isDirectory()) return false
-      await cp(from, to, {
-        recursive: true,
-        errorOnExist: true,
-        force: false,
-        filter: async (source: string) => !(await lstat(source)).isSymbolicLink()
-      })
-      return true
-    },
-    readText: async (file) => {
-      const info = await lstat(file).catch(() => undefined)
-      return info?.isFile() ? readFile(file, 'utf8').catch(() => undefined) : undefined
-    },
     downloads: async () => {
       const downloads = path.join(homedir(), 'Downloads')
       return (await readdir(downloads).then(() => true, () => false)) ? downloads : homedir()
@@ -84,13 +64,12 @@ export function folderLabel(folder: string, home = homedir()): string {
   return relative && !relative.startsWith('..') && !path.isAbsolute(relative) ? `~/${relative.split(path.sep).join('/')}` : path.basename(folder)
 }
 
-const sha256 = (text: string) => createHash('sha256').update(text).digest('hex')
-
 /**
  * Writes every bot's persona, memory and own skills as plain files: a folder per bot laid out as
  * a Hermes Agent profile (SOUL.md, memories/, skills/), with the skills in the SKILL.md format
  * Claude Code and Codex read too, plus team.json and a README. Chats, credentials, connector
- * settings, library skills and skills from Claude Code, Codex or a project folder are not copied.
+ * settings, files a skill has besides SKILL.md, library skills and skills from Claude Code, Codex
+ * or a project folder are not copied.
  * Anything that could not be read is listed in `skipped`, never left out silently.
  */
 export async function exportTeam(
@@ -152,19 +131,13 @@ export async function exportTeam(
       }
     }
 
-    // The bot's own skills are copied whole from the folder OpenMausBot reviewed (a reviewed change
-    // lives under skills/.revisions); skills its engine or the library provides stay where they are.
+    // A skill is exported as the SKILL.md OpenMausBot serves, the reviewed text, never a folder read
+    // from disk; any other files it has are named as not exported. Skills its engine or the library
+    // provides stay where they are.
     const listing = await read(`${api}/skills`)
     const own: string[] = []
     const engine: string[] = []
     const library: string[] = []
-    const workspace = str(overview?.workspacePath, 4000)
-    const dataDir = path.isAbsolute(workspace) && path.basename(path.dirname(workspace)) === 'workspaces' ? path.dirname(path.dirname(workspace)) : ''
-    const manifestText = dataDir ? await fs.readText(path.join(dataDir, 'skill-state', listed.id, 'skills.json')) : undefined
-    let manifest: Record<string, any> = {}
-    try {
-      manifest = object(manifestText ? JSON.parse(manifestText) : undefined)
-    } catch {}
     if (!listing) skipped.push(`${name}: skills`)
     for (const entry of Array.isArray(listing?.skills) ? listing.skills : []) {
       const s = object(entry)
@@ -178,32 +151,19 @@ export async function exportTeam(
         engine.push(s.name)
         continue
       }
+      const file = await read(`${api}/skills/${s.name}`)
+      if (typeof file?.text !== 'string' || !file.text.trim()) {
+        skipped.push(`${name}: skill ${s.name}`)
+        continue
+      }
       const target = path.join(dir, 'skills', s.name)
-      await fs.mkdir(path.join(dir, 'skills'))
-      let copied = false
-      const revision = str(object(manifest[s.name]).storageRevision, 64)
-      const source = /^[a-f0-9]{64}$/.test(revision)
-        ? path.join(workspace, 'skills', '.revisions', revision)
-        : path.join(workspace, 'skills', s.name)
-      // Only the folder whose SKILL.md is the one OpenMausBot lists is copied.
-      if (dataDir && typeof s.sha256 === 'string') {
-        const text = await fs.readText(path.join(source, 'SKILL.md'))
-        if (text !== undefined && sha256(text) === s.sha256) copied = await fs.copyFolder(source, target).catch(() => false)
-      }
-      if (!copied) {
-        const file = await read(`${api}/skills/${s.name}`)
-        if (typeof file?.text === 'string' && file.text.trim()) {
-          await fs.mkdir(target)
-          await fs.write(path.join(target, 'SKILL.md'), file.text)
-          copied = true
-          const others = Array.isArray(s.files) ? s.files.filter((f: unknown) => f !== 'SKILL.md').length : 0
-          if (others) skipped.push(`${name}: ${others} file${others === 1 ? '' : 's'} of skill ${s.name} besides SKILL.md`)
-        }
-      }
-      if (copied) {
-        own.push(s.name)
-        skillCount++
-      } else skipped.push(`${name}: skill ${s.name}`)
+      await fs.mkdir(target)
+      await fs.write(path.join(target, 'SKILL.md'), file.text)
+      own.push(s.name)
+      skillCount++
+      const others = Array.isArray(s.files) ? s.files.filter((f: unknown) => f !== 'SKILL.md').length : 0
+      if (others) skipped.push(`${name}: ${others} file${others === 1 ? '' : 's'} of skill ${s.name} besides SKILL.md`)
+      else if (typeof s.referencesSha256 === 'string' && s.referencesSha256) skipped.push(`${name}: the references of skill ${s.name}`)
     }
     const model = object(record.modelSelection)
     team.push({

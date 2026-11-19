@@ -698,7 +698,12 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
   })
   // Only the job, without inspecting the desktop: the paired-server link asks this before it
   // closes, and it must answer even while the server is busy with the step itself.
-  orca.panels.handle('desktop.step', () => ({ ...(desktopJob ? { step: { ...desktopJob } } : {}) }))
+  // Also says whether an export is running: the paired-server link keeps this worker's terminal open
+  // for either, since closing it would stop the job halfway.
+  orca.panels.handle('desktop.step', () => ({
+    ...(desktopJob ? { step: { ...desktopJob } } : {}),
+    ...(exportJob?.running ? { exporting: true as const } : {})
+  }))
   orca.panels.handle('desktop.act', (input: { action: DesktopAction; botId?: string }) => {
     const port = runningPort()
     if (!deps.desktopAct) throw new Error('Private desktops are unavailable.')

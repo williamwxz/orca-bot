@@ -19,8 +19,13 @@ export function whenView(raw: unknown): ScheduleWhen {
     return { kind: 'daily', time: s.time, weekdays: weekdays?.length ? weekdays : [0, 1, 2, 3, 4, 5, 6] }
   if (s.type === 'interval' && Number.isInteger(s.everyMinutes)) {
     // Weekday, time-window and end-date limits set in OpenMausBot are not shown here, only flagged.
-    const limited = (Array.isArray(s.weekdays) && s.weekdays.length < 7) || s.window != null || s.endsAt != null
-    return limited ? { kind: 'interval', everyMinutes: s.everyMinutes, limited: true } : { kind: 'interval', everyMinutes: s.everyMinutes }
+    const limited = (Array.isArray(s.weekdays) && s.weekdays.length < 7) || s.window != null
+    return {
+      kind: 'interval',
+      everyMinutes: s.everyMinutes,
+      ...(limited ? { limited: true as const } : {}),
+      ...(Number.isFinite(s.endsAt) ? { until: s.endsAt } : {})
+    }
   }
   if (s.type === 'once' && Number.isFinite(s.at)) return { kind: 'once', at: s.at }
   if (s.type === 'cron' && typeof s.expression === 'string') return { kind: 'cron', expression: s.expression.slice(0, 100) }

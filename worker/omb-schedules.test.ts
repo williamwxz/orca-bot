@@ -45,8 +45,12 @@ test('a bot sees only its own routines, with plain timing and no attachments', (
   assert.equal(whenText({ kind: 'interval', everyMinutes: 15 }), 'Every 15 minutes')
   assert.deepEqual(whenView({ type: 'limit_reset' }), { kind: 'other' })
   // Limits set in OpenMausBot are flagged, never dropped silently.
-  for (const extra of [{ weekdays: [1, 2] }, { window: { start: '09:00', end: '17:00' } }, { endsAt: 5 }])
+  for (const extra of [{ weekdays: [1, 2] }, { window: { start: '09:00', end: '17:00' } }])
     assert.equal(whenText(whenView({ type: 'interval', everyMinutes: 30, ...extra })), 'Every 30 minutes, on some days or hours only')
+  // An end date alone keeps it running every time until then.
+  const ends = whenView({ type: 'interval', everyMinutes: 30, endsAt: Date.UTC(2027, 0, 5, 12) })
+  assert.deepEqual(ends, { kind: 'interval', everyMinutes: 30, until: Date.UTC(2027, 0, 5, 12) })
+  assert.match(whenText(ends), /^Every 30 minutes, until /)
   assert.equal(whenText(whenView({ type: 'interval', everyMinutes: 30, weekdays: [0, 1, 2, 3, 4, 5, 6] })), 'Every 30 minutes')
 })
 
