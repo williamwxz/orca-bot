@@ -62,14 +62,18 @@ export function desktopStep(status: DesktopStatus, perBot: boolean): {
     case 'repair':
       return {
         title: 'A private desktop already exists, but it cannot be used',
-        line: `${REASONS[status.reason ?? 'unsafe']} Replace it with a fresh one: its shared folder and browser sign-ins are kept; anything else inside it is removed.`,
+        line: `${REASONS[status.reason ?? 'unsafe']} ${
+          status.reason === 'no-folder'
+            ? 'Replacing it makes a fresh desktop with a new shared folder. Anything stored in the old desktop may not be kept.'
+            : 'Replacing it keeps its shared folder and browser sign-ins; anything else inside it is removed.'
+        }`,
         action: 'recreate',
         label: 'Replace with a fresh desktop'
       }
     case 'failed':
       return {
         title: "The desktop didn't start",
-        line: 'Its container is running, but the desktop inside it reported an error. Replacing it with a fresh one usually fixes this.',
+        line: 'Its container is running, but the desktop inside it reported an error. Replacing it with a fresh one usually fixes this. Its shared folder and browser sign-ins are kept; apps and files stored anywhere else inside it are removed.',
         action: 'recreate',
         label: 'Replace with a fresh desktop'
       }
@@ -95,7 +99,7 @@ export function desktopStep(status: DesktopStatus, perBot: boolean): {
 /** Why an existing desktop cannot be used, in plain words. Most often it was made by an earlier
  * OpenMausBot version or install, not by you. */
 const REASONS: Record<DesktopReason, string> = {
-  'no-folder': 'The folder it keeps its files in is gone, often because an earlier OpenMausBot install or test made it.',
+  'no-folder': 'OpenMausBot could not confirm the writable folder it keeps its files in. This often happens when an earlier OpenMausBot install or test made the desktop.',
   'old-image': 'It was made by an older OpenMausBot and uses an outdated desktop.',
   'not-managed': 'It was not made by OpenMausBot, so OpenMausBot will not use it.',
   unsafe: 'It is missing safety limits that OpenMausBot now requires.'

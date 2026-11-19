@@ -37,12 +37,17 @@ test('Settings → Private desktops sets up the shared desktop, switches isolati
     const calls: [string, any][] = []
     const notes: string[] = []
     let status: any = { mode: 'shared', maxInstances: 2, idleMinutes: 480, state: 'not-prepared', runtime: 'Docker' }
+    let failedOnce = false
     const frame = { plugin: { request: async (name: string, input: any) => {
       calls.push([name, input])
-      if (name === 'desktop.status') return status
+      if (name === 'desktop.status') {
+        // One poll fails while the step runs: the controls stay and the next poll carries on.
+        if (status.step?.running && !failedOnce) { failedOnce = true; throw new Error('timed out') }
+        return status
+      }
       if (name === 'desktop.act') {
         status = { ...status, step: { id: 1, action: input.action, running: true } }
-        setImmediate(() => { status = { ...status, state: 'not-created', step: { id: 1, action: input.action, running: false } } })
+        setTimeout(() => { status = { ...status, state: 'not-created', step: { id: 1, action: input.action, running: false } } }, 0)
         return { step: status.step }
       }
       if (name === 'desktop.settings') { status = { ...status, ...input }; return status }

@@ -118,23 +118,30 @@ export function createCapabilityPicker(
     let problem = ''
     let focusKey: string | undefined
     let status: ComputerStatus | undefined
-    let setupBusy: DesktopAction | 'check' | 'browser' | undefined
+    let setupBusy: DesktopAction | 'check' | undefined
+    let browserBusy = false
     let browserPoll: ReturnType<typeof setTimeout> | undefined
     let stepPoll: ReturnType<typeof setTimeout> | undefined
+    /** True when a fresh status arrived; false keeps the last one (a poll can time out). */
     const refreshStatus = async () => {
       const next = await frame.plugin.request('computer.status', { botId: bot.id }).catch(() => undefined)
       if (current() && next) status = next
+      return !!next
     }
     // A step runs in the worker; the panel follows it through the status until it ends.
-    const followStep = (id: number) => {
+    // A failed or stale poll (no report of this step yet) is retried, never read as "done".
+    const followStep = (id: number, misses = 0) => {
       clearTimeout(stepPoll)
       stepPoll = setTimeout(async () => {
-        await refreshStatus()
+        const fresh = await refreshStatus()
         if (!current()) return
         const step = status?.desktop?.step
+        const unknown = !fresh || step?.id !== id
         if (step?.id === id && step.running) return followStep(id)
+        if (unknown && misses < 120) return followStep(id, misses + 1)
         setupBusy = undefined
         if (step?.id === id) hooks.notify?.(step.error ?? 'Private desktop updated.')
+        else hooks.notify?.('Could not confirm how the step ended. Check the private desktop again.')
         draw()
       }, 2500)
     }
@@ -168,15 +175,15 @@ export function createCapabilityPicker(
         if (!current()) return
         if (status?.browserInstalling && tries > 0) pollBrowser(tries - 1)
         else {
-          setupBusy = undefined
+          browserBusy = false
           if (status?.browser === 'ready') hooks.notify?.('The browser is ready.')
         }
         draw()
       }, 3000)
     }
     const installBrowser = async () => {
-      if (setupBusy || !current()) return
-      setupBusy = 'browser'
+      if (browserBusy || !current()) return
+      browserBusy = true
       focusKey = 'browser:install'
       draw()
       try {
@@ -185,7 +192,7 @@ export function createCapabilityPicker(
       } catch (error) {
         if (!current()) return
         hooks.notify?.(error instanceof Error ? error.message : 'Could not install the browser.')
-        setupBusy = undefined
+        browserBusy = false
         draw()
       }
     }
@@ -386,7 +393,7 @@ export function createCapabilityPicker(
           card.append(node('div', 'Private desktop', 'computer-card-title'))
           const block = desktopBlock(status.desktop, {
             perBot: status.desktop.mode === 'per-bot',
-            busy: setupBusy === 'browser' ? undefined : setupBusy,
+            busy: setupBusy,
             run: (action) => void runDesktop(action)
           })
           for (const control of block.querySelectorAll?.('button') ?? []) controls.push(control as HTMLButtonElement)
@@ -394,7 +401,7 @@ export function createCapabilityPicker(
           children.push(card)
         } else if (selected === 'browser' && (status?.browser === 'setup' || status?.browserInstalling)) {
           const card = node('div', '', 'computer-card')
-          const installing = setupBusy === 'browser' || !!status?.browserInstalling
+          const installing = browserBusy || !!status?.browserInstalling
           card.append(
             node('div', 'Built-in browser', 'computer-card-title'),
             node(
@@ -536,12 +543,14 @@ export function createCapabilityPicker(
         status = await frame.plugin.request('computer.status', { botId: bot.id }).catch(() => undefined)
         if (!current() || !status) return
         // Reopened while a step or the browser install is still going: keep following it.
+        // Both can be under way at once on one host: follow each on its own.
         const step = status.desktop?.step
         if (step?.running) {
           setupBusy = step.action
           followStep(step.id)
-        } else if (status.browserInstalling) {
-          setupBusy = 'browser'
+        }
+        if (status.browserInstalling) {
+          browserBusy = true
           pollBrowser(60)
         }
         draw()

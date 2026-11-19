@@ -265,11 +265,37 @@ test('the server terminal closes after the link sits idle, and the next request 
   // Each request replaces the pending idle close, so only one is ever waiting.
   assert.equal(timers.length, 1)
   timers[0]()
-  await new Promise((resolve) => setImmediate(resolve))
+  for (let i = 0; i < 20 && server.terminals.get('term_1')!.status !== 'exited'; i++)
+    await new Promise((resolve) => setImmediate(resolve))
   assert.equal(server.terminals.get('term_1')!.status, 'exited')
   assert.equal(store.saved, undefined)
   await link.request(host, 'status', {})
   assert.equal(server.terminals.size, 2)
+})
+
+test('the link stays open until a running private desktop step ends, on idle, host switch or disconnect', async () => {
+  // A replace is "remove" then "run" inside the host's worker: closing between them would
+  // leave the desktop removed. The step finishes on the third status check.
+  let checks = 0
+  const server = fakeServer({
+    status: () => ({ state: 'running', message: '' }),
+    'desktop.status': () => ({ mode: 'shared', state: 'stopped', step: { id: 1, action: 'recreate', running: ++checks < 3 } })
+  })
+  const link = createTerminalLink(linkDeps(server))
+  await link.request(host, 'status', {})
+  const closing = link.disconnect()
+  await closing
+  assert.equal(checks, 3)
+  assert.equal(server.terminals.get('term_1')!.status, 'exited')
+  // A later request waits for the close, then opens a fresh terminal.
+  await link.request(host, 'status', {})
+  assert.equal(server.terminals.get('term_2')!.status, 'running')
+  // A host that cannot answer about desktops is closed without waiting.
+  const plain = fakeServer({ status: () => ({ state: 'running', message: '' }) })
+  const other = createTerminalLink(linkDeps(plain))
+  await other.request(host, 'status', {})
+  await other.disconnect()
+  assert.equal(plain.terminals.get('term_1')!.status, 'exited')
 })
 
 test('paired launcher detaches with fake process dependencies and validates the returned pid', async () => {

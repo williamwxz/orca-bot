@@ -5,6 +5,8 @@ import { NEXT, PING, READY, WINDOW, pack, parseFrame, unpack } from './relay-fra
 export const TERMINAL_TITLE = 'Bot Team for Orca'
 /** The panel polls while it is open, so this long without a request means nobody is using it. */
 export const IDLE_MS = 10 * 60 * 1000
+/** The longest a closing link waits for a desktop step: preparing one can take this long. */
+export const SETTLE_MS = 40 * 60 * 1000
 export type Bundle = { hash: string; files: Record<string, string> }
 type Host = { id: string; name: string }
 type Session = { host: Host; handle: string; cursor: string }
@@ -181,17 +183,48 @@ export function createTerminalLink(deps: LinkDeps) {
     if (saved?.handle === s.handle) await deps.save(undefined).catch(() => {})
   }
 
-  async function disconnect(): Promise<void> {
+  /**
+   * Waits while the host's worker is running a private desktop step. That step lives in the
+   * worker this terminal runs, and replacing a desktop is two server calls: closing the
+   * terminal between them would leave the desktop removed and never recreated.
+   */
+  async function settle(s: Session): Promise<void> {
+    const until = deps.now() + SETTLE_MS
+    while (deps.now() < until) {
+      let running = false
+      try {
+        running = (await exchange(s, 'desktop.status', {}, 10000))?.step?.running === true
+      } catch {
+        return
+      }
+      if (!running) return
+      await deps.sleep(3000)
+    }
+  }
+
+  /** Closes the terminal once the host has no setup step running. Later requests wait for it. */
+  function disconnect(): Promise<void> {
     cancelIdle()
-    await queue
-    if (session) await close(session)
+    const run = async () => {
+      if (!session) return
+      const s = session
+      await settle(s)
+      await close(s)
+    }
+    const done = queue.then(run, run)
+    queue = done.catch(() => {})
+    return done
   }
 
   return {
     /** Sends one panel request to the host's worker. Requests run one at a time. */
     request(host: Host, name: string, input: unknown): Promise<any> {
       const run = async () => {
-        if (session && session.host.id !== host.id) await close(session)
+        if (session && session.host.id !== host.id) {
+          const old = session
+          await settle(old)
+          await close(old)
+        }
         session ??= await open(host)
         const s = session
         try { return await exchange(s, name, input, name === 'mcp.act' ? 300000 : 30000) }

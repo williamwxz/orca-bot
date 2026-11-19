@@ -136,7 +136,8 @@ export function registerPairedHost(
       throw new Error('That Orca server is not paired with this computer.')
     await orca.storage.set('botHost', id)
     // Leave nothing running on a server the person moved away from.
-    if (id === LOCAL) await link.disconnect().catch(() => {})
+    // Not awaited: the link waits in the background for a running desktop step before closing.
+    if (id === LOCAL) void link.disconnect().catch(() => {})
     return (cached = read())
   })
 }

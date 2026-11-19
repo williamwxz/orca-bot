@@ -379,11 +379,15 @@ test('the Backend panel explains a desktop it must replace, follows the step to 
     let desktop: any = { mode: 'shared', maxInstances: 2, idleMinutes: 480, state: 'repair', reason: 'no-folder', runtime: 'Docker' }
     let browser: any = { browser: 'setup' }
     let polls = 0
+    let failNextPoll = false
+    let holdDesktop = false
     const frame = { plugin: { request: async (name: string, input: any) => {
       requests.push([name, input])
       if (name === 'computer.status') {
+        // The first poll after the step starts times out: that must not end the step.
+        if (failNextPoll) { failNextPoll = false; throw new Error('timed out') }
         // The step runs for two polls, then finishes.
-        if (desktop.step?.running && ++polls > 2) desktop = { ...desktop, state: 'running', reason: undefined, step: { ...desktop.step, running: false } }
+        if (desktop.step?.running && !holdDesktop && ++polls > 2) desktop = { ...desktop, state: 'running', reason: undefined, step: { ...desktop.step, running: false } }
         return { vm: 'repair', ...browser, desktop }
       }
       if (name === 'desktop.act') {
@@ -399,16 +403,23 @@ test('the Backend panel explains a desktop it must replace, follows the step to 
     const key = (k: string) => all(root).find((n) => n.dataset.key === k)!
     // You did not make this desktop: say what is wrong with it in plain words.
     assert.ok(text().includes('A private desktop already exists, but it cannot be used'))
-    assert.ok(text().some((t) => /folder it keeps its files in is gone/.test(t)))
+    assert.ok(text().some((t) => /could not confirm the writable folder/.test(t)))
+    // An unconfirmed folder is not promised to survive the replacement.
+    assert.ok(text().some((t) => /may not be kept/.test(t)))
+    assert.equal(text().some((t) => /folder and browser sign-ins are kept/.test(t)), false)
     const steps = all(root).filter((n) => /: (done|next|not yet)$/.test(n.attrs.get('aria-label') ?? ''))
     assert.deepEqual(steps.map((n) => n.attrs.get('aria-label')), [
       'Install the container app: done', 'Start it: done', 'Get the desktop ready: done', 'Replace the desktop: next'
     ])
     assert.equal(key('desktop:recreate').textContent, 'Replace with a fresh desktop')
+    failNextPoll = true
     key('desktop:recreate').emit()
     await flush()
     assert.deepEqual(requests.find(([n]) => n === 'desktop.act')![1], { action: 'recreate', botId: 'a' })
     assert.equal(key('desktop:recreate').textContent, 'Replacing…')
+    await flush()
+    await flush()
+    assert.equal(key('desktop:recreate').textContent, 'Replacing…', 'a failed poll keeps following the step')
     assert.equal(key('desktop:recreate').disabled, true)
     for (let i = 0; i < 8; i++) await flush()
     assert.deepEqual(notes, ['Private desktop updated.'])
@@ -421,7 +432,10 @@ test('the Backend panel explains a desktop it must replace, follows the step to 
     await picker.open('computer', bot, new Element() as any)
     assert.equal(notes.length, 1, 'an old finished step is not announced again on reopen')
     picker.close()
-    // Reopened while the browser is still installing: it keeps following until done.
+    // Reopened while the browser installs and a desktop step runs: each is followed on its own,
+    // and the browser button frees up even though the desktop step is still going.
+    desktop = { ...desktop, step: { id: 9, action: 'prepare', running: true } }
+    holdDesktop = true
     browser = { browser: 'setup', browserInstalling: true }
     let browserPolls = 0
     const status = frame.plugin.request
@@ -433,6 +447,7 @@ test('the Backend panel explains a desktop it must replace, follows the step to 
     assert.equal(key('browser:install').textContent, 'Installing…')
     for (let i = 0; i < 8; i++) await flush()
     assert.equal(notes.at(-1), 'The browser is ready.')
+    assert.equal(desktop.step.running, true)
     picker.close()
   } finally {
     for (const [i, k] of ['document', 'window', 'setTimeout'].entries()) {
@@ -440,6 +455,15 @@ test('the Backend panel explains a desktop it must replace, follows the step to 
       else delete (globalThis as any)[k]
     }
   }
+})
+
+test('a desktop that did not start warns what replacing it removes', async () => {
+  const { desktopStep } = await import('./desktop-setup.ts')
+  const failed = desktopStep({ mode: 'shared', maxInstances: 2, idleMinutes: 480, state: 'failed' }, false)
+  assert.equal(failed.action, 'recreate')
+  assert.match(failed.line, /apps and files stored anywhere else inside it are removed/)
+  const old = desktopStep({ mode: 'shared', maxInstances: 2, idleMinutes: 480, state: 'repair', reason: 'old-image' }, false)
+  assert.match(old.line, /older OpenMausBot.*keeps its shared folder and browser sign-ins/)
 })
 
 test('the late status redraw keeps the keyboard on the tile the person moved to', async () => {

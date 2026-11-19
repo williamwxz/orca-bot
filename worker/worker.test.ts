@@ -331,6 +331,8 @@ test('thread and send require a roster bot, with fresh worker-generated send IDs
     assert.equal(calls.at(-1).text, 'Look\n\n<attached-image path="/server/data/attachments/secret-place.png" name="shot.png" />')
     // An ID is spent once sent.
     await assert.rejects(worker.request('message.send', { botId, text: 'x', attachments: [uploaded.id] }), /Attach the files again/)
+    // A step for a bot no longer in the roster is refused without locking later steps.
+    await assert.rejects(worker.request('desktop.act', { action: 'create', botId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' }), /not in the roster/)
     // A desktop step answers at once and runs in the background; status follows it.
     const started = await worker.request('desktop.act', { action: 'prepare' })
     assert.deepEqual(started, { step: { id: 1, action: 'prepare', running: true } })

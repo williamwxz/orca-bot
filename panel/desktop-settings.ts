@@ -116,6 +116,12 @@ export function createDesktopSettings(
       note.textContent = ''
     } catch (error) {
       if (at !== generation()) return
+      // While following a step, a failed poll keeps the controls and tries again.
+      if (following !== undefined) {
+        loadedFor = at
+        follow(following, at)
+        return
+      }
       status = undefined
       note.textContent = error instanceof Error ? error.message : 'Could not check the private desktop.'
     }
@@ -126,7 +132,7 @@ export function createDesktopSettings(
     else if (step && step.id === following) {
       following = undefined
       notify(step.error ?? 'Private desktop updated.')
-    }
+    } else if (following !== undefined) follow(following, at)
     render()
   }
 

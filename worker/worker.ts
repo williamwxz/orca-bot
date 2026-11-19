@@ -680,9 +680,11 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
     if (!deps.desktopAct) throw new Error('Private desktops are unavailable.')
     if (!DESKTOP_ACTIONS.includes(input?.action)) throw new Error('Unknown desktop step.')
     if (desktopJob?.running) throw new Error('Another private desktop step is still running.')
+    // Check the bot before the job is published: a refusal here must not leave it "running".
+    const target = desktopBot(input)
     const job = { id: ++desktopJobs, action: input.action, running: true } as NonNullable<typeof desktopJob>
     desktopJob = job
-    deps.desktopAct({ port, action: input.action, ...desktopBot(input) }).then(
+    deps.desktopAct({ port, action: input.action, ...target }).then(
       () => { job.running = false },
       (error) => {
         job.running = false
