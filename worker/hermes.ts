@@ -8,17 +8,23 @@ import type { Bot, Live, Status, Thread } from '../shared/bots.ts'
 export const BOT_CHAT = 'Bot Chat'
 const DEFAULT_PROFILE = 'default'
 const CURSOR = /^[\x21-\x7e]{1,2000}$/
+/** How long a bot's model and preview are reused before asking its connection again. */
+const DETAIL_AGE = 8000
+/** The same for a bot nobody has open: asking opens a connection, so it is done less often. */
+const QUIET_DETAIL_AGE = 60000
+const COLD_WAIT = 4000
+const MAX_BOTS = 60
+/** Bots asked for their details at once; the rest wait their turn. */
+const REFRESH_AT_ONCE = 4
 
 export type HermesDeps = { gateway: Gateway; now(): number; id(): string; wait(ms: number, done: (value?: unknown) => void): void }
 export const defaultHermesDeps = (): HermesDeps => ({ gateway: createGateway(), now: Date.now, id: randomUUID, wait: (ms, done) => void setTimeout(done, ms) })
-/** How long a bot's model and preview are reused before asking its connection again. */
-const DETAIL_AGE = 8000
-const COLD_WAIT = 4000
-const MAX_BOTS = 60
 
 type Chat = {
-  /** The stored conversation's ID: what history is read by. */
-  stored: string
+  /** The Bot Chat's identity in Hermes' registry: it stays the same when the chat is compacted. */
+  registry: string
+  /** The conversation to read and resume: the newest segment after a compaction, else the same ID. */
+  resolved: string
   /** The ID Hermes runs it under once attached: what prompts are sent to and events arrive for. */
   live?: string
   attaching?: Promise<string>
@@ -31,84 +37,117 @@ type Chat = {
 export function createHermes(deps: HermesDeps = defaultHermesDeps()) {
   const { gateway } = deps
   const chats = new Map<string, Chat>()
-  const lives = new Map<string, Live & { bot: string }>()
+  const lives = new Map<string, Live>()
   const details = new Map<string, { row: any; at: number }>()
   const refreshing = new Map<string, Promise<void>>()
-  function refreshDetail(bot: string): Promise<void> {
-    let running = refreshing.get(bot)
-    if (running) return running
-    running = (async () => {
-      try {
-        const reply = await gateway.request(bot, 'profiles.list', { include_sessions: true })
-        const row = (Array.isArray(reply?.profiles) ? reply.profiles : []).find((r: any) => r?.name === bot)
-        if (!row) return
-        details.set(bot, { row, at: deps.now() })
-        const id = row.canonical_session?.id
-        // A new Bot Chat (the old one was archived in Hermes) replaces the one held here.
-        if (typeof id === 'string' && id && chats.get(bot)?.stored !== id) chats.set(bot, { stored: id })
-      } catch {
-        /* Keep the last known detail; the next list tries again. */
-      } finally {
-        refreshing.delete(bot)
-      }
-    })()
-    refreshing.set(bot, running)
-    return running
-  }
+  const creating = new Map<string, Promise<Chat>>()
+  let refreshSlots = REFRESH_AT_ONCE
+  const refreshQueue: (() => void)[] = []
 
-  const botOf = (sessionId: string) => [...chats].find(([, chat]) => chat.live === sessionId || chat.stored === sessionId)?.[0]
   gateway.onEvent((profile, event: GatewayEvent) => {
-    const bot = botOf(event.sessionId)
-    if (!bot || bot !== profile) return
-    const key = bot
-    if (event.type === 'message.start') lives.set(key, { bot, text: '', startedAt: deps.now() })
-    else if (event.type === 'message.complete' || event.type === 'error') lives.delete(key)
+    const chat = chats.get(profile)
+    // Only the attached Bot Chat's own events count; another session on the profile is not this chat.
+    if (!chat?.live || event.sessionId !== chat.live) return
+    if (event.type === 'message.start') lives.set(profile, { text: '', startedAt: deps.now() })
+    else if (event.type === 'message.complete' || event.type === 'error') lives.delete(profile)
     else {
-      const live = lives.get(key)
+      const live = lives.get(profile)
       if (!live) return
       if (event.type === 'message.delta' && typeof event.payload.text === 'string') live.text = (live.text + event.payload.text).slice(-MAX_MESSAGE)
-      else if (event.type === 'tool.start') live.tool = toolLine(event.payload.name, event.payload.context)
+      else if (event.type === 'tool.start') live.tool = toolLine(event.payload.name)
       else if (event.type === 'tool.complete') live.tool = undefined
     }
   })
-  /** A connection that dropped can no longer say a reply ended: forget what it was streaming. */
-  const settle = (bot: string) => {
-    if (gateway.connected(bot)) return
-    lives.delete(bot)
-    const chat = chats.get(bot)
+  // The socket that carried a chat's events is gone: it can no longer say a reply ended, and its
+  // live ID means nothing on the next socket. Forget both, even if a new connection opens at once.
+  gateway.onDrop((profile) => {
+    lives.delete(profile)
+    const chat = chats.get(profile)
     if (chat) chat.live = undefined
-  }
+  })
 
   const known = (botId: unknown): string => {
     if (typeof botId !== 'string' || !BOT_ID.test(botId)) throw new Error('Unknown bot.')
     return botId
   }
+  const chatOf = (row: any): Pick<Chat, 'registry' | 'resolved'> | undefined =>
+    typeof row?.id === 'string' && row.id ? { registry: row.id, resolved: typeof row.resolved_id === 'string' && row.resolved_id ? row.resolved_id : row.id } : undefined
 
-  /** The bot's Bot Chat, looked up by its exact title. A failed lookup never reads as "none". */
-  async function findChat(bot: string): Promise<Chat | undefined> {
+  /** Takes what Hermes' registry says about a bot's chat: the same one, a new one, or none. */
+  function adopt(bot: string, found: Pick<Chat, 'registry' | 'resolved'> | undefined): Chat | undefined {
     const held = chats.get(bot)
-    if (held) return held
+    if (!found) {
+      // Archived or deleted in Hermes: nothing here may keep reading or sending to the old one.
+      if (held) {
+        chats.delete(bot)
+        lives.delete(bot)
+      }
+      return undefined
+    }
+    if (held?.registry === found.registry && held.resolved === found.resolved) return held
+    // A different chat, or the same one compacted onto a new segment: attach again from scratch.
+    const chat: Chat = { ...found }
+    chats.set(bot, chat)
+    lives.delete(bot)
+    return chat
+  }
+
+  /** The bot's Bot Chat from the registry, by its exact title. A failed lookup never reads as "none". */
+  async function lookup(bot: string): Promise<Chat | undefined> {
     const reply = await gateway.request(bot, 'session.list', { profile: bot, title: BOT_CHAT, limit: 5, include_hidden: true })
     if (!Array.isArray(reply?.sessions)) throw new Error('Could not check this bot’s chat in Hermes. Try again.')
-    const row = reply.sessions.find((s: any) => typeof s?.id === 'string' && s.id && s.archived !== true)
-    if (!row) return undefined
-    const chat: Chat = { stored: row.id }
-    chats.set(bot, chat)
-    return chat
+    return adopt(bot, chatOf(reply.sessions.find((s: any) => typeof s?.id === 'string' && s.id && s.archived !== true)))
+  }
+  const findChat = async (bot: string): Promise<Chat | undefined> => chats.get(bot) ?? lookup(bot)
+
+  /**
+   * Creates the Bot Chat, once per bot however many sends ask at the same moment. The title is
+   * written at once, as Hermes Desktop does: until it is, the registry has no Bot Chat and anyone
+   * else would create a second. If the title write fails, the registry decides who won.
+   */
+  function create(bot: string): Promise<Chat> {
+    let running = creating.get(bot)
+    if (running) return running
+    running = (async () => {
+      try {
+        const existing = await lookup(bot)
+        if (existing) return existing
+        const created = await gateway.request(bot, 'session.create', { profile: bot, title: BOT_CHAT, hidden: true, follow_profile_config: true, source: 'gui', request_id: deps.id() }, 30000)
+        if (typeof created?.stored_session_id !== 'string' || typeof created?.session_id !== 'string') throw new Error('Hermes could not start this chat. Try again.')
+        try {
+          await gateway.request(bot, 'session.title', { session_id: created.session_id, title: BOT_CHAT })
+        } catch {
+          // Someone else took the title in between (Hermes Desktop, another bot): theirs is the Bot Chat.
+          // An older Hermes without this call has no winner, and the first prompt stores ours.
+          const winner = await lookup(bot)
+          if (winner && winner.registry !== created.stored_session_id) return winner
+        }
+        const chat: Chat = { registry: created.stored_session_id, resolved: created.stored_session_id, live: created.session_id }
+        chats.set(bot, chat)
+        gateway.hold(bot)
+        return chat
+      } finally {
+        creating.delete(bot)
+      }
+    })()
+    creating.set(bot, running)
+    return running
   }
 
   /** Attaches to the chat so its events arrive and prompts can be sent; picks up a reply in progress. */
   function attach(bot: string, chat: Chat): Promise<string> {
-    settle(bot)
     if (chat.live) return Promise.resolve(chat.live)
     chat.attaching ??= (async () => {
       try {
-        const reply = await gateway.request(bot, 'session.resume', { profile: bot, session_id: chat.stored, source: 'gui', omit_messages: true }, 30000)
+        const reply = await gateway.request(bot, 'session.resume', { profile: bot, session_id: chat.resolved, source: 'gui', omit_messages: true }, 30000)
         if (typeof reply?.session_id !== 'string' || !reply.session_id) throw new Error('Hermes could not open this chat. Try again.')
+        // The chat was replaced while this was in flight: its attachment belongs to nobody.
+        if (chats.get(bot) !== chat) throw new Error('This chat changed in Hermes. Try again.')
         chat.live = reply.session_id
+        gateway.hold(bot)
         if (reply.running === true && !lives.has(bot)) {
           const text = typeof reply.inflight?.assistant === 'string' ? reply.inflight.assistant : ''
-          lives.set(bot, { bot, text: text.slice(-MAX_MESSAGE), startedAt: typeof reply.turn_started_at === 'number' ? Math.round(reply.turn_started_at * 1000) : deps.now() })
+          lives.set(bot, { text: text.slice(-MAX_MESSAGE), startedAt: typeof reply.turn_started_at === 'number' ? Math.round(reply.turn_started_at * 1000) : deps.now() })
         }
         return chat.live!
       } finally {
@@ -116,6 +155,32 @@ export function createHermes(deps: HermesDeps = defaultHermesDeps()) {
       }
     })()
     return chat.attaching
+  }
+
+  /** Asks a bot's own connection for its model and Bot Chat, a few bots at a time. */
+  function refreshDetail(bot: string): Promise<void> {
+    let running = refreshing.get(bot)
+    if (running) return running
+    running = (async () => {
+      if (refreshSlots > 0) refreshSlots--
+      else await new Promise<void>((resolve) => refreshQueue.push(resolve))
+      try {
+        const reply = await gateway.request(bot, 'profiles.list', { include_sessions: true })
+        const row = (Array.isArray(reply?.profiles) ? reply.profiles : []).find((r: any) => r?.name === bot)
+        if (!row) return
+        details.set(bot, { row, at: deps.now() })
+        adopt(bot, chatOf(row.canonical_session))
+      } catch {
+        /* Keep the last known detail; the next list tries again. */
+      } finally {
+        refreshing.delete(bot)
+        const next = refreshQueue.shift()
+        if (next) next()
+        else refreshSlots++
+      }
+    })()
+    refreshing.set(bot, running)
+    return running
   }
 
   return {
@@ -141,13 +206,13 @@ export function createHermes(deps: HermesDeps = defaultHermesDeps()) {
       const cold: Promise<void>[] = []
       for (const row of rows) {
         const held = details.get(row.name)
-        if (held && deps.now() - held.at < DETAIL_AGE) continue
+        const age = chats.get(row.name)?.live || lives.has(row.name) ? DETAIL_AGE : QUIET_DETAIL_AGE
+        if (held && deps.now() - held.at < age) continue
         const refresh = refreshDetail(row.name)
         if (!held) cold.push(refresh)
       }
       // A bot whose connection is slow to open shows without its preview for now, never blocks the list.
       if (cold.length) await Promise.race([Promise.all(cold), new Promise((resolve) => deps.wait(COLD_WAIT, resolve))])
-      for (const bot of [...lives.keys()]) settle(bot)
       return botsView({ profiles: rows.map((row) => details.get(row.name)?.row ?? row) }, (id) => lives.has(id))
     },
 
@@ -162,12 +227,12 @@ export function createHermes(deps: HermesDeps = defaultHermesDeps()) {
       if (input.older === undefined) await attach(bot, chat).catch(() => undefined)
       const reply = await gateway.request(bot, 'session.transcript', {
         profile: bot,
-        session_id: chat.stored,
+        session_id: chat.resolved,
         order: 'latest',
         limit,
         ...(typeof input.older === 'string' ? { cursor: input.older } : {})
       })
-      const live = input.older === undefined ? lives.get(bot) : undefined
+      const live = input.older === undefined && chats.get(bot) === chat ? lives.get(bot) : undefined
       return {
         messages: rowsView(reply),
         ...(typeof reply?.next_cursor === 'string' && CURSOR.test(reply.next_cursor) ? { older: reply.next_cursor } : {}),
@@ -181,13 +246,7 @@ export function createHermes(deps: HermesDeps = defaultHermesDeps()) {
       const text = typeof input.text === 'string' ? input.text.trim() : ''
       if (!text) throw new Error('Type a message first.')
       if (text.length > MAX_MESSAGE) throw new Error(`Keep a message under ${MAX_MESSAGE.toLocaleString('en-US')} characters.`)
-      let chat = await findChat(bot)
-      if (!chat) {
-        const created = await gateway.request(bot, 'session.create', { profile: bot, title: BOT_CHAT, hidden: true, follow_profile_config: true, source: 'gui', request_id: deps.id() }, 30000)
-        if (typeof created?.stored_session_id !== 'string' || typeof created?.session_id !== 'string') throw new Error('Hermes could not start this chat. Try again.')
-        chat = { stored: created.stored_session_id, live: created.session_id }
-        chats.set(bot, chat)
-      }
+      const chat = (await findChat(bot)) ?? (await create(bot))
       const live = await attach(bot, chat)
       try {
         await gateway.request(bot, 'prompt.submit', { session_id: live, profile: bot, text, input_id: deps.id() }, 30000)
@@ -195,7 +254,7 @@ export function createHermes(deps: HermesDeps = defaultHermesDeps()) {
         if (error instanceof HermesError && error.code === 'refused') throw new Error('Hermes did not take this message. Check the bot in Hermes, then try again.')
         throw error
       }
-      if (!lives.has(bot)) lives.set(bot, { bot, text: '', startedAt: deps.now() })
+      if (chats.get(bot) === chat && !lives.has(bot)) lives.set(bot, { text: '', startedAt: deps.now() })
       return { ok: true }
     },
 

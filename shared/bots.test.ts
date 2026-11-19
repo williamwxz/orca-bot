@@ -46,14 +46,15 @@ test('stored rows become messages: tool calls read as one line, empty and hidden
   })
   assert.deepEqual(view.slice(0, 4), [
     { id: 'r1', at: 10000, role: 'user', kind: 'text', text: 'hello' },
-    { id: 'ttoolu_1', at: 12000, role: 'bot', kind: 'activity', text: 'terminal: echo hi there' },
+    { id: 'ttoolu_1', at: 12000, role: 'bot', kind: 'activity', text: 'Used terminal' },
     { id: 'r4', at: 13000, role: 'bot', kind: 'text', text: 'done' },
     { id: 'r6', at: 0, role: 'bot', kind: 'notice', text: 'Earlier messages were summarized here to save context.' }
   ])
   assert.equal(view.length, 5)
   assert.match(view[4].text, /Open the bot in Hermes for the rest\.$/)
-  assert.doesNotMatch(JSON.stringify(view), /SECRET/)
-  assert.equal(toolLine('bad name!', undefined), 'Used a tool')
+  // The preview Hermes builds from a call's arguments never leaves the worker.
+  assert.doesNotMatch(JSON.stringify(view), /SECRET|echo/)
+  assert.equal(toolLine('bad name!'), 'Used a tool')
   assert.deepEqual(rowsView({}), [])
 })
 

@@ -1,8 +1,11 @@
 // Runs on a paired Orca server, inside a terminal the client opened there. It hosts the same
 // worker the plugin runs locally and answers the client's requests over the terminal.
+import * as fs from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import type { OrcaWorkerApi } from 'orca/worker'
 import { register } from './worker.ts'
-import { NEXT, PING, RELAYED, WINDOW, frames, lineReader, unpack, validateRelayInput } from './relay-frames.ts'
+import { MAX_LINE, MAX_REQUEST_BYTES, NEXT, PING, RELAYED, WINDOW, frames, lineReader, unpack, validateRelayInput } from './relay-frames.ts'
 
 export type RelayIo = { write(text: string): void; hash: string }
 
@@ -37,7 +40,7 @@ export function createRelay(io: RelayIo, host: (api: OrcaWorkerApi) => void = (a
     if (line === NEXT) return flush()
     let request: { id?: unknown; name?: unknown; input?: unknown }
     try {
-      request = unpack(line)
+      request = unpack(line, MAX_REQUEST_BYTES)
     } catch {
       return
     }
@@ -58,11 +61,18 @@ export function createRelay(io: RelayIo, host: (api: OrcaWorkerApi) => void = (a
       reply = { lines: frames(id, answer), at: 0 }
       flush()
     })
-  })
+  }, MAX_LINE)
 }
 
 /** Called by the loader the client typed into this terminal, with any input it already read. */
 export function start(rest: string, hash: string): void {
+  // Earlier versions' code is no longer used once this one runs.
+  const folder = join(homedir(), '.orca-bot', 'relay')
+  try {
+    for (const old of fs.readdirSync(folder)) if (old !== hash && /^[0-9a-f]{16}$/.test(old)) fs.rmSync(join(folder, old), { recursive: true, force: true })
+  } catch {
+    /* Nothing to tidy. */
+  }
   const feed = createRelay({ hash, write: (text) => void process.stdout.write(text) })
   process.stdin.setEncoding('utf8')
   process.stdin.on('data', feed)

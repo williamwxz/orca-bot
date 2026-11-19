@@ -51,10 +51,14 @@ export function createChatView(root: HTMLElement, frame: FrameApi, avatar: (bot:
   let loadingOlder = false
   let sending = false
   /** Sent from here and not yet in the stored history: shown at once, dropped when its row arrives. */
-  let pending: { text: string; at: number }[] = []
+  let pending: { text: string; at: number; before: Set<string> }[] = []
+  /** Stored rows already taken as the copy of a sent message: each acknowledges one send only. */
+  const acknowledged = new Set<string>()
   let timer: ReturnType<typeof setTimeout> | undefined
   let clock: ReturnType<typeof setTimeout> | undefined
+  /** Unsent text per bot on one host: the same profile name on another host is another bot. */
   const drafts = new Map<string, string>()
+  const draftKey = (id: string) => `${hooks.hostGeneration()}:${id}`
   const rendered = new Map<string, { element: HTMLElement; text: string }>()
   let renderedIds: string[] = []
 
@@ -187,39 +191,58 @@ export function createChatView(root: HTMLElement, frame: FrameApi, avatar: (bot:
     clock = setTimeout(renderWorking, 1000)
   }
 
-  async function read(): Promise<void> {
+  let reading = false
+  let readAgain = false
+  /** Asks for a read. Only one runs at a time and only it sets the next poll; a request made meanwhile runs right after. */
+  function read(): void {
+    if (reading) {
+      readAgain = true
+      return
+    }
+    void readOnce()
+  }
+  async function readOnce(): Promise<void> {
     clearTimeout(timer)
     const target = bot
     if (!target || document.hidden) return
     const token = generation
     const host = hooks.hostGeneration()
+    reading = true
+    readAgain = false
     try {
       const thread = await frame.plugin.request('thread.read', { botId: target.id, limit: loaded ? POLL_ROWS : PAGE_ROWS })
-      if (!current(token, host)) return
-      if (!loaded) {
-        messages = thread.messages
-        older = thread.older
-        loaded = true
-      } else {
-        const known = new Set(messages.map((m) => m.id))
-        // A poll that shares no row with what is held missed some in between: start from this page.
-        if (messages.length && thread.messages.length && !thread.messages.some((m) => known.has(m.id))) {
+      if (current(token, host)) {
+        if (!loaded) {
           messages = thread.messages
           older = thread.older
-        } else messages = mergeMessages(messages, thread.messages, 'newer')
+          loaded = true
+        } else {
+          const known = new Set(messages.map((m) => m.id))
+          // A poll that shares no row with what is held missed some in between: start from this page.
+          if (messages.length && thread.messages.length && !thread.messages.some((m) => known.has(m.id))) {
+            messages = thread.messages
+            older = thread.older
+          } else messages = mergeMessages(messages, thread.messages, 'newer')
+        }
+        live = thread.live
+        // A sent message leaves "pending" once a stored row that was not there when it was sent carries
+        // its text. One row acknowledges one send, so sending the same text twice waits for two rows.
+        pending = pending.filter((p) => {
+          const row = thread.messages.find((m) => m.role === 'user' && !p.before.has(m.id) && !acknowledged.has(m.id) && m.text.trim() === p.text.trim())
+          if (row) acknowledged.add(row.id)
+          return !row
+        })
+        note.textContent = ''
+        render()
       }
-      live = thread.live
-      // A sent message leaves "pending" once its stored row shows up: same text, not older than the send
-      // (with slack for a paired server's clock).
-      const stored = thread.messages.filter((m) => m.role === 'user')
-      pending = pending.filter((p) => !stored.some((m) => m.text.trim() === p.text.trim() && (!m.at || m.at >= p.at - 120000)))
-      note.textContent = ''
-      render()
     } catch (error) {
-      if (!current(token, host)) return
-      note.textContent = error instanceof Error ? error.message : 'Could not load messages.'
+      if (current(token, host)) note.textContent = error instanceof Error ? error.message : 'Could not load messages.'
     }
-    if (current(token, host) && !document.hidden) timer = setTimeout(() => void read(), live || sending || pending.length ? 1200 : 5000)
+    reading = false
+    // A chat opened or a host changed during the read starts its own; this one schedules nothing.
+    if (!current(token, host)) return void (bot && !document.hidden && readOnce())
+    if (readAgain) return void readOnce()
+    if (!document.hidden) timer = setTimeout(read, live || sending || pending.length ? 1200 : 5000)
   }
 
   async function loadOlder(): Promise<void> {
@@ -250,10 +273,10 @@ export function createChatView(root: HTMLElement, frame: FrameApi, avatar: (bot:
     const token = generation
     const host = hooks.hostGeneration()
     sending = true
-    const entry = { text, at: Date.now() }
+    const entry = { text, at: Date.now(), before: new Set(messages.filter((m) => m.role === 'user').map((m) => m.id)) }
     pending.push(entry)
     input.value = ''
-    drafts.delete(target.id)
+    drafts.delete(draftKey(target.id))
     render()
     list.scrollTop = list.scrollHeight
     try {
@@ -268,10 +291,10 @@ export function createChatView(root: HTMLElement, frame: FrameApi, avatar: (bot:
     if (!current(token, host)) return
     sending = false
     render()
-    void read()
+    read()
   })
   input.addEventListener('input', () => {
-    if (bot) drafts.set(bot.id, input.value)
+    if (bot) drafts.set(draftKey(bot.id), input.value)
     send.disabled = sending || !input.value.trim()
   })
   input.addEventListener('keydown', (event) => {
@@ -281,7 +304,7 @@ export function createChatView(root: HTMLElement, frame: FrameApi, avatar: (bot:
     }
   })
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) void read()
+    if (!document.hidden) read()
     else clearTimeout(timer)
   })
 
@@ -289,6 +312,7 @@ export function createChatView(root: HTMLElement, frame: FrameApi, avatar: (bot:
     generation++
     clearTimeout(timer)
     clearTimeout(clock)
+    readAgain = false
     bot = undefined
     root.hidden = true
   }
@@ -302,6 +326,7 @@ export function createChatView(root: HTMLElement, frame: FrameApi, avatar: (bot:
       older = undefined
       live = undefined
       pending = []
+      acknowledged.clear()
       loaded = false
       loadingOlder = false
       sending = false
@@ -312,11 +337,11 @@ export function createChatView(root: HTMLElement, frame: FrameApi, avatar: (bot:
       const names = node('div')
       names.append(node('strong', next.name), node('small', next.model))
       identity.append(names)
-      input.value = drafts.get(next.id) ?? ''
+      input.value = drafts.get(draftKey(next.id)) ?? ''
       input.placeholder = `Message ${next.name}`
       root.hidden = false
       render()
-      void read()
+      read()
     },
     /** A fresh roster row for the open bot: its name or model may have changed in Hermes. */
     update(next: Bot): void {
@@ -324,7 +349,7 @@ export function createChatView(root: HTMLElement, frame: FrameApi, avatar: (bot:
       const wasWorking = bot.working
       bot = next
       // The roster saw the bot start working before this chat's own poll did: look now.
-      if (next.working && !wasWorking && !live) void read()
+      if (next.working && !wasWorking && !live) read()
     }
   }
 }

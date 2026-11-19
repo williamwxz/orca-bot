@@ -81,11 +81,12 @@ export function botsView(raw: unknown, working: (id: string) => boolean = () => 
 
 const TOOL_NAME = /^[A-Za-z0-9_.:-]{1,60}$/
 
-/** What a tool did, in a few words: its name and the start of what Hermes shows beside it. */
-export function toolLine(name: unknown, context: unknown): string {
-  const tool = typeof name === 'string' && TOOL_NAME.test(name) ? name : 'a tool'
-  const detail = typeof context === 'string' ? context.replace(/\s+/g, ' ').trim().slice(0, 80) : ''
-  return detail ? `${tool}: ${detail}` : `Used ${tool}`
+/**
+ * A tool call as one line: the tool's name and nothing else. Hermes' preview beside it is built
+ * from the call's arguments (a command, a path, a query), which stay in Hermes.
+ */
+export function toolLine(name: unknown): string {
+  return `Used ${typeof name === 'string' && TOOL_NAME.test(name) ? name : 'a tool'}`
 }
 
 /**
@@ -107,7 +108,7 @@ export function rowsView(raw: unknown): ChatMessage[] {
       continue
     }
     if (row.role === 'tool') {
-      messages.push({ id, at, role: 'bot', kind: 'activity', text: toolLine(row.name, row.context) })
+      messages.push({ id, at, role: 'bot', kind: 'activity', text: toolLine(row.name) })
       continue
     }
     if (row.role !== 'user' && row.role !== 'assistant') continue

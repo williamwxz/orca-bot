@@ -211,8 +211,10 @@ test('a reply for another bot or another host is dropped, and a failed read says
     await flush()
     assert.deepEqual(t.calls.map(([, input]) => input.botId), ['honex', 'other'])
     assert.deepEqual(t.shown(), ['from honex'])
+    // The host changed while a read was in flight (the app closes the chat): its reply is dropped.
     t.view.open(bot)
     t.setHost(1)
+    t.view.close()
     await flush()
     assert.deepEqual(t.shown(), [])
     t.setHost(0)
@@ -222,6 +224,49 @@ test('a reply for another bot or another host is dropped, and a failed read says
     assert.equal(t.find('thread-note')[0].textContent, 'Hermes could not do that. Try again.')
     t.view.close()
     assert.equal(t.root.hidden, true)
+  } finally {
+    t.restore()
+  }
+})
+
+test('the same text sent twice waits for two stored rows, and drafts stay with their host', async () => {
+  let page: Thread = { messages: [m('r1', 'user', 'ok')] }
+  const t = setup(() => page)
+  try {
+    t.view.open(bot)
+    await flush()
+    for (let i = 0; i < 2; i++) {
+      t.input().value = 'ok'
+      t.form().requestSubmit()
+      await flush()
+    }
+    // The old "ok" acknowledges neither send.
+    assert.deepEqual(t.shown(), ['ok', 'ok', 'ok'])
+    page = { messages: [m('r1', 'user', 'ok'), m('r2', 'user', 'ok')] }
+    await t.poll()
+    assert.deepEqual(t.shown(), ['ok', 'ok', 'ok'])
+    page = { messages: [m('r1', 'user', 'ok'), m('r2', 'user', 'ok'), m('r3', 'user', 'ok')] }
+    await t.poll()
+    assert.deepEqual(t.shown(), ['ok', 'ok', 'ok'])
+    assert.equal(t.find('chat-message').length, 4)
+    // Reads never overlap: asking again during one runs a single follow-up.
+    const before = t.calls.filter(([name]) => name === 'thread.read').length
+    t.view.update({ ...bot, working: true })
+    t.view.update({ ...bot, working: false })
+    t.view.update({ ...bot, working: true })
+    await flush()
+    assert.ok(t.calls.filter(([name]) => name === 'thread.read').length - before <= 2)
+    // A draft typed for "honex" on one host is not offered to "honex" on another.
+    t.input().value = 'private note'
+    t.input().emit('input')
+    t.setHost(1)
+    t.view.open(bot)
+    assert.equal(t.input().value, '')
+    t.setHost(0)
+    t.view.open(bot)
+    assert.equal(t.input().value, 'private note')
+    await flush()
+    t.view.close()
   } finally {
     t.restore()
   }

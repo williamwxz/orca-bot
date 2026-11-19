@@ -74,7 +74,7 @@ export function defaultGatewayDeps(): GatewayDeps {
 }
 
 type Pending = { resolve(value: any): void; reject(error: Error): void; timer: unknown }
-type Connection = { socket?: Socket; ready: Promise<void>; pending: Map<number, Pending>; used: number; closed: boolean }
+type Connection = { socket?: Socket; ready: Promise<void>; opening: boolean; pending: Map<number, Pending>; used: number; closed: boolean }
 
 /**
  * One connection per Hermes profile to its local gateway, opened on first use and reopened after
@@ -83,6 +83,9 @@ type Connection = { socket?: Socket; ready: Promise<void>; pending: Map<number, 
 export function createGateway(deps: GatewayDeps = defaultGatewayDeps()) {
   const connections = new Map<string, Connection>()
   const listeners = new Set<(profile: string, event: GatewayEvent) => void>()
+  const dropListeners = new Set<(profile: string) => void>()
+  /** Profiles whose connection carries a chat's events: never closed to make room for another. */
+  const held = new Set<string>()
   let nextId = 0
 
   function drop(profile: string, connection: Connection, error: HermesError) {
@@ -99,10 +102,13 @@ export function createGateway(deps: GatewayDeps = defaultGatewayDeps()) {
     } catch {
       /* Already closed. */
     }
+    held.delete(profile)
+    // Whoever followed events on this socket hears that it is gone, even if a new one opens at once.
+    for (const listener of dropListeners) listener(profile)
   }
 
   function open(profile: string): Connection {
-    const connection: Connection = { ready: Promise.resolve(), pending: new Map(), used: deps.now(), closed: false }
+    const connection: Connection = { ready: Promise.resolve(), opening: true, pending: new Map(), used: deps.now(), closed: false }
     connection.ready = (async () => {
       let target: { url: string; protocols: string[] }
       try {
@@ -156,11 +162,13 @@ export function createGateway(deps: GatewayDeps = defaultGatewayDeps()) {
         }
         for (const listener of listeners) listener(profile, event)
       }
+      connection.opening = false
     })()
     connection.ready.catch(() => drop(profile, connection, new HermesError('closed', 'The connection to Hermes closed. Try again.')))
     connections.set(profile, connection)
     if (connections.size > MAX_CONNECTIONS) {
-      const idle = [...connections].filter(([name, c]) => name !== profile && !c.pending.size).sort((a, b) => a[1].used - b[1].used)[0]
+      // Only a settled connection nobody is waiting on or following may go.
+      const idle = [...connections].filter(([name, c]) => name !== profile && !c.opening && !c.pending.size && !held.has(name)).sort((a, b) => a[1].used - b[1].used)[0]
       if (idle) drop(idle[0], idle[1], new HermesError('closed', 'The connection to Hermes closed. Try again.'))
     }
     return connection
@@ -192,6 +200,15 @@ export function createGateway(deps: GatewayDeps = defaultGatewayDeps()) {
     onEvent(listener: (profile: string, event: GatewayEvent) => void): () => void {
       listeners.add(listener)
       return () => listeners.delete(listener)
+    },
+    /** Called when a profile's connection closes: events for its sessions stop until it is attached again. */
+    onDrop(listener: (profile: string) => void): () => void {
+      dropListeners.add(listener)
+      return () => dropListeners.delete(listener)
+    },
+    /** Keeps the profile's open connection from being closed to make room; ends when it drops. */
+    hold(profile: string): void {
+      if (connections.get(profile)?.socket && !connections.get(profile)!.closed) held.add(profile)
     },
     close() {
       for (const [profile, connection] of [...connections]) drop(profile, connection, new HermesError('closed', 'The connection to Hermes closed. Try again.'))

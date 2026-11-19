@@ -8,8 +8,13 @@ export const NEXT = 'n'
 export const READY = '@bt:ready'
 
 export const pack = (value: unknown): string => gzipSync(JSON.stringify(value)).toString('base64')
-export const unpack = (data: string): any =>
-  JSON.parse(gunzipSync(Buffer.from(data, 'base64')).toString('utf8'))
+/** The largest packed line and unpacked request a host reads from a client. */
+export const MAX_LINE = 400_000
+export const MAX_REQUEST_BYTES = 1_000_000
+/** The largest reply a client unpacks: a full page of long messages fits with room to spare. */
+export const MAX_REPLY_BYTES = 16_000_000
+export const unpack = (data: string, maxBytes = MAX_REPLY_BYTES): any =>
+  JSON.parse(gunzipSync(Buffer.from(data, 'base64'), { maxOutputLength: maxBytes }).toString('utf8'))
 
 export function frames(id: string, value: unknown): string[] {
   const parts = pack(value).match(new RegExp(`.{1,${FRAME_SIZE}}`, 'g')) ?? ['']
@@ -24,16 +29,26 @@ export function parseFrame(line: string): Frame | undefined {
     : undefined
 }
 
-/** Splits raw terminal input into complete lines, keeping a partial last line for later. */
-export function lineReader(onLine: (line: string) => void): (chunk: string) => void {
+/**
+ * Splits raw terminal input into complete lines, keeping a partial last line for later. A line
+ * longer than `maxLine` is dropped whole, up to its end, so input without a line break cannot grow
+ * the buffer without limit.
+ */
+export function lineReader(onLine: (line: string) => void, maxLine = Infinity): (chunk: string) => void {
   let buffer = ''
+  let skipping = false
   return (chunk) => {
     buffer += chunk
     let end: number
     while ((end = buffer.search(/[\r\n]/)) >= 0) {
       const line = buffer.slice(0, end)
       buffer = buffer.slice(end + 1)
-      if (line) onLine(line)
+      if (skipping) skipping = false
+      else if (line && line.length <= maxLine) onLine(line)
+    }
+    if (buffer.length > maxLine) {
+      buffer = ''
+      skipping = true
     }
   }
 }

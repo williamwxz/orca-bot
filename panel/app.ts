@@ -102,10 +102,12 @@ function renderBots(): void {
 
 function renderHosts(): void {
   const choices = [{ id: LOCAL, name: 'This computer' }, ...(hosts?.hosts ?? [])]
-  // The picker only matters once an Orca server is paired.
-  hostSelect.hidden = choices.length < 2
+  // The picker only matters once an Orca server is paired, or when the saved choice is one that
+  // is no longer there (an unpaired server) and another has to be chosen.
+  const chosen = choices.some((host) => host.id === hosts?.selected)
+  hostSelect.hidden = choices.length < 2 && (!hosts || chosen)
   hostSelect.replaceChildren(
-    ...(hosts?.selected ? [] : [new Option('Choose where your bots run…', '', true, true)]),
+    ...(chosen ? [] : [new Option('Choose where your bots run…', '', true, true)]),
     ...choices.map((host) => new Option(host.name, host.id, false, host.id === hosts?.selected))
   )
 }
@@ -119,7 +121,10 @@ async function refresh(retrying = false): Promise<void> {
     hosts ??= await frame.plugin.request('hosts.get', {})
     if (generation !== hostGeneration) return
     renderHosts()
-    if (!hosts.selected) {
+    // No choice yet, or the chosen server is no longer paired: nothing is asked of any host.
+    if (!hosts.selected || hosts.message) {
+      if (chatting) showBot(undefined)
+      bots = []
       message.hidden = false
       message.textContent = hosts.message || 'Choose where your bots run.'
       running.hidden = true
@@ -134,8 +139,8 @@ async function refresh(retrying = false): Promise<void> {
       running.hidden = true
       retry.hidden = false
       bots = []
-      chatView.close()
-      chatting = undefined
+      // Back to the list, sidebar and all: closing only the chat would leave a narrow panel empty.
+      showBot(undefined)
       return
     }
     const next = await frame.plugin.request('bots.list', {})

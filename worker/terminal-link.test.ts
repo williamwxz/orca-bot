@@ -1,7 +1,7 @@
 import { assert, test } from 'orca/testing'
 import { gunzipSync } from 'node:zlib'
 import { createRelay } from './relay-host.ts'
-import { READY } from './relay-frames.ts'
+import { MAX_REQUEST_BYTES, READY, lineReader, pack, unpack } from './relay-frames.ts'
 import { createTerminalLink, loaderCommand, pluginBundle } from './terminal-link.ts'
 import type { Bundle, LinkDeps, Saved } from './terminal-link.ts'
 
@@ -299,4 +299,14 @@ test('switching to another paired host closes the first host\u2019s terminal', a
     await new Promise((resolve) => setImmediate(resolve))
   assert.equal(server.terminals.get('term_1')!.status, 'exited')
   assert.equal(server.terminals.get('term_2')!.status, 'running')
+})
+
+test('a host reads no oversized line or request', () => {
+  const lines: string[] = []
+  const feed = lineReader((line) => lines.push(line), 10)
+  feed('short\n' + 'x'.repeat(25))
+  feed('y'.repeat(30) + '\nafter\n')
+  assert.deepEqual(lines, ['short', 'after'])
+  assert.deepEqual(unpack(pack({ a: 1 }), MAX_REQUEST_BYTES), { a: 1 })
+  assert.throws(() => unpack(pack({ text: 'z'.repeat(3_000_000) }), MAX_REQUEST_BYTES))
 })
