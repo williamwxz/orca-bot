@@ -35,19 +35,32 @@ Grok signed in on this computer.
 2. The panel lists your bots. With none yet, press **Jump to Bot Dashboard** and
    create one there.
 3. Click a bot to open its chat window. Type a message and press Enter. While
-   the bot works you see a moving avatar and **Working · 3s**.
-4. Press **Open bot** for the full chat in a browser tab: earlier history,
-   approvals, attachments, routines, models and settings all live there.
+   the bot works you see a moving avatar and **Working · 3s**. Press **+**,
+   paste or drop to send photos (PNG, JPEG, GIF, WebP up to 10 MB) and other
+   files (up to 25 MB), at most ten per message, when bots run on this computer.
+4. Right-click a bot and choose **Open native OpenMausBot** for the full chat in
+   a browser tab: earlier history, approvals, routines and settings all live
+   there. It is offered only when bots run on this computer.
+
+In a panel 720px or wider, the bot list stays on the left and the open chat
+fills the right, as in OpenMausBot.
 
 Good to know:
 
 - Open **Settings → MCP Connectors → Manage** to discover connectors from Claude Code,
   Claude Desktop, Cursor, Codex, Gemini CLI, opencode and Antigravity on the chosen host.
+  Connectors that enabled Claude Code plugins bring are listed under **Claude plugins**;
+  OpenMausBot signs in to those services itself.
   Use **Providers** to turn connectors on and **By Bot** to audit and toggle each bot’s
   access. In a bot’s chat, the **Model** and **Connectors** pills let you switch ready AI
   models and assign enabled connectors without leaving the conversation; both pickers
   are also available in the bot context menu. Model changes wait until the bot is idle
   and update its active thread. Provider and approval restrictions still apply.
+  The computer icon in a chat (or **Backend** in the bot context menu) opens the
+  Backend panel: where the bot may use a computer (Auto, Cloud desktop, Private
+  desktop, This computer, Browser or Off), with what OpenMausBot reports about each.
+  Setting up or repairing a computer, and putting a full-access bot on This computer,
+  stay in native OpenMausBot.
   Newly enabled connectors start with no bots assigned. Existing custom servers appear
   under **OpenMausBot**. Disable keeps credentials there; Remove deletes the server and
   its stored credentials and clears its bot assignments. First-run setup never imports tools.
@@ -67,7 +80,7 @@ Good to know:
 
 ## Settings
 
-The gear button next to **Jump to Bot Dashboard** opens Settings:
+The gear button in the panel header opens Settings:
 
 - **Bots run on**: this computer or a paired Orca server (see below).
 - **Permissions**: the choices from the setup card, which you can change at any
@@ -107,9 +120,8 @@ code. An unavailable server never falls back to a different bot team on this
 computer.
 
 From a paired client you can manage bots, change permissions, manage MCP connectors from
-apps on the server, and install or stop OpenMausBot. The Bot Dashboard opens
-in the paired desktop's Orca browser and reuses its tab; plugin-owned servers
-auto-pair. Keep Orca connected with remote server browsing hosted on this device.
+apps on the server, and install or stop OpenMausBot. The panel does not open
+native OpenMausBot or send files for bots on a paired server.
 Permissions and installation consent persist in `~/.orca-bot/preferences.json`
 on the bot host, shared by its local plugin and paired clients. Existing host
 preferences take precedence over a stale `paired-client.json` cache on startup;
@@ -121,7 +133,8 @@ lock, and installation uses unique staging directories.
 These paths have fake-dependency coverage; two-computer live verification is pending.
 
 Right-click a bot row to pin, rename, assign or create a group, or delete with
-inline confirmation. MausBot offers **Hide from list** instead of deletion.
+inline confirmation. Drag a bot onto a group heading, or onto a bot in that group,
+to move it there; dropping on **Pinned** pins it. MausBot offers **Hide from list** instead of deletion.
 Pinned bots and named groups get headings; an ungrouped roster stays flat.
 
 ## Security review

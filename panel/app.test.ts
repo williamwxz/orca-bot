@@ -1,5 +1,5 @@
 import { test, assert } from 'orca/testing'
-import { INSTALL_NOTICE } from '../shared/omb-version.ts'
+import { INSTALL_NOTICE, TESTED_OPENMAUSBOT_VERSION } from '../shared/omb-version.ts'
 
 class Element {
   children: Element[] = []
@@ -229,7 +229,7 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
     assert.equal(get('settings-install-card').hidden, false)
     assert.match(
       get('install-card-notice').textContent,
-      /openmausbot@0.1.169.*npm.*75 MB.*~\/.orca-bot/
+      new RegExp(`openmausbot@${TESTED_OPENMAUSBOT_VERSION}.*npm.*75 MB.*~/.orca-bot`)
     )
     assert.equal(
       calls.some((call) => call.name === 'server.install'),
@@ -257,12 +257,51 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
     win.emit('pageshow')
     await flush()
     assert.equal(get('setup').hidden, true)
+    // The chat header has only the back button and the bot; the Dashboard opens from the bot's menu.
+    assert.equal(get('bot-view').children[0].children.length, 3)
+    assert.equal(get('bot-view').children[0].children[2].attributes.get('aria-label'), 'Backend: Auto')
     get('bot-view').children[0].children[0].emit('click')
     assert.equal(get('list-header').hidden, false)
     assert.equal(get('setup').hidden, false)
-    get('open-page').emit('click')
+    const openBot = () => {
+      get('roster').children.find((child) => child.className.startsWith('bot-row'))!.emit('contextmenu')
+      get('bot-menu').children.find((child) => child.textContent === 'Open native OpenMausBot')!.emit('click')
+    }
+    openBot()
     await flush()
-    assert.deepEqual(calls.find((call) => call.name === 'chat.open')?.input, {})
+    assert.deepEqual(calls.find((call) => call.name === 'chat.open')?.input, {
+      botId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+    })
+    holdOpen = true
+    openBot()
+    await flush()
+    {
+    const menu = get('bot-menu')
+    const row = get('roster').children.find((child) => child.className.startsWith('bot-row'))!
+    const trigger = row.children[0]
+    assert.equal(trigger.disabled, false)
+    assert.equal(trigger.attributes.get('aria-disabled'), 'true')
+    row.emit('keydown', { key: 'ContextMenu', preventDefault() {}, stopPropagation() {} })
+    assert.equal(menu.hidden, false)
+    assert.equal((doc as any).activeElement, menu.children[0])
+    assert.equal(menu.style.left, '20px')
+    assert.equal(menu.style.top, '100px')
+    doc.emit('keydown', { key: 'ArrowDown', preventDefault() {} })
+    assert.equal((doc as any).activeElement, menu.children[1])
+    doc.emit('keydown', { key: 'ArrowUp', preventDefault() {} })
+    assert.equal((doc as any).activeElement, menu.children[0])
+    doc.emit('keydown', { key: 'ArrowUp', preventDefault() {} })
+    assert.equal((doc as any).activeElement, menu.children.at(-1))
+    doc.emit('keydown', { key: 'Escape', preventDefault() {} })
+    assert.equal(menu.hidden, true)
+    assert.equal((doc as any).activeElement, trigger)
+    row.emit('keydown', { key: 'F10', shiftKey: true, preventDefault() {}, stopPropagation() {} })
+    assert.equal(menu.hidden, false)
+    doc.emit('keydown', { key: 'Escape', preventDefault() {} })
+    finishOpen!()
+    holdOpen = false
+    await flush()
+    }
     get('setup-allow').emit('click')
     await flush()
     assert.equal(get('setup-allow').disabled, true)
@@ -357,9 +396,6 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
     })
 
     assert.equal(calls.some((call) => call.name === 'tools.import'), false)
-    get('open-page').emit('click')
-    await flush()
-    assert.match(get('toast').children[0].textContent, /^Saved/)
     // The same single install card handles an existing server that needs an update.
     for (const target of ['local', 'mini-1']) {
       host = target
@@ -376,33 +412,11 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
     await flush()
     assert.equal(get('roster').children[0].textContent, 'Pinned')
     const menu = get('bot-menu')
-    holdOpen = true
-    get('open-page').emit('click')
-    await flush()
+    // On a paired server the bot menu has no way into the Dashboard.
     let row = get('roster').children.find((child) => child.className.startsWith('bot-row'))!
-    const trigger = row.children[0]
-    assert.equal(trigger.disabled, false)
-    assert.equal(trigger.attributes.get('aria-disabled'), 'true')
-    row.emit('keydown', { key: 'ContextMenu', preventDefault() {}, stopPropagation() {} })
-    assert.equal(menu.hidden, false)
-    assert.equal((doc as any).activeElement, menu.children[0])
-    assert.equal(menu.style.left, '20px')
-    assert.equal(menu.style.top, '100px')
-    doc.emit('keydown', { key: 'ArrowDown', preventDefault() {} })
-    assert.equal((doc as any).activeElement, menu.children[1])
-    doc.emit('keydown', { key: 'ArrowUp', preventDefault() {} })
-    assert.equal((doc as any).activeElement, menu.children[0])
-    doc.emit('keydown', { key: 'ArrowUp', preventDefault() {} })
-    assert.equal((doc as any).activeElement, menu.children.at(-1))
+    row.emit('contextmenu')
+    assert.equal(menu.children.some((child) => child.textContent === 'Open native OpenMausBot'), false)
     doc.emit('keydown', { key: 'Escape', preventDefault() {} })
-    assert.equal(menu.hidden, true)
-    assert.equal((doc as any).activeElement, trigger)
-    row.emit('keydown', { key: 'F10', shiftKey: true, preventDefault() {}, stopPropagation() {} })
-    assert.equal(menu.hidden, false)
-    doc.emit('keydown', { key: 'Escape', preventDefault() {} })
-    finishOpen!()
-    holdOpen = false
-    await flush()
     const openMenu = () => {
       get('roster')
         .children.find((child) => child.className.startsWith('bot-row'))!

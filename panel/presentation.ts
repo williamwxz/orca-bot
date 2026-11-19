@@ -2,7 +2,11 @@ import type { ChatMessage } from '../shared/chat.ts'
 
 export function threadPreview(messages: ChatMessage[]): string | undefined {
   const last = messages.findLast((message) => message.kind === 'text')
-  return last?.text.split(/\r?\n/, 1)[0].trim() || undefined
+  if (!last) return undefined
+  const first = last.text.split(/\r?\n/, 1)[0].trim()
+  const attachments = last.attachments ?? []
+  if (first || !attachments.length) return first || undefined
+  return attachments.length === 1 ? `Sent ${attachments[0].name}` : `Sent ${attachments.length} files`
 }
 
 export function dayLabel(at: number, previous: number | undefined, now = Date.now()): string | undefined {

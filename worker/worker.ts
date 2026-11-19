@@ -12,6 +12,10 @@ import { defaultImportDeps } from './import-tools.ts'
 import { defaultLinkDeps, findAgents, syncAgentLinks } from './agent-link.ts'
 import type { Preferences, SetupAnswer } from './protocol.ts'
 import { readThread, sendMessage, newSendId } from './omb-chat.ts'
+import { uploadAttachment } from './omb-attachments.ts'
+import { computerStatus } from './omb-computer.ts'
+import { MAX_ATTACHMENTS, composeMessage } from '../shared/attachments.ts'
+import type { Attachment } from '../shared/attachments.ts'
 import type { OrcaWorkerApi } from 'orca/worker'
 import { openChat, repairChat, validBotId } from './omb-open.ts'
 import type { OpenInput, OpenResult } from './omb-open.ts'
@@ -69,6 +73,8 @@ export type WorkerDeps = {
   actOnBot?: (input: { port: number } & BotAction) => Promise<void>
   readThread: typeof readThread
   sendMessage: typeof sendMessage
+  computerStatus?: typeof computerStatus
+  uploadAttachment?: (input: { port: number; name: string; mime: string; data: string }) => ReturnType<typeof uploadAttachment>
   listBots: (input: { port: number }) => Promise<Bot[]>
 }
 
@@ -120,6 +126,8 @@ export function defaultWorkerDeps(): WorkerDeps {
     actOnBot: (input) => actOnBot(input, http),
     readThread: (input) => readThread(input, cli),
     sendMessage: (input) => sendMessage(input, cli),
+    uploadAttachment: (input) => uploadAttachment(input),
+    computerStatus: (input) => computerStatus(input, http),
     listBots: (input) => listBots(input, http)
   }
 }
@@ -610,19 +618,46 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
   orca.panels.handle('thread.read', (input: { botId: string; limit?: number }) =>
     deps.readThread({ port: knownBot(input), botId: input.botId, limit: input.limit })
   )
-  orca.panels.handle('message.send', async (input: { botId: string; text: string }) => {
-    const port = knownBot(input)
-    sends++
-    try {
-      return await deps.sendMessage({
-        port,
-        botId: input.botId,
-        text: input.text,
-        sendId: newSendId()
-      })
-    } finally {
-      sends--
+  // Uploaded files by opaque ID. Their server paths stay here; the panel only ever holds the ID.
+  const uploads = new Map<string, Attachment>()
+  orca.panels.handle(
+    'message.send',
+    async (input: { botId: string; text: string; attachments?: string[] }) => {
+      const port = knownBot(input)
+      const ids = input.attachments ?? []
+      if (!Array.isArray(ids) || ids.length > MAX_ATTACHMENTS || ids.some((id) => typeof id !== 'string'))
+        throw new Error(`Send at most ${MAX_ATTACHMENTS} files in one message.`)
+      const files = ids.map((id) => uploads.get(id))
+      if (files.some((file) => !file)) throw new Error('Attach the files again, then send.')
+      const text = files.length ? composeMessage(String(input.text ?? ''), files as Attachment[]) : input.text
+      if (files.length && text.length > 16000)
+        throw new Error('This message is too long with its attachments. Shorten it and send again.')
+      sends++
+      try {
+        const sent = await deps.sendMessage({ port, botId: input.botId, text, sendId: newSendId() })
+        for (const id of ids) uploads.delete(id)
+        return sent
+      } finally {
+        sends--
+      }
     }
+  )
+  orca.panels.handle('computer.status', (input: { botId: string }) => {
+    const port = knownBot(input)
+    if (!deps.computerStatus) return {}
+    const threadId = lastRoster.find((bot) => bot.id === input.botId)?.activeTaskId
+    return deps.computerStatus({ port, botId: input.botId, threadId })
+  })
+  // Not relayed: on a paired server the bytes would crawl through the terminal link.
+  orca.panels.handle('attachment.upload', async (input: { name: string; mime: string; data: string }) => {
+    const port = runningPort()
+    if (!deps.uploadAttachment) throw new Error('Attachments are unavailable.')
+    const stored = await deps.uploadAttachment({ port, name: input?.name, mime: input?.mime, data: input?.data })
+    const id = newSendId()
+    uploads.set(id, stored)
+    // Unsent uploads are forgotten oldest first; the files stay in OpenMausBot's store.
+    while (uploads.size > 200) uploads.delete(uploads.keys().next().value!)
+    return { id, kind: stored.kind, name: stored.name }
   })
   orca.panels.handle('chat.open', (input: { botId?: string }) => chat(input))
   orca.panels.handle('models.list', async () => {

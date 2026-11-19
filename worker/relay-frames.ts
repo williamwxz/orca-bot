@@ -51,6 +51,7 @@ export const RELAYED = [
   'bots.act',
   'groups.rename',
   'thread.read',
+  'computer.status',
   'message.send',
   'bots.addMausBot',
   'chat.open',

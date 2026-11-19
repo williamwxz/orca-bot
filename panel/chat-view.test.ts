@@ -458,3 +458,149 @@ test('chat capability pills count allowed connectors, gate working models and di
     }
   }
 })
+
+test('files upload when picked, wait before sending, go out by ID, and never cross a host change', async () => {
+  const saved = ['document', 'window'].map((k) => Object.getOwnPropertyDescriptor(globalThis, k))
+  const documentFake = new Element('document') as any
+  documentFake.createElement = (tag: string) => new Element(tag)
+  documentFake.createTextNode = (text: string) => {
+    const el = new Element('#text')
+    el.textContent = text
+    return el
+  }
+  documentFake.hidden = false
+  Object.defineProperty(globalThis, 'document', { value: documentFake, configurable: true })
+  Object.defineProperty(globalThis, 'window', { value: new Element('window'), configurable: true })
+  const root = new Element('section')
+  const bot: Bot = { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', name: 'Helper', modelLabel: 'm', main: false, unread: false, state: 'idle', title: '' }
+  const uploads: any[] = []
+  const sends: any[] = []
+  const notes: string[] = []
+  let finishUpload!: () => void
+  let remote = false
+  let host = 0
+  let history: any[] = []
+  let holdSend = false
+  let failSend!: (error: Error) => void
+  const file = (name: string, type: string, size = 3) => ({ name, type, size, arrayBuffer: async () => new TextEncoder().encode('hi!').buffer })
+  try {
+    const view = createChatView(
+      root as any,
+      {
+        plugin: {
+          request: (async (name: string, input: any) => {
+            if (name === 'attachment.upload') {
+              uploads.push(input)
+              await new Promise<void>((resolve) => { finishUpload = resolve })
+              return { id: `upload-${uploads.length}`, kind: input.mime === 'image/png' ? 'image' : 'file', name: input.name }
+            }
+            if (name === 'message.send') {
+              sends.push(input)
+              if (holdSend) return new Promise((_resolve, reject) => { failSend = reject })
+              return { sendId: 'x' }
+            }
+            return { hasMore: false, messages: history }
+          }) as any
+        }
+      },
+      () => new Element('span') as any,
+      () => {},
+      () => {},
+      undefined,
+      { changed: async () => {}, manage: () => {}, notify: (text: string) => notes.push(text), hostGeneration: () => host },
+      () => (remote ? 'remote' : undefined)
+    )
+    view.open(bot)
+    await flush()
+    const nodes = () => all(root)
+    const attach = nodes().find((n) => n.attributes.get('aria-label') === 'Attach files or photos')!
+    const fileInput = nodes().find((n) => n.tag === 'input')! as any
+    const send = nodes().find((n) => n.attributes.get('aria-label') === 'Send')!
+    const form = nodes().find((n) => n.tag === 'form')!
+    const textarea = nodes().find((n) => n.tag === 'textarea')!
+    const tray = () => nodes().find((n) => n.className === 'composer-files')!
+    assert.equal(attach.hidden, false)
+    fileInput.files = [new File(['hi!'], 'shot.png', { type: 'image/png' }), file('huge.mov', 'video/quicktime', 30 * 1024 * 1024)]
+    fileInput.emit('change')
+    assert.match(notes[0], /huge\.mov is larger than 25 MB/)
+    assert.match(tray().textContent, /shot\.png.*Uploading…/)
+    assert.equal(send.disabled, true, 'nothing sends while a file is uploading')
+    await flush()
+    assert.deepEqual(uploads[0], { name: 'shot.png', mime: 'image/png', data: 'aGkh' })
+    finishUpload()
+    await flush()
+    assert.equal(send.disabled, false, 'a photo alone can be sent')
+    // Enter submits even with Send disabled: an over-long draft must not eat the attachment.
+    textarea.value = 'x'.repeat(16001)
+    textarea.emit('input')
+    assert.equal(send.disabled, true)
+    form.emit('submit')
+    await flush()
+    assert.equal(sends.length, 0)
+    assert.match(tray().textContent, /shot\.png/)
+    textarea.value = ''
+    textarea.emit('input')
+    form.emit('submit')
+    await flush()
+    await flush()
+    assert.deepEqual(sends, [{ botId: bot.id, text: '', attachments: ['upload-1'] }])
+    assert.equal(tray().hidden, true)
+    assert.ok(nodes().some((n) => n.className === 'chat-files' && n.textContent === '🖼 shot.png'))
+    // History arrives from the worker with names only.
+    history = [{ id: 'm1', at: Date.now(), role: 'user', kind: 'text', text: 'See', attachments: [{ kind: 'file', name: 'plan.pdf' }] }]
+    view.open(bot)
+    await flush()
+    assert.ok(nodes().some((n) => n.className === 'chat-files' && n.textContent === '📎 plan.pdf'))
+    // A file attached on one host is gone after switching hosts, even for the same bot ID,
+    // and an upload that finishes after the switch is dropped.
+    fileInput.files = [new File(['hi!'], 'local-only.png', { type: 'image/png' })]
+    fileInput.emit('change')
+    await flush()
+    assert.match(tray().textContent, /local-only\.png/)
+    host++
+    finishUpload()
+    await flush()
+    view.open(bot)
+    await flush()
+    assert.equal(tray().hidden, true)
+    form.emit('submit')
+    await flush()
+    assert.equal(sends.length, 1)
+    // A send still in flight when the host changes must not put its draft or files into the
+    // new host's composer when it fails.
+    fileInput.files = [new File(['hi!'], 'in-flight.png', { type: 'image/png' })]
+    fileInput.emit('change')
+    await flush()
+    finishUpload()
+    await flush()
+    textarea.value = 'for the old host'
+    textarea.emit('input')
+    holdSend = true
+    form.emit('submit')
+    await flush()
+    assert.equal(sends.length, 2)
+    host++
+    view.open(bot)
+    await flush()
+    failSend(new Error('offline'))
+    await flush()
+    await flush()
+    assert.equal(tray().hidden, true)
+    assert.equal(textarea.value, '')
+    assert.equal(nodes().some((n) => /in-flight\.png|for the old host/.test(n.textContent) && n.className.includes('chat-message')), false)
+    holdSend = false
+    remote = true
+    view.open(bot)
+    assert.equal(attach.hidden, true)
+    fileInput.files = [file('a.txt', 'text/plain')]
+    fileInput.emit('change')
+    assert.match(notes.at(-1)!, /only when bots run on this computer/)
+    assert.equal(uploads.length, 3)
+    view.close()
+  } finally {
+    for (const [i, k] of ['document', 'window'].entries()) {
+      if (saved[i]) Object.defineProperty(globalThis, k, saved[i]!)
+      else delete (globalThis as any)[k]
+    }
+  }
+})

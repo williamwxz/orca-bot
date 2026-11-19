@@ -283,7 +283,12 @@ test('thread and send require a roster bot, with fresh worker-generated send IDs
           sendMessage: async (input) => {
             calls.push(input)
             return { sendId: input.sendId }
-          }
+          },
+          uploadAttachment: async (input) => ({
+            kind: 'image',
+            path: '/server/data/attachments/secret-place.png',
+            name: input.name
+          })
         })
     },
     { host: mockHost() }
@@ -308,6 +313,17 @@ test('thread and send require a roster bot, with fresh worker-generated send IDs
     assert.match(calls[1].sendId, /^[a-zA-Z0-9_-]{16,80}$/)
     assert.notEqual(calls[1].sendId, 'untrusted-panel-value')
     assert.notEqual(calls[1].sendId, calls[2].sendId)
+    // The panel gets an opaque ID for an upload; the server path stays in the worker.
+    const uploaded = await worker.request('attachment.upload', { name: 'shot.png', mime: 'image/png', data: 'aGk=' })
+    assert.deepEqual(Object.keys(uploaded).sort(), ['id', 'kind', 'name'])
+    assert.equal(JSON.stringify(uploaded).includes('secret-place'), false)
+    await assert.rejects(worker.request('message.send', { botId, text: 'x', attachments: ['unknown-id'] }), /Attach the files again/)
+    await assert.rejects(worker.request('message.send', { botId, text: 'x', attachments: Array(11).fill(uploaded.id) }), /at most 10/)
+    await assert.rejects(worker.request('message.send', { botId, text: 'y'.repeat(15990), attachments: [uploaded.id] }), /too long with its attachments/)
+    await worker.request('message.send', { botId, text: ' Look ', attachments: [uploaded.id] })
+    assert.equal(calls.at(-1).text, 'Look\n\n<attached-image path="/server/data/attachments/secret-place.png" name="shot.png" />')
+    // An ID is spent once sent.
+    await assert.rejects(worker.request('message.send', { botId, text: 'x', attachments: [uploaded.id] }), /Attach the files again/)
   } finally {
     await worker.deactivate()
   }

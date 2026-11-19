@@ -2,7 +2,7 @@ import { agents, agentKeys, MCP_ENTRY_NAME } from '../shared/agents.ts'
 import { opencodeEntries } from './agent-config.ts'
 import { execFile } from 'node:child_process'
 import * as fs from 'node:fs'
-import { join, basename } from 'node:path'
+import { join, basename, relative, isAbsolute } from 'node:path'
 import { childEnvironment } from './child-environment.ts'
 import type { EnvironmentDeps } from './child-environment.ts'
 import { defaultCliDeps } from './omb-cli.ts'
@@ -12,6 +12,10 @@ export type Tool = { name: string; source: string }
 export type ImportDeps = EnvironmentDeps & {
   read: (path: string) => string
   exists: (path: string) => boolean
+  /** Folder names in a directory; used to find Claude's synced plugins. */
+  list?: (dir: string) => string[]
+  /** Resolves symbolic links, so a plugin file that points outside its folder is not read. */
+  realpath?: (path: string) => string
   claudeEnv: () => NodeJS.ProcessEnv
   listCodex: (file: string, env: NodeJS.ProcessEnv) => Promise<unknown>
   owned: (port: number) => Promise<boolean>
@@ -113,6 +117,8 @@ export function defaultImportDeps(): ImportDeps {
   return {
     ...cli,
     read: (path) => fs.readFileSync(path, 'utf8'),
+    list: (dir) => fs.readdirSync(dir),
+    realpath: (path) => fs.realpathSync(path),
     claudeEnv: () => claudeEnvironment(server, false).env,
     owned: (port) => isPluginServer(port, server),
     listCodex: (file, env) =>
@@ -145,6 +151,68 @@ export function defaultImportDeps(): ImportDeps {
     }
   }
 }
+/** Plugin folders whose MCP servers Claude Code loads: synced (account) plugins and enabled installed ones. */
+function claudePluginDirs(deps: ImportDeps, configDir: string): string[] {
+  const dirs: string[] = []
+  const synced = join(configDir, 'plugins/synced')
+  try {
+    for (const org of deps.list?.(synced) ?? []) {
+      try {
+        const manifest = JSON.parse(deps.read(join(synced, org, 'manifest.json')))
+        const folders = new Set(deps.list?.(join(synced, org)) ?? [])
+        for (const plugin of Array.isArray(manifest?.plugins) ? manifest.plugins : []) {
+          if (!object(plugin) || typeof plugin.name !== 'string' || /[\\/]|^\.\.?$/.test(plugin.name)) continue
+          // The manifest's generation names the live folder; older generations linger until cleanup.
+          const live = `${plugin.name}~g${plugin.generation}`
+          const folder = folders.has(live) ? live : plugin.name
+          if (folders.has(folder)) dirs.push(join(synced, org, folder))
+        }
+      } catch {}
+    }
+  } catch {}
+  try {
+    const enabled = JSON.parse(deps.read(join(configDir, 'settings.json')))?.enabledPlugins
+    const installed = JSON.parse(deps.read(join(configDir, 'plugins/installed_plugins.json')))?.plugins
+    if (object(enabled) && object(installed))
+      for (const [key, entries] of Object.entries(installed))
+        if (enabled[key] === true && Array.isArray(entries))
+          for (const entry of entries)
+            if (object(entry) && typeof entry.installPath === 'string') dirs.push(entry.installPath)
+  } catch {}
+  return dirs
+}
+/** Reads a plugin file only when it really lives inside the plugin folder, symbolic links resolved. */
+function readInside(deps: ImportDeps, dir: string, file: string): unknown {
+  const real = deps.realpath ?? ((path: string) => path)
+  const resolved = real(file)
+  const inside = relative(real(dir), resolved)
+  if (!inside || inside.startsWith('..') || isAbsolute(inside)) throw new Error('Outside the plugin.')
+  // Read the path that was checked, so a link swapped afterwards cannot redirect the read.
+  return JSON.parse(deps.read(resolved))
+}
+function pluginServers(deps: ImportDeps, dir: string): Record<string, unknown> | undefined {
+  let source: unknown
+  try {
+    const manifest = readInside(deps, dir, join(dir, '.claude-plugin/plugin.json'))
+    source = object(manifest) ? manifest.mcpServers : undefined
+  } catch {}
+  if (typeof source === 'string') {
+    try {
+      source = readInside(deps, dir, join(dir, source))
+    } catch {
+      return
+    }
+  } else if (source === undefined) {
+    try {
+      source = readInside(deps, dir, join(dir, '.mcp.json'))
+    } catch {
+      return
+    }
+  }
+  if (!object(source)) return
+  return object(source.mcpServers) ? source.mcpServers : source
+}
+
 export async function candidates(deps: ImportDeps): Promise<Candidate[]> {
   const found: Candidate[] = [],
     names = new Set<string>(),
@@ -184,6 +252,23 @@ export async function candidates(deps: ImportDeps): Promise<Candidate[]> {
         for (const [name, d] of Object.entries(raw.mcpServers)) add(name, d, source)
     } catch {}
   }
+  const configDirs: string[] = []
+  try {
+    const home = deps.claudeEnv().CLAUDE_CONFIG_DIR
+    if (home) configDirs.push(home)
+  } catch {}
+  configDirs.push(join(deps.home, '.claude'))
+  const pluginDirs = new Set<string>()
+  for (const configDir of configDirs)
+    for (const dir of claudePluginDirs(deps, configDir)) {
+      if (pluginDirs.has(dir)) continue
+      pluginDirs.add(dir)
+      const servers = pluginServers(deps, dir)
+      if (servers)
+        for (const [name, entry] of Object.entries(servers))
+          // ${CLAUDE_PLUGIN_ROOT} and ${ENV} values only resolve inside Claude Code.
+          if (!JSON.stringify(entry).includes('${')) add(name, entry, 'Claude plugins')
+    }
   try {
     const env = childEnvironment(deps)
     const file = (env.PATH ?? '')

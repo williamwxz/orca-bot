@@ -1,10 +1,11 @@
 import { validateModelSelection } from '../shared/models.ts'
 import { defaultHttpDeps, HttpStatusError } from './omb-http.ts'
 import type { HttpDeps } from './omb-http.ts'
-import { mainFirst, validateBotCreate, validateGroupName } from '../shared/roster.ts'
+import { COMPUTERS, mainFirst, validateBotCreate, validateGroupName } from '../shared/roster.ts'
 import type { BotCreate, BotCreated, Bot, BotAction, GroupRename } from '../shared/roster.ts'
 import { validBotId } from './omb-open.ts'
 import { addableMausBot, visibleBot } from '../shared/appearance.ts'
+import { backendLabels } from './omb-models.ts'
 
 export async function listBots(
   input: { port: number; includeAvatars?: boolean },
@@ -24,7 +25,13 @@ export async function listBots(
           .map((item) => item.trim())
       : []
     let servers: Record<string, any>[] | undefined
+    let backends = new Map<string, string>()
     if (input.includeAvatars !== false) {
+      try {
+        backends = backendLabels(await deps.request(input.port, '/api/instances'))
+      } catch {
+        // Backend names are optional; the model label still shows.
+      }
       try {
         const mcp = (await deps.request(input.port, '/api/mcp/servers')) as { servers?: unknown }
         if (Array.isArray(mcp?.servers))
@@ -80,6 +87,9 @@ export async function listBots(
             }
           : {}),
         model: `${selection.instanceId}/${selection.model}`,
+        ...(backends.has(selection.instanceId)
+          ? { backendLabel: backends.get(selection.instanceId) }
+          : {}),
         modelLabel:
           [selection.label, bot.modelLabel]
             .find((label) => typeof label === 'string' && label.trim())
@@ -89,6 +99,7 @@ export async function listBots(
         ...(addable ? { addable: true } : {}),
         ...(bot.pinned === true ? { pinned: true } : {}),
         ...(section ? { section } : {}),
+        ...((COMPUTERS as readonly unknown[]).includes(bot.computer) ? { computer: bot.computer } : {}),
         ...(bot.defaultBot && typeof bot.defaultBot === 'object' ? { defaultBot: true } : {})
       })
     }
@@ -136,6 +147,9 @@ export function validateBotAction(input: BotAction): void {
     if (input.section !== null) {
       validateGroupName(input.section)
     }
+  } else if (input.action === 'computer') {
+    if (input.computer !== 'auto' && !(COMPUTERS as readonly unknown[]).includes(input.computer))
+      throw new Error('Choose where this bot works.')
   } else if (input.action !== 'delete') {
     throw new Error('Unsupported bot action.')
   }
@@ -164,6 +178,13 @@ export async function actOnBot(
         },
         'PATCH'
       )
+      return
+    }
+    if (input.action === 'computer') {
+      // No acknowledgeLocalAuto: only OpenMausBot's own warning dialog may send that.
+      await deps.request(input.port, `/api/bots/${input.botId}`, {
+        computer: input.computer === 'auto' ? null : input.computer
+      })
       return
     }
     if (input.action === 'pin') {
@@ -209,6 +230,15 @@ export async function actOnBot(
           )
       }
       throw new Error('Could not change this bot’s model. Refresh and try again.')
+    }
+    if (input.action === 'computer') {
+      if (error instanceof HttpStatusError && error.status === 400 && input.computer === 'local')
+        throw new Error(
+          'This bot has full access. Choose This computer for it in native OpenMausBot, which asks you to confirm first.'
+        )
+      if (error instanceof HttpStatusError && error.status === 409)
+        throw new Error('Wait until this bot finishes, then try again.')
+      throw new Error('Could not change where this bot works. Try again from native OpenMausBot.')
     }
     if (error instanceof HttpStatusError && error.status === 409 && input.action === 'group') {
       throw new Error(

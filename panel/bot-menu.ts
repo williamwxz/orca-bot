@@ -24,7 +24,9 @@ export function createBotMenu(
     manage(botId: string, enabled: boolean): void
   },
   models?: { frame: FrameApi; hooks: CapabilityHooks },
-  create?: (input: { name?: string; section?: string }) => Promise<void>
+  create?: (input: { name?: string; section?: string }) => Promise<void>,
+  /** Opens a bot in OpenMausBot's own page; unavailable when bots run on a paired server. */
+  dashboard?: { open(botId: string): void; available(): boolean }
 ) {
   const modelPicker = models ? createCapabilityPicker(menu, models.frame, models.hooks) : undefined
   let createForm = false
@@ -357,6 +359,15 @@ export function createBotMenu(
     const rect = trigger?.getBoundingClientRect?.()
     const x = event?.clientX || rect?.left || 24
     const y = event?.clientY || rect?.bottom || 80
+    const openItem =
+      dashboard?.available()
+        ? [
+            menuItem('Open native OpenMausBot', () => {
+              close()
+              dashboard.open(bot.id)
+            })
+          ]
+        : []
     const pinItem = menuItem(
       bot.pinned ? 'Unpin' : 'Pin',
       () => void run({ botId: bot.id, action: 'pin', pinned: !bot.pinned })
@@ -365,7 +376,11 @@ export function createBotMenu(
       ? [
           menuItem('Model', () => {
             ++revision
-            void modelPicker!.open('model', bot, trigger ?? menu)
+            void modelPicker!.open('model', bot, trigger ?? menu, 'models')
+          }),
+          menuItem('Backend', () => {
+            ++revision
+            void modelPicker!.open('computer', bot, trigger ?? menu)
           })
         ]
       : []
@@ -394,6 +409,7 @@ export function createBotMenu(
           'danger'
         )
     menu.replaceChildren(
+      ...openItem,
       pinItem,
       ...modelItem,
       ...connectorItems,
@@ -404,7 +420,7 @@ export function createBotMenu(
     )
     menu.hidden = false
     position(x, y)
-    pinItem.focus()
+    ;(openItem[0] ?? pinItem).focus()
   }
 
   document.addEventListener('click', (rawEvent) => {
