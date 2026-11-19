@@ -57,6 +57,8 @@ export type DesktopStatus = DesktopSettings & {
   runtime?: 'Docker' | 'Podman' | 'Apple container'
   /** Set when the state is 'repair'. */
   reason?: DesktopReason
+  /** OpenMausBot could not confirm the desktop's writable shared folder, whatever else is wrong. */
+  folderUnverified?: boolean
   /** The latest setup step started from this plugin: running, done, or failed with fixed words. */
   step?: { id: number; action: DesktopAction; running: boolean; error?: string }
 }

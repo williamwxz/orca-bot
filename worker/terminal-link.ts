@@ -7,6 +7,8 @@ export const TERMINAL_TITLE = 'Bot Team for Orca'
 export const IDLE_MS = 10 * 60 * 1000
 /** The longest a closing link waits for a desktop step: preparing one can take this long. */
 export const SETTLE_MS = 40 * 60 * 1000
+/** Unanswered job checks in a row after which the terminal is taken to be gone. */
+export const SETTLE_UNANSWERED = 5
 export type Bundle = { hash: string; files: Record<string, string> }
 type Host = { id: string; name: string }
 type Session = { host: Host; handle: string; cursor: string }
@@ -190,47 +192,55 @@ export function createTerminalLink(deps: LinkDeps) {
    */
   async function settle(s: Session): Promise<void> {
     const until = deps.now() + SETTLE_MS
+    let unanswered = 0
     while (deps.now() < until) {
-      let running = false
       try {
-        running = (await exchange(s, 'desktop.status', {}, 10000))?.step?.running === true
-      } catch {
-        return
+        const reply = await exchange(s, 'desktop.step', {}, 10000)
+        if (reply?.step?.running !== true) return
+        unanswered = 0
+      } catch (error) {
+        // The host's worker refused (an older version, or no such request): it has no job.
+        if (error instanceof HostAnswer) return
+        // No answer: the job may still be running. Keep the terminal, unless it is plainly gone.
+        if (++unanswered >= SETTLE_UNANSWERED) return
       }
-      if (!running) return
       await deps.sleep(3000)
     }
   }
 
-  /** Closes the terminal once the host has no setup step running. Later requests wait for it. */
-  function disconnect(): Promise<void> {
+  /** Lets a session finish its desktop step and close in the background; nothing waits for it. */
+  function retire(s: Session): void {
+    if (session === s) session = undefined
+    void settle(s).then(() => close(s), () => close(s))
+  }
+
+  /**
+   * Closes the terminal once the host has no setup step running. The session is let go at
+   * once, so a later request opens a fresh terminal instead of waiting for the step.
+   */
+  async function disconnect(): Promise<void> {
     cancelIdle()
-    const run = async () => {
-      if (!session) return
-      const s = session
-      await settle(s)
-      await close(s)
-    }
-    const done = queue.then(run, run)
-    queue = done.catch(() => {})
-    return done
+    await queue
+    if (!session) return
+    const s = session
+    session = undefined
+    await settle(s)
+    await close(s)
   }
 
   return {
     /** Sends one panel request to the host's worker. Requests run one at a time. */
     request(host: Host, name: string, input: unknown): Promise<any> {
       const run = async () => {
-        if (session && session.host.id !== host.id) {
-          const old = session
-          await settle(old)
-          await close(old)
-        }
+        // The old host finishes any desktop step on its own; this host does not wait for it.
+        if (session && session.host.id !== host.id) retire(session)
         session ??= await open(host)
         const s = session
         try { return await exchange(s, name, input, name === 'mcp.act' ? 300000 : 30000) }
         catch (error) {
-          // A broken connection is replaced next time; an answer from the host is not.
-          if (!(error instanceof HostAnswer)) await close(s)
+          // A broken connection is replaced next time; an answer from the host is not. The old
+          // terminal still gets the chance to finish a desktop step before it closes.
+          if (!(error instanceof HostAnswer)) retire(s)
           throw error
         }
       }

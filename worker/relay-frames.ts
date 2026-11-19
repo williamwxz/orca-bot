@@ -53,6 +53,7 @@ export const RELAYED = [
   'thread.read',
   'computer.status',
   'desktop.status',
+  'desktop.step',
   'desktop.act',
   'desktop.settings',
   'browser.install',

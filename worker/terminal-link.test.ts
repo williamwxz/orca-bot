@@ -13,7 +13,7 @@ const bundle: Bundle = { hash: '0123456789abcdef', files: { 'worker/relay-host.t
 /** A paired server's Orca as the CLI sees it: terminals keep 2000 lines and lose some spaces. */
 function fakeServer(
   handlers: Record<string, (input: any) => unknown>,
-  options: { worktrees?: unknown[] } = {}
+  options: { worktrees?: unknown[]; hosts?: string[] } = {}
 ) {
   const terminals = new Map<
     string,
@@ -30,7 +30,7 @@ function fakeServer(
   const flag = (args: string[], name: string) => args[args.indexOf(name) + 1]
   const call = async (args: string[]): Promise<any> => {
     calls.push(args)
-    assert.equal(flag(args, '--environment'), host.id)
+    assert.ok((options.hosts ?? [host.id]).includes(flag(args, '--environment')))
     const key = `${args[0]} ${args[1]}`
     if (key === 'worktree list')
       return { worktrees: options.worktrees ?? [{ id: 'repo::/Users/me', isMainWorktree: true }] }
@@ -273,29 +273,65 @@ test('the server terminal closes after the link sits idle, and the next request 
   assert.equal(server.terminals.size, 2)
 })
 
-test('the link stays open until a running private desktop step ends, on idle, host switch or disconnect', async () => {
+test('the link stays open until a running private desktop step ends, and keeps waiting through unanswered checks', async () => {
   // A replace is "remove" then "run" inside the host's worker: closing between them would
-  // leave the desktop removed. The step finishes on the third status check.
+  // leave the desktop removed. The step finishes on the fourth check; one check goes unanswered.
   let checks = 0
   const server = fakeServer({
     status: () => ({ state: 'running', message: '' }),
-    'desktop.status': () => ({ mode: 'shared', state: 'stopped', step: { id: 1, action: 'recreate', running: ++checks < 3 } })
+    'desktop.step': () => {
+      checks++
+      return { step: { id: 1, action: 'recreate', running: checks < 4 } }
+    }
   })
-  const link = createTerminalLink(linkDeps(server))
+  // After the first check, one read of the terminal fails: that check goes unanswered.
+  const deps = linkDeps(server)
+  let dropped = false
+  deps.call = async (args) => {
+    if (checks === 1 && !dropped && args[0] === 'terminal' && args[1] === 'read' && args.includes('--cursor')) {
+      dropped = true
+      throw new Error('connection reset')
+    }
+    return server.call(args)
+  }
+  const link = createTerminalLink(deps)
   await link.request(host, 'status', {})
-  const closing = link.disconnect()
-  await closing
-  assert.equal(checks, 3)
+  await link.disconnect()
+  assert.ok(dropped)
+  assert.equal(checks, 4)
   assert.equal(server.terminals.get('term_1')!.status, 'exited')
-  // A later request waits for the close, then opens a fresh terminal.
-  await link.request(host, 'status', {})
-  assert.equal(server.terminals.get('term_2')!.status, 'running')
-  // A host that cannot answer about desktops is closed without waiting.
+  // A host whose worker has no job request (an older version) closes without waiting.
   const plain = fakeServer({ status: () => ({ state: 'running', message: '' }) })
   const other = createTerminalLink(linkDeps(plain))
   await other.request(host, 'status', {})
   await other.disconnect()
   assert.equal(plain.terminals.get('term_1')!.status, 'exited')
+})
+
+test('switching to another paired host answers at once while the first host finishes its desktop step', async () => {
+  const hostB = { id: 'mini-2', name: 'Mac Studio' }
+  let release!: () => void
+  let running = true
+  const server = fakeServer(
+    {
+      status: () => ({ state: 'running', message: '' }),
+      'desktop.step': () => ({ step: { id: 1, action: 'prepare', running } })
+    },
+    { hosts: [host.id, hostB.id] }
+  )
+  const timers: (() => void)[] = []
+  const deps = linkDeps(server, {}, timers)
+  // Waiting between job checks parks until the test releases it.
+  deps.sleep = () => new Promise<void>((resolve) => { release = () => { running = false; resolve() } })
+  const link = createTerminalLink(deps)
+  await link.request(host, 'status', {})
+  assert.deepEqual(await link.request(hostB, 'status', {}), { state: 'running', message: '' })
+  assert.equal(server.terminals.get('term_1')!.status, 'running', 'host A is still finishing')
+  assert.equal(server.terminals.get('term_2')!.status, 'running')
+  release()
+  for (let i = 0; i < 20 && server.terminals.get('term_1')!.status !== 'exited'; i++)
+    await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(server.terminals.get('term_1')!.status, 'exited')
 })
 
 test('paired launcher detaches with fake process dependencies and validates the returned pid', async () => {

@@ -20,6 +20,8 @@ export type CapabilityHooks = {
   openNative?(botId: string): void
   nativeAvailable?(): boolean
 }
+/** Missed status checks in a row (about a minute) before a step's outcome is called unconfirmed. */
+export const FOLLOW_MISSES = 24
 const stroke = (paths: string) =>
   `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`
 const COMPUTER_ICONS: Record<string, string> = {
@@ -136,12 +138,18 @@ export function createCapabilityPicker(
         const fresh = await refreshStatus()
         if (!current()) return
         const step = status?.desktop?.step
-        const unknown = !fresh || step?.id !== id
-        if (step?.id === id && step.running) return followStep(id)
-        if (unknown && misses < 120) return followStep(id, misses + 1)
+        // Only a fresh report of this step counts; an old snapshot or a failed poll is a miss.
+        if (fresh && step?.id === id && step.running) return followStep(id)
+        if (fresh && step?.id === id) {
+          setupBusy = undefined
+          hooks.notify?.(step.error ?? 'Private desktop updated.')
+          return draw()
+        }
+        if (misses + 1 < FOLLOW_MISSES) return followStep(id, misses + 1)
+        // Give up honestly: drop the stale "running" and offer a re-check.
         setupBusy = undefined
-        if (step?.id === id) hooks.notify?.(step.error ?? 'Private desktop updated.')
-        else hooks.notify?.('Could not confirm how the step ended. Check the private desktop again.')
+        if (status?.desktop?.step?.id === id) status = { ...status, desktop: { ...status.desktop, step: undefined } }
+        hooks.notify?.('Could not confirm how the step ended. Check the private desktop again.')
         draw()
       }, 2500)
     }

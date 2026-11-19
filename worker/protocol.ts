@@ -30,6 +30,7 @@ export type Requests = {
   'message.send': { input: { botId: string; text: string; attachments?: string[] }; output: { sendId: string } }
   'computer.status': { input: { botId: string }; output: ComputerStatus }
   'desktop.status': { input: { botId?: string }; output: DesktopStatus }
+  'desktop.step': { input: Record<string, never>; output: { step?: NonNullable<DesktopStatus['step']> } }
   'desktop.act': { input: { action: DesktopAction; botId?: string }; output: { step: NonNullable<DesktopStatus['step']> } }
   'desktop.settings': { input: Partial<DesktopSettings>; output: DesktopSettings }
   'browser.install': { input: Record<string, never>; output: { installing: true } }

@@ -1,4 +1,5 @@
 import { desktopBlock } from './desktop-setup.ts'
+import { FOLLOW_MISSES } from './capability-picker.ts'
 import type { FrameApi } from './chat-view.ts'
 import type { DesktopAction, DesktopStatus } from '../shared/roster.ts'
 
@@ -26,7 +27,17 @@ export function createDesktopSettings(
   let busy: DesktopAction | 'check' | 'settings' | undefined
   let loadedFor: number | undefined
   let following: number | undefined
+  let misses = 0
   let poll: ReturnType<typeof setTimeout> | undefined
+  /** Gives up following after repeated misses: the outcome is shown as unconfirmed. */
+  function miss(at: number): boolean {
+    if (++misses < FOLLOW_MISSES) return false
+    following = undefined
+    misses = 0
+    if (status?.step?.running) status = { ...status, step: undefined }
+    note.textContent = 'Could not confirm how the last step ended. Check again to see where the desktop is.'
+    return true
+  }
 
   function render(): void {
     setup.replaceChildren()
@@ -116,10 +127,11 @@ export function createDesktopSettings(
       note.textContent = ''
     } catch (error) {
       if (at !== generation()) return
-      // While following a step, a failed poll keeps the controls and tries again.
+      // While following a step, a failed poll keeps the controls and tries again, a while.
       if (following !== undefined) {
         loadedFor = at
-        follow(following, at)
+        if (!miss(at)) follow(following, at)
+        render()
         return
       }
       status = undefined
@@ -128,11 +140,14 @@ export function createDesktopSettings(
     loadedFor = at
     // A step started here or in a Backend panel is still running: follow it to the end.
     const step = status?.step
-    if (step?.running) follow(step.id, at)
-    else if (step && step.id === following) {
+    if (step?.running && (following === undefined || step.id === following)) {
+      misses = 0
+      follow(step.id, at)
+    } else if (step && step.id === following) {
       following = undefined
+      misses = 0
       notify(step.error ?? 'Private desktop updated.')
-    } else if (following !== undefined) follow(following, at)
+    } else if (following !== undefined && !miss(at)) follow(following, at)
     render()
   }
 
@@ -179,6 +194,7 @@ export function createDesktopSettings(
     clear() {
       clearTimeout(poll)
       following = undefined
+      misses = 0
       status = undefined
       note.textContent = ''
       render()

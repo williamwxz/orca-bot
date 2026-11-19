@@ -45,7 +45,14 @@ export function desktopView(raw: unknown, settings: DesktopSettings): DesktopSta
   const runtime = RUNTIMES[String(object(raw).runtime)]
   const state = desktopState(raw)
   const reason = state === 'repair' ? desktopReason(raw) : undefined
-  return { ...settings, state, ...(reason ? { reason } : {}), ...(runtime ? { runtime } : {}) }
+  const folderUnverified = object(raw).persistence === 'unsafe'
+  return {
+    ...settings,
+    state,
+    ...(reason ? { reason } : {}),
+    ...(folderUnverified ? { folderUnverified: true } : {}),
+    ...(runtime ? { runtime } : {})
+  }
 }
 
 export function desktopSettings(config: unknown): DesktopSettings {

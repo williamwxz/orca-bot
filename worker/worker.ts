@@ -675,6 +675,9 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
     const status = await deps.computerStatus({ port, botId: input.botId, threadId })
     return status.desktop ? { ...status, desktop: withStep(status.desktop) } : status
   })
+  // Only the job, without inspecting the desktop: the paired-server link asks this before it
+  // closes, and it must answer even while the server is busy with the step itself.
+  orca.panels.handle('desktop.step', () => ({ ...(desktopJob ? { step: { ...desktopJob } } : {}) }))
   orca.panels.handle('desktop.act', (input: { action: DesktopAction; botId?: string }) => {
     const port = runningPort()
     if (!deps.desktopAct) throw new Error('Private desktops are unavailable.')

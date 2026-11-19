@@ -181,6 +181,8 @@ function showSettings(show: boolean): void {
   element('settings-view').hidden = !show
   element('mcp-view').hidden = true
   if (show) { void settings.open(); void mcp.refresh(); void desktops.refresh() }
+  // Leaving Settings stops its polling; reopening reads the desktop again.
+  else desktops.clear()
 }
 element('open-settings').addEventListener('click', () => showSettings(true))
 element('settings-back').addEventListener('click', () => showSettings(false))

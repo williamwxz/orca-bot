@@ -97,3 +97,35 @@ test('Settings → Private desktops sets up the shared desktop, switches isolati
     if (savedTimer) Object.defineProperty(globalThis, 'setTimeout', savedTimer)
   }
 })
+
+test('Settings stops following a step whose report disappears, and says the outcome is unconfirmed', async () => {
+  const saved = Object.getOwnPropertyDescriptor(globalThis, 'document')
+  const savedTimer = Object.getOwnPropertyDescriptor(globalThis, 'setTimeout')
+  Object.defineProperty(globalThis, 'document', { configurable: true, value: { createElement: (tag: string) => new Element(tag) } })
+  Object.defineProperty(globalThis, 'setTimeout', { configurable: true, value: (fn: () => void) => { setImmediate(fn); return 0 } })
+  try {
+    const { FOLLOW_MISSES } = await import('./capability-picker.ts')
+    const els = new Map<string, Element>()
+    const get = (id: string) => els.get(id) ?? (els.set(id, new Element()), els.get(id)!)
+    let reads = 0
+    // The worker restarted after accepting the step: every status succeeds, none mentions it.
+    const frame = { plugin: { request: async (name: string) => {
+      if (name === 'desktop.act') return { step: { id: 5, action: 'prepare', running: true } }
+      if (name === 'desktop.status') { reads++; return { mode: 'shared', maxInstances: 2, idleMinutes: 480, state: 'not-prepared' } }
+      return {}
+    } } }
+    const view = createDesktopSettings(frame as any, get as any, () => {})
+    await view.refresh()
+    all(get('desktops-setup')).find((n) => n.dataset.key === 'desktop:prepare')!.emit()
+    for (let i = 0; i < FOLLOW_MISSES * 4 + 10; i++) await flush()
+    assert.match(get('desktops-note').textContent, /Could not confirm how the last step ended/)
+    const settled = reads
+    for (let i = 0; i < 10; i++) await flush()
+    assert.equal(reads, settled, 'no more polling once given up')
+    assert.equal(all(get('desktops-setup')).find((n) => n.dataset.key === 'desktop:prepare')!.disabled, false)
+  } finally {
+    if (saved) Object.defineProperty(globalThis, 'document', saved)
+    else delete (globalThis as any).document
+    if (savedTimer) Object.defineProperty(globalThis, 'setTimeout', savedTimer)
+  }
+})

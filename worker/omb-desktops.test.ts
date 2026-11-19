@@ -47,6 +47,10 @@ test('status reads the shared desktop, or the bot\'s own in per-bot mode, and re
   const repair = await desktopStatus({ port: 9 }, fake({}, { ...base, container: 'stopped', persistence: 'unsafe' }).deps)
   assert.equal(repair.state, 'repair')
   assert.equal(repair.reason, 'no-folder')
+  assert.equal(repair.folderUnverified, true)
+  // An old image with an unverified mount: the reason is the image, the folder flag still set.
+  const both = await desktopStatus({ port: 9 }, fake({}, { ...base, container: 'stopped', imageMatches: false, persistence: 'unsafe' }).deps)
+  assert.deepEqual([both.reason, both.folderUnverified], ['old-image', true])
   assert.equal(JSON.stringify(status).includes('SECRET'), false)
   assert.equal(shared.calls[1].path, '/api/local-computer')
   const perBot = fake({ localVm: { mode: 'per-bot' } }, { ...base, container: 'missing' })

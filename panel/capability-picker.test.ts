@@ -464,6 +464,55 @@ test('a desktop that did not start warns what replacing it removes', async () =>
   assert.match(failed.line, /apps and files stored anywhere else inside it are removed/)
   const old = desktopStep({ mode: 'shared', maxInstances: 2, idleMinutes: 480, state: 'repair', reason: 'old-image' }, false)
   assert.match(old.line, /older OpenMausBot.*keeps its shared folder and browser sign-ins/)
+  // Old image and an unconfirmed folder at once: the shown reason is the image, but nothing is
+  // promised about the folder.
+  const both = desktopStep({ mode: 'shared', maxInstances: 2, idleMinutes: 480, state: 'repair', reason: 'old-image', folderUnverified: true }, false)
+  assert.match(both.line, /older OpenMausBot/)
+  assert.match(both.line, /may not be kept/)
+  assert.doesNotMatch(both.line, /keeps its shared folder/)
+  const failedUnverified = desktopStep({ mode: 'shared', maxInstances: 2, idleMinutes: 480, state: 'failed', folderUnverified: true }, false)
+  assert.match(failedUnverified.line, /may not be kept/)
+})
+
+test('a step whose host stops answering is given up after a bounded wait, not followed forever', async () => {
+  const saved = ['document', 'window', 'setTimeout'].map((k) => Object.getOwnPropertyDescriptor(globalThis, k))
+  Object.defineProperty(globalThis, 'document', { configurable: true, value: Object.assign(new Element(), { createElement: () => new Element() }) })
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: Object.assign(new Element(), { innerWidth: 380, innerHeight: 600 }) })
+  Object.defineProperty(globalThis, 'setTimeout', { configurable: true, value: (fn: () => void) => { setImmediate(fn); return 0 } })
+  const all = (n: Element): Element[] => [n, ...n.children.flatMap(all)]
+  try {
+    const { FOLLOW_MISSES } = await import('./capability-picker.ts')
+    const root = new Element()
+    const notes: string[] = []
+    let polls = 0
+    let online = true
+    const desktop = { mode: 'shared', maxInstances: 2, idleMinutes: 480, state: 'stopped', step: { id: 3, action: 'start', running: true } }
+    const frame = { plugin: { request: async (name: string) => {
+      if (name !== 'computer.status') return { ok: true }
+      polls++
+      // One good "still running" answer after opening, then the host goes away.
+      if (polls > 2) online = false
+      if (!online) throw new Error('offline')
+      return { vm: 'stopped', desktop }
+    } } }
+    const picker = createCapabilityPicker(root as any, frame as any, { changed: async () => {}, manage: () => {}, notify: (t) => notes.push(t) })
+    await picker.open('computer', { id: 'a', name: 'Scout', state: 'idle', computer: 'vm' } as any, new Element() as any)
+    const key = (k: string) => all(root).find((n) => n.dataset.key === k)!
+    assert.equal(key('desktop:start').textContent, 'Starting…')
+    for (let i = 0; i < FOLLOW_MISSES * 3 + 10; i++) await new Promise<void>((r) => setImmediate(r))
+    assert.deepEqual(notes, ['Could not confirm how the step ended. Check the private desktop again.'])
+    assert.equal(key('desktop:start').textContent, 'Start it now')
+    assert.equal(key('desktop:start').disabled, false)
+    const settled = polls
+    for (let i = 0; i < 10; i++) await new Promise<void>((r) => setImmediate(r))
+    assert.equal(polls, settled, 'no more polling once given up')
+    picker.close()
+  } finally {
+    for (const [i, k] of ['document', 'window', 'setTimeout'].entries()) {
+      if (saved[i]) Object.defineProperty(globalThis, k, saved[i]!)
+      else delete (globalThis as any)[k]
+    }
+  }
 })
 
 test('the late status redraw keeps the keyboard on the tile the person moved to', async () => {

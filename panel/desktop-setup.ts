@@ -62,18 +62,14 @@ export function desktopStep(status: DesktopStatus, perBot: boolean): {
     case 'repair':
       return {
         title: 'A private desktop already exists, but it cannot be used',
-        line: `${REASONS[status.reason ?? 'unsafe']} ${
-          status.reason === 'no-folder'
-            ? 'Replacing it makes a fresh desktop with a new shared folder. Anything stored in the old desktop may not be kept.'
-            : 'Replacing it keeps its shared folder and browser sign-ins; anything else inside it is removed.'
-        }`,
+        line: `${REASONS[status.reason ?? 'unsafe']} ${replaceNote(status)}`,
         action: 'recreate',
         label: 'Replace with a fresh desktop'
       }
     case 'failed':
       return {
         title: "The desktop didn't start",
-        line: 'Its container is running, but the desktop inside it reported an error. Replacing it with a fresh one usually fixes this. Its shared folder and browser sign-ins are kept; apps and files stored anywhere else inside it are removed.',
+        line: `Its container is running, but the desktop inside it reported an error. Replacing it with a fresh one usually fixes this. ${replaceNote(status)}`,
         action: 'recreate',
         label: 'Replace with a fresh desktop'
       }
@@ -103,6 +99,13 @@ const REASONS: Record<DesktopReason, string> = {
   'old-image': 'It was made by an older OpenMausBot and uses an outdated desktop.',
   'not-managed': 'It was not made by OpenMausBot, so OpenMausBot will not use it.',
   unsafe: 'It is missing safety limits that OpenMausBot now requires.'
+}
+
+/** What replacing keeps. The shared folder is promised only when OpenMausBot confirmed it. */
+function replaceNote(status: DesktopStatus): string {
+  if (status.folderUnverified || status.reason === 'no-folder')
+    return 'OpenMausBot could not confirm its shared folder, so replacing it makes a fresh desktop with a new folder. Anything stored in the old desktop may not be kept.'
+  return 'Replacing it keeps its shared folder and browser sign-ins; apps and files stored anywhere else inside it are removed.'
 }
 
 const BUSY: Record<DesktopAction, string> = {
