@@ -21,7 +21,10 @@ let chatting: string | undefined
 /** Rises when the bot host changes: replies asked of the previous host are dropped. */
 let hostGeneration = 0
 let timer: ReturnType<typeof setTimeout> | undefined
-let refreshing = false
+/** The host generation whose refresh is running, if any. */
+let refreshing: number | undefined
+/** A host change is waiting for the worker: nothing may refresh against either host meanwhile. */
+let selecting = false
 
 /** A drawn avatar: the bot's initial on a colour picked from its name. */
 export function avatar(bot: Pick<Bot, 'id' | 'name' | 'working'>): HTMLElement {
@@ -114,10 +117,10 @@ function renderHosts(): void {
 }
 
 async function refresh(retrying = false): Promise<void> {
-  if (refreshing) return
-  refreshing = true
-  clearTimeout(timer)
+  if (selecting || refreshing === hostGeneration) return
   const generation = hostGeneration
+  refreshing = generation
+  clearTimeout(timer)
   try {
     hosts ??= await frame.plugin.request('hosts.get', {})
     if (generation !== hostGeneration) return
@@ -160,8 +163,9 @@ async function refresh(retrying = false): Promise<void> {
     message.textContent = error instanceof Error ? error.message : 'Could not load the bots.'
     retry.hidden = false
   } finally {
-    refreshing = false
-    if (!document.hidden) timer = setTimeout(() => void refresh(), bots.some((bot) => bot.working) ? 2000 : 5000)
+    if (refreshing === generation) refreshing = undefined
+    // Only the current host's refresh schedules the next one.
+    if (generation === hostGeneration && !selecting && !document.hidden) timer = setTimeout(() => void refresh(), bots.some((bot) => bot.working) ? 2000 : 5000)
   }
 }
 
@@ -169,14 +173,18 @@ hostSelect.addEventListener('change', async () => {
   const id = hostSelect.value
   if (!id) return
   const mine = ++hostGeneration
+  selecting = true
+  clearTimeout(timer)
+  hosts = undefined
   bots = []
+  renderBots()
   chatting = undefined
   chatView.close()
   element('sidebar').hidden = false
   running.hidden = true
   message.hidden = false
   message.textContent = 'Connecting to Hermes…'
-  let chosen: typeof hosts
+  let chosen: Hosts | undefined
   try {
     chosen = await frame.plugin.request('hosts.select', { id })
   } catch (error) {
@@ -184,8 +192,8 @@ hostSelect.addEventListener('change', async () => {
   }
   // Another choice was made meanwhile: its own reply decides.
   if (mine !== hostGeneration) return
+  selecting = false
   hosts = chosen
-  refreshing = false
   void refresh(true)
 })
 retry.addEventListener('click', () => {

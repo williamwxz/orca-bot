@@ -322,6 +322,24 @@ test('a chat archived in Hermes clears what was shown, and a slow read never hol
   }
 })
 
+test('a chat that appears after the panel opened keeps its earlier pages reachable', async () => {
+  let page: Thread = { messages: [] }
+  const t = setup(() => page)
+  try {
+    t.view.open(bot)
+    await flush()
+    assert.equal(t.find('thread-earlier')[0].hidden, true)
+    // Made elsewhere (say, in Hermes) while this panel was hidden: a full page with more before it.
+    page = { chat: 'c1', messages: [m('r5', 'user', 'five'), m('r6', 'bot', 'six')], older: 'cur-5' }
+    await t.poll()
+    assert.deepEqual(t.shown(), ['five', 'six'])
+    assert.equal(t.find('thread-earlier')[0].hidden, false)
+    t.view.close()
+  } finally {
+    t.restore()
+  }
+})
+
 test('day separators name today, yesterday and older days', () => {
   const now = new Date(2026, 10, 19, 12).getTime()
   assert.equal(dayLabel(now - 3600000, undefined, now), 'Today')

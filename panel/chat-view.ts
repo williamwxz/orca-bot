@@ -240,8 +240,9 @@ export function createChatView(root: HTMLElement, frame: FrameApi, avatar: (bot:
           loaded = true
         } else {
           const known = new Set(messages.map((m) => m.id))
-          // A poll that shares no row with what is held missed some in between: start from this page.
-          if (messages.length && thread.messages.length && !thread.messages.some((m) => known.has(m.id))) {
+          // Nothing held yet (a first chat just appeared), or a poll that shares no row with what is
+          // held missed some in between: start from this page and its cursor. Pending sends stay.
+          if (!messages.length || (thread.messages.length && !thread.messages.some((m) => known.has(m.id)))) {
             messages = thread.messages
             older = thread.older
           } else messages = mergeMessages(messages, thread.messages, 'newer')
