@@ -2,6 +2,7 @@ import { defaultHttpDeps } from './omb-http.ts'
 import type { HttpDeps } from './omb-http.ts'
 import { validBotId } from './omb-open.ts'
 import type { ComputerStatus } from '../shared/roster.ts'
+import { desktopSettings, desktopState } from './omb-desktops.ts'
 
 const object = (v: unknown): Record<string, any> =>
   v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, any>) : {}
@@ -30,24 +31,32 @@ export async function computerStatus(
       const place = PLACES.find((p) => p === reply.surface)
       if (place) status.now = place
     } catch {}
+  let config: Record<string, any> | undefined
   try {
-    const config = object(await deps.request(input.port, '/api/config'))
+    config = object(await deps.request(input.port, '/api/config'))
     status.cloud = object(config.box).configured === true || object(config.vps).configured === true
       ? 'ready'
       : 'setup'
     const engine = object(config.browserEngine)
     if (typeof engine.kind === 'string') status.browser = engine.kind === 'unavailable' ? 'setup' : 'ready'
+    if (engine.installing === true) status.browserInstalling = true
   } catch {}
   try {
-    const vm = object(await deps.request(input.port, `/api/bots/${input.botId}/local-computer`))
+    // The bot's own desktop answers in per-bot mode and the shared one otherwise.
+    const raw = await deps.request(input.port, `/api/bots/${input.botId}/local-computer`)
+    const state = desktopState(raw)
+    const runtime = ({ docker: 'Docker', podman: 'Podman', container: 'Apple container' } as const)[
+      String(object(raw).runtime) as 'docker'
+    ]
+    status.desktop = { ...desktopSettings(config), state, ...(runtime ? { runtime } : {}) }
     status.vm =
-      vm.ready === true
+      state === 'running'
         ? 'ready'
-        : typeof vm.problem === 'string' && vm.problem
-          ? 'repair'
-          : vm.daemonUp === false || vm.create_supported === false
-            ? 'setup'
-            : 'stopped'
+        : state === 'stopped' || state === 'starting'
+          ? 'stopped'
+          : state === 'repair'
+            ? 'repair'
+            : 'setup'
   } catch {}
   return status
 }

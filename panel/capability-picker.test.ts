@@ -334,13 +334,18 @@ test('Backend is a panel from the right with the bot\'s screen, a Works on grid 
     assert.equal(tile('vm').attrs.get('aria-label'), 'Private desktop: Needs repair')
     assert.equal(tile('browser').attrs.get('aria-label'), 'Browser: Only websites')
     assert.match(tile('cloud').className, /flagged/)
-    assert.ok(text().some((t) => /Private desktop needs repair\. Do that in native OpenMausBot/.test(t)))
+    assert.ok(text().some((t) => /Private desktop needs repair\. Do that below/.test(t)))
+    // No desktop detail in this status: no setup block, and no native link for Private desktop.
+    assert.equal(all(root).some((n) => n.dataset.key === 'native'), false)
     tile('browser').emit()
     await flush()
     assert.deepEqual(acts, [{ botId: 'a', action: 'computer', computer: 'browser' }])
     assert.deepEqual(notes, ['Backend updated.'])
     assert.equal(tile('browser').attrs.get('aria-checked'), 'true')
     assert.ok(text().includes('The built-in browser only: websites, no desktop.'))
+    tile('cloud').emit()
+    await flush()
+    assert.ok(text().includes('Connect a cloud desktop in native OpenMausBot'))
     all(root).find((n) => n.dataset.key === 'native')!.emit()
     assert.deepEqual(opened, ['a'])
     assert.equal(root.hidden, true)
@@ -351,6 +356,70 @@ test('Backend is a panel from the right with the bot\'s screen, a Works on grid 
     assert.ok(text().includes("This bot's computer is off"))
     root.children[0].children[1].emit()
     assert.equal(root.hidden, true)
+  } finally {
+    for (const [i, k] of ['document', 'window'].entries()) {
+      if (saved[i]) Object.defineProperty(globalThis, k, saved[i]!)
+      else delete (globalThis as any)[k]
+    }
+  }
+})
+
+test('the Backend panel sets up a private desktop and installs the browser in place', async () => {
+  const saved = ['document', 'window'].map((k) => Object.getOwnPropertyDescriptor(globalThis, k))
+  const doc = Object.assign(new Element(), { createElement: () => new Element() })
+  Object.defineProperty(globalThis, 'document', { configurable: true, value: doc })
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: Object.assign(new Element(), { innerWidth: 380, innerHeight: 600 }) })
+  const all = (n: Element): Element[] => [n, ...n.children.flatMap(all)]
+  try {
+    const root = new Element()
+    const requests: [string, any][] = []
+    const notes: string[] = []
+    let desktop: any = { mode: 'shared', maxInstances: 2, idleMinutes: 480, state: 'repair', runtime: 'Docker' }
+    let browser: any = { browser: 'setup' }
+    let finishStep!: () => void
+    const frame = { plugin: { request: async (name: string, input: any) => {
+      requests.push([name, input])
+      if (name === 'computer.status') return { vm: 'repair', ...browser, desktop }
+      if (name === 'desktop.act') {
+        await new Promise<void>((resolve) => { finishStep = resolve })
+        desktop = { ...desktop, state: 'running' }
+        return desktop
+      }
+      if (name === 'browser.install') { browser = { browser: 'setup', browserInstalling: true }; return { installing: true } }
+      return { ok: true }
+    } } }
+    const picker = createCapabilityPicker(root as any, frame as any, { changed: async () => {}, manage: () => {}, notify: (t) => notes.push(t) })
+    const bot = { id: 'a', name: 'Scout', state: 'idle', computer: 'vm' } as any
+    await picker.open('computer', bot, new Element() as any)
+    const text = () => all(root).map((n) => n.textContent)
+    const key = (k: string) => all(root).find((n) => n.dataset.key === k)!
+    assert.ok(text().includes('Private desktop'))
+    assert.ok(text().includes('Replace the older or unsafe desktop'))
+    const steps = all(root).filter((n) => n.tag === 'li' || n.attrs.has('aria-label') && /: (done|next|not yet)$/.test(n.attrs.get('aria-label')!))
+    assert.deepEqual(steps.map((n) => n.attrs.get('aria-label')), [
+      'Install the container app: done', 'Start it: done', 'Get the desktop ready: done', 'Create the desktop: done'
+    ])
+    assert.equal(key('desktop:recreate').textContent, 'Delete and recreate')
+    key('desktop:recreate').emit()
+    await flush()
+    assert.deepEqual(requests.find(([n]) => n === 'desktop.act')![1], { action: 'recreate', botId: 'a' })
+    assert.equal(key('desktop:recreate').textContent, 'Recreating…')
+    assert.equal(key('desktop:recreate').disabled, true)
+    finishStep()
+    await flush()
+    await flush()
+    assert.deepEqual(notes, ['Private desktop updated.'])
+    assert.ok(text().includes('Running'))
+    assert.equal(key('desktop:stop').textContent, 'Stop')
+    picker.close()
+    await picker.open('computer', { ...bot, computer: 'browser' }, new Element() as any)
+    assert.ok(text().includes('Built-in browser'))
+    key('browser:install').emit()
+    await flush()
+    assert.ok(requests.some(([n]) => n === 'browser.install'))
+    assert.equal(key('browser:install').textContent, 'Installing…')
+    assert.equal(key('browser:install').disabled, true)
+    picker.close()
   } finally {
     for (const [i, k] of ['document', 'window'].entries()) {
       if (saved[i]) Object.defineProperty(globalThis, k, saved[i]!)

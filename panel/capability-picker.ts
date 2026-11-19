@@ -1,7 +1,8 @@
 import { connectorIcon } from './connector-icon.ts'
 import type { Bot } from '../shared/roster.ts'
 import { COMPUTER_CHOICES, computerHint, computerLabel, computerNote } from '../shared/roster.ts'
-import type { ComputerStatus } from '../shared/roster.ts'
+import type { ComputerStatus, DesktopAction } from '../shared/roster.ts'
+import { desktopBlock } from './desktop-setup.ts'
 import type { Models } from '../shared/models.ts'
 import type { Connectors } from '../worker/mcp-connectors.ts'
 import type { FrameApi } from './chat-view.ts'
@@ -117,6 +118,60 @@ export function createCapabilityPicker(
     let problem = ''
     let focusKey: string | undefined
     let status: ComputerStatus | undefined
+    let setupBusy: DesktopAction | 'check' | 'browser' | undefined
+    let browserPoll: ReturnType<typeof setTimeout> | undefined
+    const refreshStatus = async () => {
+      const next = await frame.plugin.request('computer.status', { botId: bot.id }).catch(() => undefined)
+      if (current() && next) status = next
+    }
+    // A setup step or a re-check, as OpenMausBot's own setup buttons do; the panel stays open.
+    const runDesktop = async (action?: DesktopAction) => {
+      if (setupBusy || !current()) return
+      setupBusy = action ?? 'check'
+      focusKey = `desktop:${action ?? 'check'}`
+      draw()
+      try {
+        if (action) {
+          await frame.plugin.request('desktop.act', { action, botId: bot.id })
+          if (current()) hooks.notify?.('Private desktop updated.')
+        }
+      } catch (error) {
+        if (current()) hooks.notify?.(error instanceof Error ? error.message : 'Could not finish this step.')
+      }
+      await refreshStatus()
+      if (!current()) return
+      setupBusy = undefined
+      draw()
+    }
+    // The browser installs on the server; its status says when it is done.
+    const pollBrowser = (tries: number) => {
+      clearTimeout(browserPoll)
+      browserPoll = setTimeout(async () => {
+        await refreshStatus()
+        if (!current()) return
+        if (status?.browserInstalling && tries > 0) pollBrowser(tries - 1)
+        else {
+          setupBusy = undefined
+          if (status?.browser === 'ready') hooks.notify?.('The browser is ready.')
+        }
+        draw()
+      }, 3000)
+    }
+    const installBrowser = async () => {
+      if (setupBusy || !current()) return
+      setupBusy = 'browser'
+      focusKey = 'browser:install'
+      draw()
+      try {
+        await frame.plugin.request('browser.install', {})
+        if (current()) pollBrowser(60)
+      } catch (error) {
+        if (!current()) return
+        hooks.notify?.(error instanceof Error ? error.message : 'Could not install the browser.')
+        setupBusy = undefined
+        draw()
+      }
+    }
     let browsing: string | undefined = start === 'models' ? bot.model?.split('/')[0] : undefined
     const draw = () => {
       if (!current()) return
@@ -307,17 +362,58 @@ export function createCapabilityPicker(
         }
         works.append(grid, node('p', computerHint(selected, status), 'computer-hint'))
         children.push(label, screen, works)
-        if (hooks.openNative && hooks.nativeAvailable?.() !== false) {
-          const native = item('Set up computers in native OpenMausBot', () => {
-            close(false)
-            hooks.openNative!(bot.id)
+        // The chosen place's setup, as OpenMausBot shows it under "Works on".
+        const native = hooks.openNative && hooks.nativeAvailable?.() !== false
+        if (selected === 'vm' && status?.desktop) {
+          const card = node('div', '', 'computer-card')
+          card.append(node('div', 'Private desktop', 'computer-card-title'))
+          const block = desktopBlock(status.desktop, {
+            perBot: status.desktop.mode === 'per-bot',
+            busy: setupBusy === 'browser' ? undefined : setupBusy,
+            run: (action) => void runDesktop(action)
           })
-          native.className += ' computer-native'
+          for (const control of block.querySelectorAll?.('button') ?? []) controls.push(control as HTMLButtonElement)
+          card.append(block)
+          children.push(card)
+        } else if (selected === 'browser' && (status?.browser === 'setup' || status?.browserInstalling)) {
+          const card = node('div', '', 'computer-card')
+          const installing = setupBusy === 'browser' || !!status?.browserInstalling
+          card.append(
+            node('div', 'Built-in browser', 'computer-card-title'),
+            node(
+              'p',
+              installing
+                ? 'Installing the browser on the bot host. This can take a minute.'
+                : 'The browser this bot uses for websites is not installed yet.',
+              'bot-menu-note'
+            )
+          )
+          const install = node('button', installing ? 'Installing…' : 'Turn on the browser', 'bot-menu-btn primary desktop-action') as HTMLButtonElement
+          install.type = 'button'
+          install.disabled = installing
+          install.dataset.key = 'browser:install'
+          install.addEventListener('click', (event) => {
+            event.stopPropagation()
+            void installBrowser()
+          })
+          controls.push(install)
+          card.append(install)
+          children.push(card)
+        }
+        if (native && (selected === 'cloud' || selected === 'local')) {
+          const link = item(
+            selected === 'cloud' ? 'Connect a cloud desktop in native OpenMausBot' : 'Allow this computer in native OpenMausBot',
+            () => {
+              close(false)
+              hooks.openNative!(bot.id)
+            }
+          )
+          link.className += ' computer-native'
           const chevron = node('span', '›', 'backend-chevron')
           chevron.setAttribute('aria-hidden', 'true')
-          native.append(chevron)
-          native.dataset.key = 'native'
-          children.push(native)
+          link.append(chevron)
+          link.dataset.key = 'native'
+          children.push(link)
         }
       } else {
         const rows =

@@ -14,6 +14,7 @@ import type { Preferences, SetupAnswer } from './protocol.ts'
 import { readThread, sendMessage, newSendId } from './omb-chat.ts'
 import { uploadAttachment } from './omb-attachments.ts'
 import { computerStatus } from './omb-computer.ts'
+import { desktopAct, desktopStatus, installBrowser, updateDesktopSettings } from './omb-desktops.ts'
 import { MAX_ATTACHMENTS, composeMessage } from '../shared/attachments.ts'
 import type { Attachment } from '../shared/attachments.ts'
 import type { OrcaWorkerApi } from 'orca/worker'
@@ -74,6 +75,10 @@ export type WorkerDeps = {
   readThread: typeof readThread
   sendMessage: typeof sendMessage
   computerStatus?: typeof computerStatus
+  desktopStatus?: (input: { port: number; botId?: string }) => ReturnType<typeof desktopStatus>
+  desktopAct?: (input: Parameters<typeof desktopAct>[0]) => ReturnType<typeof desktopAct>
+  updateDesktopSettings?: (input: Parameters<typeof updateDesktopSettings>[0]) => ReturnType<typeof updateDesktopSettings>
+  installBrowser?: (input: { port: number }) => Promise<void>
   uploadAttachment?: (input: { port: number; name: string; mime: string; data: string }) => ReturnType<typeof uploadAttachment>
   listBots: (input: { port: number }) => Promise<Bot[]>
 }
@@ -128,6 +133,10 @@ export function defaultWorkerDeps(): WorkerDeps {
     sendMessage: (input) => sendMessage(input, cli),
     uploadAttachment: (input) => uploadAttachment(input),
     computerStatus: (input) => computerStatus(input, http),
+    desktopStatus: (input) => desktopStatus(input, http),
+    desktopAct: (input) => desktopAct(input, http),
+    updateDesktopSettings: (input) => updateDesktopSettings(input, http),
+    installBrowser: (input) => installBrowser(input, http),
     listBots: (input) => listBots(input, http)
   }
 }
@@ -647,6 +656,39 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
     if (!deps.computerStatus) return {}
     const threadId = lastRoster.find((bot) => bot.id === input.botId)?.activeTaskId
     return deps.computerStatus({ port, botId: input.botId, threadId })
+  })
+  const desktopBot = (input: { botId?: string } | undefined) =>
+    input?.botId === undefined ? {} : { botId: (knownBot({ botId: input.botId }), input.botId) }
+  orca.panels.handle('desktop.status', (input: { botId?: string }) => {
+    const port = runningPort()
+    if (!deps.desktopStatus) throw new Error('Private desktops are unavailable.')
+    return deps.desktopStatus({ port, ...desktopBot(input) })
+  })
+  // Setup steps can take minutes (the first one downloads the desktop); one runs at a time.
+  let desktopStep: Promise<unknown> | undefined
+  orca.panels.handle('desktop.act', async (input: { action: any; botId?: string }) => {
+    const port = runningPort()
+    if (!deps.desktopAct) throw new Error('Private desktops are unavailable.')
+    if (desktopStep) throw new Error('Another private desktop step is still running.')
+    const step = deps.desktopAct({ port, action: input?.action, ...desktopBot(input) })
+    desktopStep = step
+    try {
+      return await step
+    } finally {
+      desktopStep = undefined
+    }
+  })
+  orca.panels.handle('desktop.settings', (input: Record<string, unknown>) => {
+    const port = runningPort()
+    if (!deps.updateDesktopSettings) throw new Error('Private desktops are unavailable.')
+    const { mode, maxInstances, idleMinutes } = (input ?? {}) as any
+    return deps.updateDesktopSettings({ port, mode, maxInstances, idleMinutes })
+  })
+  orca.panels.handle('browser.install', async () => {
+    const port = runningPort()
+    if (!deps.installBrowser) throw new Error('The browser is unavailable.')
+    await deps.installBrowser({ port })
+    return { installing: true as const }
   })
   // Not relayed: on a paired server the bytes would crawl through the terminal link.
   orca.panels.handle('attachment.upload', async (input: { name: string; mime: string; data: string }) => {
