@@ -231,13 +231,34 @@ export function createSettings(frame: FrameApi, element: Elements, changed: () =
     }
   })
   let exportGeneration = 0
+  let exportPoll: ReturnType<typeof setTimeout> | undefined
+  const wait = (ms: number) => new Promise<void>((resolve) => (exportPoll = setTimeout(resolve, ms)))
+  /** Follows the export on the bot host until it ends; a failed check is retried, never read as done. */
+  async function followExport(id: number, generation: number) {
+    for (let misses = 0; misses < 40; ) {
+      await wait(1500)
+      if (generation !== exportGeneration) return undefined
+      const job = await frame.plugin.request('team.export.status', {}).then((r) => r.job, () => undefined)
+      if (generation !== exportGeneration) return undefined
+      if (!job || job.id !== id) {
+        misses++
+        continue
+      }
+      if (!job.running) return job
+      misses = 0
+    }
+    throw new Error('Could not confirm how the export ended. Look in Downloads on the bot host.')
+  }
   button('export-team').addEventListener('click', async () => {
     const generation = ++exportGeneration
     button('export-team').disabled = true
     element('export-note').textContent = 'Exporting\u2026'
     try {
-      const done = await frame.plugin.request('team.export', {})
-      if (generation !== exportGeneration) return
+      const started = await frame.plugin.request('team.export', {})
+      const job = started.running ? await followExport(started.id, generation) : started
+      if (!job || generation !== exportGeneration) return
+      if (job.error || !job.result) throw new Error(job.error ?? 'Could not finish the export. Try again.')
+      const done = job.result
       const where = remote ? ` on ${remote}` : ''
       const counts = `${done.bots} bot${done.bots === 1 ? '' : 's'}, ${done.skills} skill${done.skills === 1 ? '' : 's'}, ${done.memoryFiles} memory file${done.memoryFiles === 1 ? '' : 's'}`
       const missed = done.skipped.length ? ` Not exported: ${done.skipped.slice(0, 5).join('; ')}${done.skipped.length > 5 ? '\u2026' : ''}.` : ''
@@ -266,6 +287,7 @@ export function createSettings(frame: FrameApi, element: Elements, changed: () =
       ++learningGeneration
       renderLearning(undefined)
       ++exportGeneration
+      clearTimeout(exportPoll)
       element('export-note').textContent = ''
       button('export-team').disabled = false
     },

@@ -16,6 +16,7 @@ import { uploadAttachment } from './omb-attachments.ts'
 import { computerStatus } from './omb-computer.ts'
 import { desktopAct, desktopStatus, installBrowser, updateDesktopSettings } from './omb-desktops.ts'
 import { readLearning, readLearningSettings, saveMemory, setSkill, updateLearningSettings } from './omb-learning.ts'
+import type { ExportJob } from '../shared/learning.ts'
 import type { ScheduleAction } from '../shared/schedules.ts'
 import { actOnSchedule, listSchedules } from './omb-schedules.ts'
 import { exportTeam } from './omb-export.ts'
@@ -764,22 +765,30 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
       ? deps.readLearningSettings({ port })
       : deps.updateLearningSettings({ port, autoLearn: input.autoLearn })
   })
-  let exporting = false
-  orca.panels.handle('team.export', async () => {
+  // An export reads every bot's memory and skills one file at a time, longer than a panel request or
+  // the paired-server relay waits. So it runs here in the background and the panel follows it.
+  let exportJob: ExportJob | undefined
+  let exportJobs = 0
+  orca.panels.handle('team.export', () => {
     const port = runningPort()
     if (!deps.exportTeam) throw new Error('Export is unavailable.')
-    if (exporting) throw new Error('An export is already running.')
-    exporting = true
-    try {
-      const bots = (await deps.listBots({ port })).filter((bot) => !bot.addable)
-      return await deps.exportTeam({ port, bots: bots.map(({ id, name }) => ({ id, name })) })
-    } catch (error) {
-      // Fixed wording only: a file system error would name local paths.
-      throw new Error(error instanceof Error && /^(There are no bots|An export is)/.test(error.message) ? error.message : 'Could not finish the export. Try again.')
-    } finally {
-      exporting = false
-    }
+    if (exportJob?.running) throw new Error('An export is already running.')
+    const job: ExportJob = { id: ++exportJobs, running: true }
+    exportJob = job
+    void (async () => {
+      try {
+        const bots = (await deps.listBots({ port })).filter((bot) => !bot.addable)
+        job.result = await deps.exportTeam!({ port, bots: bots.map(({ id, name }) => ({ id, name })) })
+      } catch (error) {
+        // Fixed wording only: a file system error would name local paths.
+        job.error = error instanceof Error && /^There are no bots/.test(error.message) ? error.message : 'Could not finish the export. Try again.'
+      } finally {
+        job.running = false
+      }
+    })()
+    return { ...job }
   })
+  orca.panels.handle('team.export.status', () => (exportJob ? { job: { ...exportJob } } : {}))
   // Not relayed: on a paired server the bytes would crawl through the terminal link.
   orca.panels.handle('attachment.upload', async (input: { name: string; mime: string; data: string }) => {
     const port = runningPort()

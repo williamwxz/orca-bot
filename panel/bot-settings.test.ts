@@ -146,7 +146,11 @@ test('skills switch and memory saves with its version; a refused save keeps the 
     assert.deepEqual(t.calls.at(-1), ['learning.skill', { botId: 'a', name: 'release-notes', enabled: true }])
     assert.equal(t.notes.at(-1), 'release-notes is on.')
 
+    // The edit keeps the version it started from even when a skill switch refreshes memory meanwhile.
+    t.replies['learning.skill'] = { ...learning, memory: { ...learning.memory, hash: 'ee'.repeat(32) } }
     t.key('memory:edit').emit('click')
+    t.key('skill:release-notes').emit('change')
+    await flush()
     const area = t.key('memory:text')
     assert.equal(area.value, '- likes short replies')
     area.value = '- likes short replies\n- prefers tables'
@@ -175,7 +179,7 @@ test('schedules pause, run, delete after asking, and are created from the form',
   const t = setup()
   try {
     await t.sheet.open(bot, new Element() as any)
-    t.replies['schedules.act'] = [{ ...digest, enabled: false, nextRunAt: undefined }]
+    t.replies['schedules.act'] = { schedules: [{ ...digest, enabled: false, nextRunAt: undefined }] }
     const toggle = t.key('schedule:r1:toggle')
     toggle.checked = false
     toggle.emit('change')
@@ -193,7 +197,7 @@ test('schedules pause, run, delete after asking, and are created from the form',
     t.key('schedule:r1:keep').emit('click')
     assert.equal(t.key('schedule:r1:delete'), undefined)
     t.key('schedule:r1:ask').emit('click')
-    t.replies['schedules.act'] = []
+    t.replies['schedules.act'] = { schedules: [] }
     t.key('schedule:r1:delete').emit('click')
     await flush()
     assert.deepEqual(t.calls.at(-1), ['schedules.act', { botId: 'a', action: 'delete', id: 'r1' }])
@@ -210,7 +214,7 @@ test('schedules pause, run, delete after asking, and are created from the form',
     fill('form:prompt', 'Summarize yesterday.')
     fill('form:kind', 'weekdays')
     fill('form:time', '08:45')
-    t.replies['schedules.act'] = [{ ...digest, id: 'r9', name: 'Standup notes' }]
+    t.replies['schedules.act'] = { schedules: [{ ...digest, id: 'r9', name: 'Standup notes' }] }
     t.key('form:save').emit('click')
     await flush()
     assert.deepEqual(t.calls.at(-1), ['schedules.act', { botId: 'a', action: 'create', name: 'Standup notes', prompt: 'Summarize yesterday.', when: { kind: 'daily', time: '08:45', weekdays: [1, 2, 3, 4, 5] } }])
@@ -234,6 +238,16 @@ test('schedules pause, run, delete after asking, and are created from the form',
     t.key('form:save').emit('click')
     await flush()
     assert.deepEqual(t.calls.at(-1)![1].when, { kind: 'once', at: new Date('2027-01-05T09:30').getTime() })
+    // A change that was made but whose list could not be reread offers nothing to repeat.
+    t.replies['schedules.act'] = {}
+    t.key('schedule:new').emit('click')
+    fill('form:name', 'Again')
+    fill('form:prompt', 'x')
+    t.key('form:save').emit('click')
+    await flush()
+    assert.match(t.root.text(), /Done\. The list could not be refreshed/)
+    assert.equal(t.key('schedule:new'), undefined)
+    assert.equal(t.key('form:save'), undefined)
   } finally {
     t.restore()
   }

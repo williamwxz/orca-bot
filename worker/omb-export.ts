@@ -1,4 +1,5 @@
-import { cp, lstat, mkdir, readdir, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { cp, lstat, mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import path from 'node:path'
 import { defaultHttpDeps } from './omb-http.ts'
@@ -21,6 +22,8 @@ export type ExportFs = {
   exists(target: string): Promise<boolean>
   /** Copies a skill folder without following links. False when there is no such plain folder. */
   copyFolder(from: string, to: string): Promise<boolean>
+  /** A plain file's text, or undefined when there is none (links are not followed). */
+  readText(file: string): Promise<string | undefined>
   downloads(): Promise<string>
   now(): Date
 }
@@ -41,6 +44,10 @@ export function defaultExportFs(): ExportFs {
         filter: async (source: string) => !(await lstat(source)).isSymbolicLink()
       })
       return true
+    },
+    readText: async (file) => {
+      const info = await lstat(file).catch(() => undefined)
+      return info?.isFile() ? readFile(file, 'utf8').catch(() => undefined) : undefined
     },
     downloads: async () => {
       const downloads = path.join(homedir(), 'Downloads')
@@ -71,11 +78,20 @@ const stamp = (date: Date) => {
   return `${date.getFullYear()}-${two(date.getMonth() + 1)}-${two(date.getDate())}-${two(date.getHours())}${two(date.getMinutes())}`
 }
 
+/** The export folder as the person reads it: under ~ when it is in the home folder, never a full user path. */
+export function folderLabel(folder: string, home = homedir()): string {
+  const relative = path.relative(home, folder)
+  return relative && !relative.startsWith('..') && !path.isAbsolute(relative) ? `~/${relative.split(path.sep).join('/')}` : path.basename(folder)
+}
+
+const sha256 = (text: string) => createHash('sha256').update(text).digest('hex')
+
 /**
  * Writes every bot's persona, memory and own skills as plain files: a folder per bot laid out as
  * a Hermes Agent profile (SOUL.md, memories/, skills/), with the skills in the SKILL.md format
  * Claude Code and Codex read too, plus team.json and a README. Chats, credentials, connector
- * settings and skills from Claude Code, Codex or a project folder are not copied.
+ * settings, library skills and skills from Claude Code, Codex or a project folder are not copied.
+ * Anything that could not be read is listed in `skipped`, never left out silently.
  */
 export async function exportTeam(
   input: { port: number; bots: { id: string; name: string }[] },
@@ -93,9 +109,14 @@ export async function exportTeam(
   const skipped: string[] = []
   let skillCount = 0
   let memoryFiles = 0
+  const read = (path: string) => deps.request(input.port, path).then(object, () => undefined)
   for (const listed of bots) {
     const api = `/api/bots/${listed.id}`
-    const bot = object(await deps.request(input.port, api).catch(() => undefined))
+    const bot = await read(api)
+    if (!bot) {
+      skipped.push(`${listed.name}: the bot could not be read`)
+      continue
+    }
     const record = object(bot.bot ?? bot)
     const name = str(record.name, 200) || listed.name
     const dir = path.join(folder, folderName(name, taken))
@@ -104,29 +125,55 @@ export async function exportTeam(
     if (soul.trim()) await fs.write(path.join(dir, 'SOUL.md'), soul.endsWith('\n') ? soul : `${soul}\n`)
 
     // Memory through OpenMausBot's own file route, so only files it lists and serves are read.
-    const overview = object(await deps.request(input.port, `${api}/memory`).catch(() => undefined))
-    const files = ['MEMORY.md', ...[...(overview.topics ?? []), ...(overview.logs ?? [])].map((f: any) => str(f?.path, 300))]
+    const overview = await read(`${api}/memory`)
     const memoryNames: string[] = []
-    for (const file of files.slice(0, MAX_MEMORY_FILES)) {
-      if (!MEMORY_FILE.test(file) || file.split('/').some((part) => part === '..' || part === '.')) continue
-      const doc = object(await deps.request(input.port, `${api}/memory/file?path=${encodeURIComponent(file)}`).catch(() => undefined))
-      if (typeof doc.text !== 'string' || doc.exists === false || !doc.text.trim()) continue
-      const target = path.join(dir, 'memories', file === 'MEMORY.md' ? 'MEMORY.md' : file.slice('memory/'.length))
-      await fs.mkdir(path.dirname(target))
-      await fs.write(target, doc.text)
-      memoryNames.push(file)
-      memoryFiles++
+    if (!overview) skipped.push(`${name}: memory`)
+    else {
+      const files = ['MEMORY.md', ...[...(overview.topics ?? []), ...(overview.logs ?? [])].map((f: any) => str(f?.path, 300))]
+      if (files.length > MAX_MEMORY_FILES) skipped.push(`${name}: ${files.length - MAX_MEMORY_FILES} more memory files`)
+      const used = new Set<string>()
+      for (const file of files.slice(0, MAX_MEMORY_FILES)) {
+        if (!MEMORY_FILE.test(file) || file.split('/').some((part) => part === '..' || part === '.')) continue
+        const doc = await read(`${api}/memory/file?path=${encodeURIComponent(file)}`)
+        if (!doc || typeof doc.text !== 'string') {
+          skipped.push(`${name}: memory file ${file}`)
+          continue
+        }
+        if (doc.exists === false || !doc.text.trim()) continue
+        // A topic note may share MEMORY.md's name: it keeps a name of its own.
+        let relative = file === 'MEMORY.md' ? 'MEMORY.md' : file.slice('memory/'.length)
+        if (used.has(relative.toLowerCase())) relative = relative.replace(/\.md$/, ' (topic).md')
+        used.add(relative.toLowerCase())
+        const target = path.join(dir, 'memories', relative)
+        await fs.mkdir(path.dirname(target))
+        await fs.write(target, doc.text)
+        memoryNames.push(file)
+        memoryFiles++
+      }
     }
 
-    // The bot's own skills are copied whole; skills its engine loads from your folders stay there.
-    const listing = object(await deps.request(input.port, `${api}/skills`).catch(() => undefined))
+    // The bot's own skills are copied whole from the folder OpenMausBot reviewed (a reviewed change
+    // lives under skills/.revisions); skills its engine or the library provides stay where they are.
+    const listing = await read(`${api}/skills`)
     const own: string[] = []
     const engine: string[] = []
-    const workspace = str(overview.workspacePath, 4000)
-    for (const entry of Array.isArray(listing.skills) ? listing.skills : []) {
+    const library: string[] = []
+    const workspace = str(overview?.workspacePath, 4000)
+    const dataDir = path.isAbsolute(workspace) && path.basename(path.dirname(workspace)) === 'workspaces' ? path.dirname(path.dirname(workspace)) : ''
+    const manifestText = dataDir ? await fs.readText(path.join(dataDir, 'skill-state', listed.id, 'skills.json')) : undefined
+    let manifest: Record<string, any> = {}
+    try {
+      manifest = object(manifestText ? JSON.parse(manifestText) : undefined)
+    } catch {}
+    if (!listing) skipped.push(`${name}: skills`)
+    for (const entry of Array.isArray(listing?.skills) ? listing.skills : []) {
       const s = object(entry)
       if (typeof s.name !== 'string' || s.name.length > 64 || !SKILL_NAME.test(s.name)) continue
       const from = skillFrom(s)
+      if (from === 'library') {
+        library.push(s.name)
+        continue
+      }
       if (['claude', 'codex', 'agents', 'project', 'computer'].includes(from)) {
         engine.push(s.name)
         continue
@@ -134,15 +181,23 @@ export async function exportTeam(
       const target = path.join(dir, 'skills', s.name)
       await fs.mkdir(path.join(dir, 'skills'))
       let copied = false
-      if (path.isAbsolute(workspace)) {
-        copied = await fs.copyFolder(path.join(workspace, 'skills', s.name), target).catch(() => false)
+      const revision = str(object(manifest[s.name]).storageRevision, 64)
+      const source = /^[a-f0-9]{64}$/.test(revision)
+        ? path.join(workspace, 'skills', '.revisions', revision)
+        : path.join(workspace, 'skills', s.name)
+      // Only the folder whose SKILL.md is the one OpenMausBot lists is copied.
+      if (dataDir && typeof s.sha256 === 'string') {
+        const text = await fs.readText(path.join(source, 'SKILL.md'))
+        if (text !== undefined && sha256(text) === s.sha256) copied = await fs.copyFolder(source, target).catch(() => false)
       }
       if (!copied) {
-        const file = object(await deps.request(input.port, `${api}/skills/${s.name}`).catch(() => undefined))
-        if (typeof file.text === 'string' && file.text.trim()) {
+        const file = await read(`${api}/skills/${s.name}`)
+        if (typeof file?.text === 'string' && file.text.trim()) {
           await fs.mkdir(target)
           await fs.write(path.join(target, 'SKILL.md'), file.text)
           copied = true
+          const others = Array.isArray(s.files) ? s.files.filter((f: unknown) => f !== 'SKILL.md').length : 0
+          if (others) skipped.push(`${name}: ${others} file${others === 1 ? '' : 's'} of skill ${s.name} besides SKILL.md`)
         }
       }
       if (copied) {
@@ -162,15 +217,16 @@ export async function exportTeam(
       connectors: Array.isArray(record.mcpServers) ? record.mcpServers.filter((n: unknown) => typeof n === 'string').slice(0, 50) : [],
       skills: own,
       skillsFromYourAgents: engine,
+      ...(library.length ? { skillsFromLibrary: library } : {}),
       memory: memoryNames
     })
   }
   await fs.write(
     path.join(folder, 'team.json'),
-    `${JSON.stringify({ format: 'bot-team-export/1', exportedAt: fs.now().toISOString(), bots: team }, null, 2)}\n`
+    `${JSON.stringify({ format: 'bot-team-export/1', exportedAt: fs.now().toISOString(), bots: team, ...(skipped.length ? { notExported: skipped } : {}) }, null, 2)}\n`
   )
   await fs.write(path.join(folder, 'README.md'), readme(team))
-  return { folder, bots: team.length, skills: skillCount, memoryFiles, skipped }
+  return { folder: folderLabel(folder), bots: team.length, skills: skillCount, memoryFiles, skipped }
 }
 
 function readme(team: Record<string, unknown>[]): string {
@@ -186,7 +242,7 @@ Exported by Bot Team for Orca from OpenMausBot. Everything here is plain text: o
   - \`memories/MEMORY.md\`: what the bot remembers and loads each turn. \`memories/<topic>.md\` are longer notes it reads when needed; \`memories/log/\` are its daily logs.
   - \`skills/<name>/SKILL.md\`: skills the bot learned or was given. This is the same skill format Claude Code, Codex and Hermes Agent use.
 
-Not included: chats, files the bots made, credentials, connector settings, and skills that come from your own Claude Code, Codex or project folders (they are still in those folders; \`team.json\` lists them under \`skillsFromYourAgents\`).
+Not included: chats, files the bots made, credentials, connector settings, skills from OpenMausBot's skills library (\`skillsFromLibrary\`), and skills that come from your own Claude Code, Codex or project folders (they are still in those folders; \`team.json\` lists them under \`skillsFromYourAgents\`). Anything that could not be read is listed under \`notExported\`.
 
 ## Use it elsewhere
 

@@ -1,7 +1,7 @@
 import { defaultHttpDeps } from './omb-http.ts'
 import type { HttpDeps } from './omb-http.ts'
 import { validBotId } from './omb-open.ts'
-import type { Schedule, ScheduleAction, ScheduleWhen } from '../shared/schedules.ts'
+import type { Schedule, ScheduleAction, ScheduleResult, ScheduleWhen } from '../shared/schedules.ts'
 
 const object = (v: unknown): Record<string, any> =>
   v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, any>) : {}
@@ -17,7 +17,11 @@ export function whenView(raw: unknown): ScheduleWhen {
     : undefined
   if (s.type === 'daily' && typeof s.time === 'string' && TIME.test(s.time))
     return { kind: 'daily', time: s.time, weekdays: weekdays?.length ? weekdays : [0, 1, 2, 3, 4, 5, 6] }
-  if (s.type === 'interval' && Number.isInteger(s.everyMinutes)) return { kind: 'interval', everyMinutes: s.everyMinutes }
+  if (s.type === 'interval' && Number.isInteger(s.everyMinutes)) {
+    // Weekday, time-window and end-date limits set in OpenMausBot are not shown here, only flagged.
+    const limited = (Array.isArray(s.weekdays) && s.weekdays.length < 7) || s.window != null || s.endsAt != null
+    return limited ? { kind: 'interval', everyMinutes: s.everyMinutes, limited: true } : { kind: 'interval', everyMinutes: s.everyMinutes }
+  }
   if (s.type === 'once' && Number.isFinite(s.at)) return { kind: 'once', at: s.at }
   if (s.type === 'cron' && typeof s.expression === 'string') return { kind: 'cron', expression: s.expression.slice(0, 100) }
   return { kind: 'other' }
@@ -72,12 +76,15 @@ export function scheduleBody(when: ScheduleWhen, now: number): Record<string, un
 
 /**
  * Creates, switches, runs or deletes one of this bot's routines, then lists them again. An action
- * on an ID that is not this bot's is refused before anything is sent.
+ * on an ID that is not this bot's is refused before anything is sent. Once the change is made it
+ * is never reported as failed: a list that cannot be read afterwards comes back empty-handed, so
+ * the panel does not offer to repeat a create or a run that already happened.
  */
 export async function actOnSchedule(
   input: { port: number; botId: string; now?: number } & ScheduleAction,
   deps: HttpDeps = defaultHttpDeps()
-): Promise<Schedule[]> {
+): Promise<ScheduleResult> {
+  const fresh = () => listSchedules(input, deps).then((schedules) => ({ schedules }), () => ({}))
   if (!validBotId(input.botId)) throw new Error('Invalid bot ID.')
   const fail = (wording: string) => () => {
     throw new Error(wording)
@@ -91,7 +98,7 @@ export async function actOnSchedule(
     await deps
       .request(input.port, '/api/routines', { name, prompt, botId: input.botId, schedule, runOn: 'maus', enabled: true }, 'POST')
       .catch(fail('Could not save this schedule. Check the time and try again.'))
-    return listSchedules(input, deps)
+    return fresh()
   }
   if (typeof input.id !== 'string' || !ROUTINE_ID.test(input.id)) throw new Error('Unknown schedule.')
   const current = await listSchedules(input, deps)
@@ -105,5 +112,5 @@ export async function actOnSchedule(
   } else if (input.action === 'delete') {
     await deps.request(input.port, path, undefined, 'DELETE').catch(fail('Could not delete this schedule. Try again.'))
   } else throw new Error('Unknown action.')
-  return listSchedules(input, deps)
+  return fresh()
 }

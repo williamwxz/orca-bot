@@ -75,6 +75,8 @@ export function createBotSettings(root: HTMLElement, frame: FrameApi, hooks: Bot
     let scheduleProblem = ''
     let busy: string | undefined
     let editing: string | undefined
+    // The version of MEMORY.md the edit started from: a refresh while editing must not move it.
+    let editHash: string | undefined
     let form: Form | undefined
     let confirmDelete: string | undefined
     root.hidden = false
@@ -112,7 +114,8 @@ export function createBotSettings(root: HTMLElement, frame: FrameApi, hooks: Bot
         toggle.setAttribute('aria-label', `Use ${skill.name}`)
         toggle.checked = skill.enabled
         toggle.disabled = busy !== undefined || !skill.switchable
-        if (!skill.switchable) toggle.title = 'On while the bot works in this project; change it there.'
+        if (!skill.switchable)
+          toggle.title = skill.from === 'library' ? 'Assigned in OpenMausBot\u2019s skills library; change it there.' : 'On while the bot works in this project; change it there.'
         toggle.dataset.key = `skill:${skill.name}`
         toggle.addEventListener('change', () => void flipSkill(skill.name, toggle.checked))
         line.append(copy, toggle)
@@ -138,6 +141,7 @@ export function createBotSettings(root: HTMLElement, frame: FrameApi, hooks: Bot
         const save = button('Save', 'memory:save', () => void saveMemory(), 'primary')
         const cancel = button('Cancel', 'memory:cancel', () => {
           editing = undefined
+          editHash = undefined
           draw()
         })
         save.disabled = cancel.disabled = busy !== undefined
@@ -162,6 +166,7 @@ export function createBotSettings(root: HTMLElement, frame: FrameApi, hooks: Bot
       if (memory?.hash) {
         const edit = button(memory.text.trim() ? 'Edit memory' : 'Write a note', 'memory:edit', () => {
           editing = memory.text
+          editHash = memory.hash
           draw()
           ;(root.querySelector?.('[data-key="memory:text"]') as HTMLElement | null)?.focus()
         })
@@ -358,14 +363,26 @@ export function createBotSettings(root: HTMLElement, frame: FrameApi, hooks: Bot
         hooks.notify?.(enabled ? `${name} is on.` : `${name} is off.`)
       }, 'Could not change this skill.')
     const saveMemory = () =>
-      run('memory', () => frame.plugin.request('memory.save', { botId: bot.id, text: editing ?? '', hash: learning?.memory?.hash ?? '' }), (next) => {
+      run('memory', () => frame.plugin.request('memory.save', { botId: bot.id, text: editing ?? '', hash: editHash ?? '' }), (next) => {
         learning = next
         editing = undefined
+        editHash = undefined
         hooks.notify?.('Memory saved.')
       }, 'Could not save memory.')
+    // A change that was made but whose list could not be read again: the old list would invite a
+    // repeat, so it is replaced by a note and no controls until the panel is reopened.
+    const settle = (next: { schedules?: Schedule[] }) => {
+      if (next.schedules) {
+        schedules = next.schedules
+        scheduleProblem = ''
+      } else {
+        schedules = undefined
+        scheduleProblem = 'Done. The list could not be refreshed: close and reopen to see it.'
+      }
+    }
     const act = (action: ScheduleAction, message: string) =>
       run('schedule', () => frame.plugin.request('schedules.act', { botId: bot.id, ...action }), (next) => {
-        schedules = next
+        settle(next)
         confirmDelete = undefined
         hooks.notify?.(message)
       }, 'Could not change this schedule.')
@@ -378,7 +395,7 @@ export function createBotSettings(root: HTMLElement, frame: FrameApi, hooks: Bot
         when = { kind: 'once', at }
       } else when = { kind: 'daily', time: f.time, weekdays: f.kind === 'weekdays' ? WEEKDAYS : EVERY_DAY }
       return run('schedule', () => frame.plugin.request('schedules.act', { botId: bot.id, action: 'create', name: f.name, prompt: f.prompt, when }), (next) => {
-        schedules = next
+        settle(next)
         form = undefined
         hooks.notify?.(`${f.name.trim()} is scheduled.`)
       }, 'Could not save this schedule.')

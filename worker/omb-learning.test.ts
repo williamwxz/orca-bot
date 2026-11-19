@@ -66,6 +66,8 @@ test('skills list keeps only names, descriptions and switches, learned ones firs
   assert.equal(skillFrom(profile), 'agents')
   assert.equal(skillFrom({ origin: 'native', source: '/Users/me/.agents/skills/x' }, 'claude'), 'agents')
   assert.equal(skillFrom({ source: 'package:grok-bot-1e1dee' }), 'package')
+  assert.equal(skillFrom({ origin: 'library', source: 'library:x' }), 'library')
+  assert.deepEqual(skillsView({ skills: [{ name: 'shared', origin: 'library', enabled: true }] }).skills[0], { name: 'shared', description: '', enabled: true, from: 'library', switchable: false })
   assert.deepEqual(skillsView(undefined), { skills: [], waiting: 0 })
   const many = skillsView({ skills: Array.from({ length: 150 }, (_, i) => ({ name: `s-${i}`, description: 'd'.repeat(500) })) })
   assert.equal(many.skills.length, 100)

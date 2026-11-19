@@ -44,6 +44,10 @@ test('a bot sees only its own routines, with plain timing and no attachments', (
   assert.equal(whenText({ kind: 'interval', everyMinutes: 120 }), 'Every 2 hours')
   assert.equal(whenText({ kind: 'interval', everyMinutes: 15 }), 'Every 15 minutes')
   assert.deepEqual(whenView({ type: 'limit_reset' }), { kind: 'other' })
+  // Limits set in OpenMausBot are flagged, never dropped silently.
+  for (const extra of [{ weekdays: [1, 2] }, { window: { start: '09:00', end: '17:00' } }, { endsAt: 5 }])
+    assert.equal(whenText(whenView({ type: 'interval', everyMinutes: 30, ...extra })), 'Every 30 minutes, on some days or hours only')
+  assert.equal(whenText(whenView({ type: 'interval', everyMinutes: 30, weekdays: [0, 1, 2, 3, 4, 5, 6] })), 'Every 30 minutes')
 })
 
 test('the form becomes OpenMausBot schedules and bad timing is refused before sending', () => {
@@ -66,7 +70,7 @@ test('actions touch only this bot’s routines and answer with the fresh list', 
   const { deps, calls } = fake()
   const created = await actOnSchedule({ port: 9, botId: a, now: 0, action: 'create', name: ' Daily ', prompt: ' Summarize. ', when: { kind: 'daily', time: '09:00', weekdays: [1] } }, deps)
   assert.deepEqual(calls[0], { path: '/api/routines', body: { name: 'Daily', prompt: 'Summarize.', botId: a, schedule: { type: 'daily', time: '09:00', weekdays: [1] }, runOn: 'maus', enabled: true }, method: 'POST' })
-  assert.equal(created.length, 2)
+  assert.equal(created.schedules?.length, 2)
   calls.length = 0
   await actOnSchedule({ port: 9, botId: a, action: 'toggle', id: 'r1', enabled: false }, deps)
   assert.deepEqual(calls[1], { path: '/api/routines/r1', body: { enabled: false }, method: 'PATCH' })
@@ -90,6 +94,11 @@ test('actions touch only this bot’s routines and answer with the fresh list', 
     actOnSchedule({ port: 9, botId: a, action: 'create', name: 'x', prompt: 'y', when: { kind: 'interval', everyMinutes: 30 } }, refused.deps),
     /^Error: Could not save this schedule/
   )
+  // Once made, a change is never reported as failed: an unreadable list comes back empty-handed.
+  let reads = 0
+  const flaky = fake((path, method) => (path === '/api/routines' && !method && ++reads > 1 ? new Error('SECRET') : undefined))
+  assert.deepEqual(await actOnSchedule({ port: 9, botId: a, action: 'run', id: 'r1' }, flaky.deps), {})
+  assert.ok(flaky.calls.some((c) => c.path === '/api/routines/r1/run'))
   const down = fake(() => new Error('SECRET'))
   await assert.rejects(listSchedules({ port: 9, botId: a }, down.deps), /^Error: Could not read this bot’s schedules/)
 })

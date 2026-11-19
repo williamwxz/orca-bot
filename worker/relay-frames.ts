@@ -61,6 +61,7 @@ export const RELAYED = [
   'learning.skill',
   'learning.settings',
   'team.export',
+  'team.export.status',
   'memory.save',
   'schedules.list',
   'schedules.act',

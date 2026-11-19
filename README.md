@@ -74,7 +74,8 @@ Good to know:
     header shows the model under the bot's name.
   - **Skills**, with a switch for each and a tag for where it comes from (**Learned**
     by the bot, **Claude Code**, **Codex** or **Agents folder** for skills its engine
-    loads from your own folders, **Project**, **Team package** or **Added**). Writing
+    loads from your own folders, **Project**, **Library**, **Team package** or **Added**;
+    Project and Library skills are switched where they come from). Writing
     skills stays in the full chat; type `/learn` there to save what a bot just did.
   - **Memory** (`MEMORY.md`), with how many of its lines load each turn, and **Edit
     memory**. A save is refused if the bot changed its memory while you were editing,
@@ -127,8 +128,11 @@ The gear button in the panel header opens Settings, in four parts:
     (`memories/`) and own skills (`skills/`) as plain files to a new folder in
     Downloads on the bot host, with `team.json` and a README. Each bot folder is
     laid out like a Hermes Agent profile, and the skills use the `SKILL.md`
-    format Claude Code and Codex read. Chats, files, credentials and connector
-    settings are not included; for a full backup use OpenMausBot's own **Export
+    format Claude Code and Codex read. Skills are copied from the version
+    OpenMausBot reviewed. Chats, files, credentials, connector settings and
+    library skills are not included, and anything that could not be read is
+    listed when the export ends and in `team.json`. The export runs in the
+    background on the bot host. For a full backup use OpenMausBot's own **Export
     full backup**.
 
 ## Use bots on a paired Orca server

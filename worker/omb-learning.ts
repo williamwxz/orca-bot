@@ -19,6 +19,7 @@ export function skillFrom(s: Record<string, any>, engine = ''): SkillFrom {
   if (source.startsWith('learn:')) return 'learned'
   if (source.startsWith('package:')) return 'package'
   if (s.origin === 'project') return 'project'
+  if (s.origin === 'library') return 'library'
   if (s.origin === 'imported') return 'computer'
   if (s.origin === 'native') {
     const path = source.replace(/\\/g, '/')
@@ -32,7 +33,7 @@ export function skillFrom(s: Record<string, any>, engine = ''): SkillFrom {
   return 'added'
 }
 
-const FROM_ORDER: SkillFrom[] = ['learned', 'added', 'package', 'computer', 'claude', 'codex', 'agents', 'project']
+const FROM_ORDER: SkillFrom[] = ['learned', 'added', 'package', 'library', 'computer', 'claude', 'codex', 'agents', 'project']
 
 /**
  * The skills a bot can use, by name, description, switch and where each comes from. Only these
@@ -52,7 +53,7 @@ export function skillsView(raw: unknown, engine = ''): Pick<Learning, 'skills' |
       description: text(s.description, 300),
       enabled: s.enabled === true,
       from,
-      switchable: from !== 'project'
+      switchable: from !== 'project' && from !== 'library'
     })
     if (skills.length >= MAX_SKILLS) break
   }
