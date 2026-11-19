@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { lstat, mkdir, readdir, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import path from 'node:path'
@@ -154,6 +155,12 @@ export async function exportTeam(
       const file = await read(`${api}/skills/${s.name}`)
       if (typeof file?.text !== 'string' || !file.text.trim()) {
         skipped.push(`${name}: skill ${s.name}`)
+        continue
+      }
+      // The text is fetched by name: only the skill that was listed, by its digest, is the bot's own.
+      // A same-named library, engine or project skill served in its place is left out.
+      if (typeof s.sha256 !== 'string' || createHash('sha256').update(file.text).digest('hex') !== s.sha256) {
+        skipped.push(`${name}: skill ${s.name} (it changed during the export)`)
         continue
       }
       const target = path.join(dir, 'skills', s.name)

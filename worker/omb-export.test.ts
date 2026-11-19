@@ -46,7 +46,8 @@ function fakeHttp() {
             { name: 'weekly-report', source: 'learn:automatic review', sha256: sha(reviewed), referencesSha256: 'r'.repeat(64) },
             { name: 'notes-style', source: 'learn:x', sha256: sha(plain) },
             { name: 'stale', source: 'learn:x', sha256: sha('newer text'), files: ['SKILL.md', 'references/a.md'] },
-            { name: 'from-api', source: 'https://github.com/x/y', sha256: 'none' },
+            { name: 'from-api', source: 'https://github.com/x/y', sha256: sha('---\nname: from-api\n---\n') },
+            { name: 'swapped', source: 'learn:x', sha256: sha('the bot\'s own text') },
             { name: 'shared', origin: 'library', source: 'learn:moved to the library' },
             { name: 'orca-cli', origin: 'native', source: '/Users/me/.agents/skills/orca-cli' },
             { name: 'gone', source: 'learn:x' },
@@ -55,6 +56,8 @@ function fakeHttp() {
         }
       if (path === `/api/bots/${a}/skills/from-api`) return { text: '---\nname: from-api\n---\n' }
       if (path === `/api/bots/${a}/skills/weekly-report`) return { text: reviewed }
+      // Removed or shared between the listing and the read: a same-named library skill is served instead.
+      if (path === `/api/bots/${a}/skills/swapped`) return { text: 'a library skill of the same name' }
       if (path === `/api/bots/${a}/skills/notes-style`) return { text: plain }
       if (path === `/api/bots/${a}/skills/stale`) return { text: 'newer text' }
       if (path === `/api/bots/${b}`) return { bot: { name: 'Manufacturing Eng', soul: '' } }
@@ -79,6 +82,7 @@ test('export writes each bot’s served SKILL.md and memory, and lists everythin
     'Manufacturing Eng: memory file memory/broken.md',
     'Manufacturing Eng: the references of skill weekly-report',
     'Manufacturing Eng: 1 file of skill stale besides SKILL.md',
+    'Manufacturing Eng: skill swapped (it changed during the export)',
     'Manufacturing Eng: skill gone',
     'Manufacturing Eng: memory',
     'Manufacturing Eng: skills',
@@ -88,7 +92,7 @@ test('export writes each bot’s served SKILL.md and memory, and lists everythin
   assert.equal(files.get(`${root}/Manufacturing Eng/skills/weekly-report/SKILL.md`), reviewed)
   assert.equal(files.get(`${root}/Manufacturing Eng/skills/notes-style/SKILL.md`), plain)
   assert.equal(files.get(`${root}/Manufacturing Eng/skills/stale/SKILL.md`), 'newer text')
-  assert.equal([...files.keys()].some((f) => f.includes('/skills/shared')), false)
+  assert.equal([...files.keys()].some((f) => f.includes('/skills/shared') || f.includes('/skills/swapped')), false)
   assert.equal(files.get(`${root}/Manufacturing Eng/SOUL.md`), '# Persona\n')
   // A topic named MEMORY.md keeps its own file next to the bot's MEMORY.md.
   assert.equal(files.get(`${root}/Manufacturing Eng/memories/MEMORY.md`), 'text of MEMORY.md')
