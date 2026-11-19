@@ -166,6 +166,12 @@ export function createCapabilityPicker(
         if (!current()) return
         if (fresh) unconfirmed = false
         setupBusy = undefined
+        // The re-check found the step still running: follow it to the end again.
+        const step = status?.desktop?.step
+        if (fresh && step?.running) {
+          setupBusy = step.action
+          followStep(step.id)
+        }
         return draw()
       }
       try {

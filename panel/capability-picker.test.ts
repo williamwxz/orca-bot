@@ -526,6 +526,47 @@ test('a step whose host stops answering is given up after a bounded wait, not fo
   }
 })
 
+test('a re-check that finds the step still running follows it again to the end', async () => {
+  const saved = ['document', 'window', 'setTimeout'].map((k) => Object.getOwnPropertyDescriptor(globalThis, k))
+  Object.defineProperty(globalThis, 'document', { configurable: true, value: Object.assign(new Element(), { createElement: () => new Element() }) })
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: Object.assign(new Element(), { innerWidth: 380, innerHeight: 600 }) })
+  Object.defineProperty(globalThis, 'setTimeout', { configurable: true, value: (fn: () => void) => { setImmediate(fn); return 0 } })
+  const all = (n: Element): Element[] => [n, ...n.children.flatMap(all)]
+  try {
+    const { FOLLOW_MISSES } = await import('./capability-picker.ts')
+    const root = new Element()
+    const notes: string[] = []
+    let online = false
+    let polls = 0
+    let desktop: any = { mode: 'shared', maxInstances: 2, idleMinutes: 480, state: 'not-prepared', step: { id: 6, action: 'prepare', running: true } }
+    const frame = { plugin: { request: async (name: string) => {
+      if (name !== 'computer.status') return { ok: true }
+      // The first status (on open) answers; then the host is unreachable until the re-check.
+      if (++polls > 1 && !online) throw new Error('offline')
+      if (online && polls > 3) desktop = { ...desktop, state: 'not-created', step: { ...desktop.step, running: false } }
+      return { vm: 'setup', desktop }
+    } } }
+    const picker = createCapabilityPicker(root as any, frame as any, { changed: async () => {}, manage: () => {}, notify: (t) => notes.push(t) })
+    await picker.open('computer', { id: 'a', name: 'Scout', state: 'idle', computer: 'vm' } as any, new Element() as any)
+    for (let i = 0; i < FOLLOW_MISSES * 3 + 10; i++) await new Promise<void>((r) => setImmediate(r))
+    const key = (k: string) => all(root).find((n) => n.dataset.key === k)!
+    assert.equal(key('desktop:check').textContent, 'Check again')
+    online = true
+    polls = 1
+    key('desktop:check').emit()
+    for (let i = 0; i < 12; i++) await new Promise<void>((r) => setImmediate(r))
+    assert.equal(notes.at(-1), 'Private desktop updated.')
+    assert.equal(key('desktop:create').textContent, 'Create private desktop')
+    assert.equal(key('desktop:create').disabled, false)
+    picker.close()
+  } finally {
+    for (const [i, k] of ['document', 'window', 'setTimeout'].entries()) {
+      if (saved[i]) Object.defineProperty(globalThis, k, saved[i]!)
+      else delete (globalThis as any)[k]
+    }
+  }
+})
+
 test('the late status redraw keeps the keyboard on the tile the person moved to', async () => {
   const saved = ['document', 'window'].map((k) => Object.getOwnPropertyDescriptor(globalThis, k))
   const doc = Object.assign(new Element(), { createElement: () => new Element() })

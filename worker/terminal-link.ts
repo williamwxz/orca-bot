@@ -141,12 +141,32 @@ export function createTerminalLink(deps: LinkDeps) {
     const saved = await deps.load()
     if (saved?.hostId !== host.id) return undefined
     const s: Session = { host, handle: saved.handle, cursor: '0' }
+    let terminal: any
     try {
-      const terminal = (await deps.call(['terminal', 'read', '--limit', '1', ...at(s)]))?.terminal
-      if (terminal?.status !== 'running') throw new Error('closed')
-      s.cursor = String(terminal.latestCursor ?? terminal.nextCursor)
-      if ((await exchange(s, PING, {}, 10000))?.hash === bundle.hash) return s
-    } catch { /* Start a fresh connection below. */ }
+      terminal = (await deps.call(['terminal', 'read', '--limit', '1', ...at(s)]))?.terminal
+    } catch {
+      // Unknown: never close a terminal whose worker may be mid-step. Start a fresh one beside it.
+      return undefined
+    }
+    if (terminal?.status !== 'running') {
+      await close(s)
+      return undefined
+    }
+    s.cursor = String(terminal.latestCursor ?? terminal.nextCursor)
+    let hash: unknown
+    try {
+      hash = (await exchange(s, PING, {}, 10000))?.hash
+    } catch {
+      // No answer from a running terminal: leave it be.
+      return undefined
+    }
+    if (hash === bundle.hash) return s
+    // Another version of the worker: close it only once it says no desktop step is running.
+    try {
+      if ((await exchange(s, 'desktop.step', {}, 10000))?.step?.running === true) return undefined
+    } catch (error) {
+      if (!(error instanceof HostAnswer)) return undefined
+    }
     await close(s)
     return undefined
   }
@@ -228,9 +248,13 @@ export function createTerminalLink(deps: LinkDeps) {
     retiring.set(s.host.id, r)
     return (async () => {
       const verdict = await settle(r).catch(() => 'unknown' as const)
-      if (verdict === 'cancelled') return
-      if (retiring.get(s.host.id) === r) retiring.delete(s.host.id)
-      if (verdict === 'idle' || verdict === 'gone') await close(s)
+      // Close only if this retirement still owns the session: a return to the host may have
+      // reclaimed it while the last check was in flight.
+      if (r.cancelled || retiring.get(s.host.id) !== r) return
+      // Unknown: leave the terminal running and keep it reclaimable for a later return.
+      if (verdict !== 'idle' && verdict !== 'gone') return
+      retiring.delete(s.host.id)
+      await close(s)
     })()
   }
 

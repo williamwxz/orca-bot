@@ -164,3 +164,53 @@ test('leaving Settings drops a status read still in flight, so nothing polls or 
     if (savedTimer) Object.defineProperty(globalThis, 'setTimeout', savedTimer)
   }
 })
+
+test('a save still in flight when Settings closes is dropped, and a new host starts without the old unconfirmed state', async () => {
+  const saved = Object.getOwnPropertyDescriptor(globalThis, 'document')
+  const savedTimer = Object.getOwnPropertyDescriptor(globalThis, 'setTimeout')
+  Object.defineProperty(globalThis, 'document', { configurable: true, value: { createElement: (tag: string) => new Element(tag) } })
+  let timers = 0
+  Object.defineProperty(globalThis, 'setTimeout', { configurable: true, value: (fn: () => void) => { timers++; setImmediate(fn); return 0 } })
+  try {
+    const { FOLLOW_MISSES } = await import('./capability-picker.ts')
+    const els = new Map<string, Element>()
+    const get = (id: string) => els.get(id) ?? (els.set(id, new Element()), els.get(id)!)
+    const notes: string[] = []
+    let finishSave!: () => void
+    let status: any = { mode: 'shared', maxInstances: 2, idleMinutes: 480, state: 'stopped' }
+    let reads = 0
+    const frame = { plugin: { request: async (name: string) => {
+      if (name === 'desktop.status') { reads++; return status }
+      if (name === 'desktop.settings') return new Promise((resolve) => { finishSave = () => resolve(status) })
+      if (name === 'desktop.act') return { step: { id: 9, action: 'start', running: true } }
+      return {}
+    } } }
+    const view = createDesktopSettings(frame as any, get as any, (t) => notes.push(t))
+    await view.refresh()
+    const radio = all(get('desktops-options')).find((n) => n.attrs.get('role') === 'radio' && n.textContent === 'Per bot')!
+    radio.emit()
+    view.clear()
+    const before = reads
+    status = { ...status, step: { id: 1, action: 'start', running: true } }
+    finishSave()
+    for (let i = 0; i < 6; i++) await flush()
+    assert.deepEqual(notes, [], 'no notice after leaving')
+    assert.equal(reads, before, 'no read and no polling after leaving')
+    assert.equal(timers, 0)
+    // Host A: a step whose outcome is never confirmed.
+    status = { mode: 'shared', maxInstances: 2, idleMinutes: 480, state: 'stopped' }
+    await view.refresh()
+    all(get('desktops-setup')).find((n) => n.dataset.key === 'desktop:start')!.emit()
+    for (let i = 0; i < FOLLOW_MISSES * 4 + 10; i++) await flush()
+    assert.ok(all(get('desktops-setup')).some((n) => n.dataset.key === 'desktop:check'))
+    // Switching to host B: its own fresh state, with its normal action.
+    view.clear()
+    status = { mode: 'shared', maxInstances: 2, idleMinutes: 480, state: 'running' }
+    await view.refresh()
+    assert.equal(all(get('desktops-setup')).find((n) => n.dataset.key === 'desktop:stop')!.textContent, 'Stop')
+  } finally {
+    if (saved) Object.defineProperty(globalThis, 'document', saved)
+    else delete (globalThis as any).document
+    if (savedTimer) Object.defineProperty(globalThis, 'setTimeout', savedTimer)
+  }
+})

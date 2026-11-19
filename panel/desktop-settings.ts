@@ -188,17 +188,18 @@ export function createDesktopSettings(
 
   async function save(change: { mode?: 'shared' | 'per-bot'; maxInstances?: number; idleMinutes?: number }) {
     if (busy) return
+    const mine = epoch
     busy = 'settings'
     render()
     try {
       await frame.plugin.request('desktop.settings', change)
-      notify('Private desktop setting saved.')
+      if (mine === epoch) notify('Private desktop setting saved.')
     } catch (error) {
-      notify(error instanceof Error ? error.message : 'Could not save the setting.')
+      if (mine === epoch) notify(error instanceof Error ? error.message : 'Could not save the setting.')
     } finally {
-      busy = undefined
+      if (mine === epoch) busy = undefined
     }
-    await load()
+    if (mine === epoch) await load()
   }
 
   return {
@@ -210,6 +211,7 @@ export function createDesktopSettings(
       following = undefined
       busy = undefined
       misses = 0
+      unconfirmed = false
       status = undefined
       note.textContent = ''
       render()

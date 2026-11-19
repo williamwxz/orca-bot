@@ -351,7 +351,30 @@ test('a terminal whose worker stops answering mid-step is left running, never cl
   failing = true
   await link.disconnect()
   assert.equal(server.terminals.get('term_1')!.status, 'running')
-  assert.equal(server.calls.some((args) => args[0] === 'terminal' && args[1] === 'close'), false)
+  // Asking the same host again while reads still fail does not close it either.
+  await assert.rejects(link.request(host, 'status', {}))
+  assert.equal(server.terminals.get('term_1')!.status, 'running')
+  // Nor does a restarted plugin that finds it as the saved terminal and gets no answer.
+  const restarted = createTerminalLink({ ...deps, load: async () => ({ hostId: host.id, handle: 'term_1' }) })
+  await assert.rejects(restarted.request(host, 'status', {}))
+  assert.equal(server.terminals.get('term_1')!.status, 'running')
+  const closed = server.calls.filter((args) => args[0] === 'terminal' && args[1] === 'close').map((args) => args[args.indexOf('--terminal') + 1])
+  assert.equal(closed.includes('term_1'), false)
+})
+
+test('a return to the host while its last check is in flight keeps the terminal, even if that check says idle', async () => {
+  const server = fakeServer({
+    status: () => ({ state: 'running', message: '' }),
+    'desktop.step': () => ({ step: { id: 1, action: 'recreate', running: false } })
+  })
+  const link = createTerminalLink(linkDeps(server))
+  await link.request(host, 'status', {})
+  const leaving = link.disconnect()
+  await link.request(host, 'status', {})
+  await leaving
+  for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r))
+  assert.equal(server.terminals.get('term_1')!.status, 'running')
+  assert.equal(server.terminals.size, 1)
 })
 
 test('returning to a host before its desktop step ends takes back the same terminal and job', async () => {
