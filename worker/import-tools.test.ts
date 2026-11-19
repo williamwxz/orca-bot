@@ -232,6 +232,21 @@ test('Claude plugins contribute MCP servers from the live synced generation and 
   deps.realpath = (path) =>
     path === '/home/.claude/plugins/cache/on/.claude-plugin/plugin.json' ? '/etc/elsewhere/plugin.json' : path
   assert.deepEqual(await findTools(deps), [])
-  deps.realpath = (path) => path.replace('/home/.claude/plugins/cache/on', '/real/on')
+  // A plugin folder that is itself a link works, and the file read is the resolved path that was
+  // checked: a link swapped after the check cannot redirect the read.
+  const reads: string[] = []
+  const read = deps.read
+  deps.read = (path) => {
+    reads.push(path)
+    return read(path.replace('/real/on', '/home/.claude/plugins/cache/on'))
+  }
+  let lookups = 0
+  deps.realpath = (path) => {
+    if (path.endsWith('/on/.claude-plugin/plugin.json') && ++lookups > 1) return '/etc/swapped/plugin.json'
+    return path.replace('/home/.claude/plugins/cache/on', '/real/on')
+  }
   assert.deepEqual((await findTools(deps)).map((t) => t.name), ['inline'])
+  assert.equal(lookups, 1)
+  assert.ok(reads.includes('/real/on/.claude-plugin/plugin.json'))
+  assert.equal(reads.some((path) => path.startsWith('/etc/')), false)
 })

@@ -170,8 +170,15 @@ test('a message can be only attachments; files go by ID and history never carrie
   assert.equal(JSON.stringify(thread).includes('/server/secret'), false)
   assert.deepEqual(thread.messages[0], { id: 'm1', at: 10, role: 'user', kind: 'text', text: '', attachments: [{ kind: 'image', name: 'a.png' }] })
   assert.equal(thread.messages[1].text, 'Look')
-  // The pending bubble matches its echo by text and attachment count.
+  // The pending bubble matches its echo by text and by the same files in order, not just a count.
   const pending = [{ text: '', state: 'sent' as const, sentAt: 10, attachments: [file] }]
   assert.equal(reconcileAttempts(pending, [thread.messages[1]]).attempts.length, 1)
   assert.equal(reconcileAttempts(pending, [thread.messages[0]]).attempts.length, 0)
+  const other = { ...thread.messages[0], id: 'm3', attachments: [{ kind: 'image' as const, name: 'b.png' }] }
+  assert.equal(reconcileAttempts(pending, [other]).attempts.length, 1)
+  const wrongKind = { ...thread.messages[0], id: 'm4', attachments: [{ kind: 'file' as const, name: 'a.png' }] }
+  assert.equal(reconcileAttempts(pending, [wrongKind]).attempts.length, 1)
+  const two = [{ text: '', state: 'sent' as const, sentAt: 10, attachments: [file, { id: 'u2', kind: 'file' as const, name: 'b.pdf' }] }]
+  const swapped = { ...thread.messages[0], id: 'm5', attachments: [{ kind: 'file' as const, name: 'b.pdf' }, { kind: 'image' as const, name: 'a.png' }] }
+  assert.equal(reconcileAttempts(two, [swapped]).attempts.length, 1)
 })

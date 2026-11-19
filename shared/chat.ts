@@ -115,6 +115,9 @@ export async function sendDraft(
   }
 }
 
+const sameFiles = (a: SentFile[] = [], b: SentFile[] = []): boolean =>
+  a.length === b.length && a.every((file, i) => file.kind === b[i].kind && file.name === b[i].name)
+
 // Persist consumed IDs across refreshes so one echo cannot remove two identical sends.
 export function reconcileAttempts(
   attempts: Attempt[],
@@ -129,7 +132,7 @@ export function reconcileAttempts(
         entry.role === 'user' &&
         entry.kind === 'text' &&
         entry.text === attempt.text &&
-        (entry.attachments?.length ?? 0) === (attempt.attachments?.length ?? 0) &&
+        sameFiles(entry.attachments, attempt.attachments) &&
         entry.at >= attempt.sentAt - 5000 &&
         !matchedIds.has(entry.id)
     )

@@ -184,9 +184,11 @@ function claudePluginDirs(deps: ImportDeps, configDir: string): string[] {
 /** Reads a plugin file only when it really lives inside the plugin folder, symbolic links resolved. */
 function readInside(deps: ImportDeps, dir: string, file: string): unknown {
   const real = deps.realpath ?? ((path: string) => path)
-  const inside = relative(real(dir), real(file))
+  const resolved = real(file)
+  const inside = relative(real(dir), resolved)
   if (!inside || inside.startsWith('..') || isAbsolute(inside)) throw new Error('Outside the plugin.')
-  return JSON.parse(deps.read(file))
+  // Read the path that was checked, so a link swapped afterwards cannot redirect the read.
+  return JSON.parse(deps.read(resolved))
 }
 function pluginServers(deps: ImportDeps, dir: string): Record<string, unknown> | undefined {
   let source: unknown

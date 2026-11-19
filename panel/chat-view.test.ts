@@ -480,6 +480,8 @@ test('files upload when picked, wait before sending, go out by ID, and never cro
   let remote = false
   let host = 0
   let history: any[] = []
+  let holdSend = false
+  let failSend!: (error: Error) => void
   const file = (name: string, type: string, size = 3) => ({ name, type, size, arrayBuffer: async () => new TextEncoder().encode('hi!').buffer })
   try {
     const view = createChatView(
@@ -494,6 +496,7 @@ test('files upload when picked, wait before sending, go out by ID, and never cro
             }
             if (name === 'message.send') {
               sends.push(input)
+              if (holdSend) return new Promise((_resolve, reject) => { failSend = reject })
               return { sendId: 'x' }
             }
             return { hasMore: false, messages: history }
@@ -563,13 +566,36 @@ test('files upload when picked, wait before sending, go out by ID, and never cro
     form.emit('submit')
     await flush()
     assert.equal(sends.length, 1)
+    // A send still in flight when the host changes must not put its draft or files into the
+    // new host's composer when it fails.
+    fileInput.files = [new File(['hi!'], 'in-flight.png', { type: 'image/png' })]
+    fileInput.emit('change')
+    await flush()
+    finishUpload()
+    await flush()
+    textarea.value = 'for the old host'
+    textarea.emit('input')
+    holdSend = true
+    form.emit('submit')
+    await flush()
+    assert.equal(sends.length, 2)
+    host++
+    view.open(bot)
+    await flush()
+    failSend(new Error('offline'))
+    await flush()
+    await flush()
+    assert.equal(tray().hidden, true)
+    assert.equal(textarea.value, '')
+    assert.equal(nodes().some((n) => /in-flight\.png|for the old host/.test(n.textContent) && n.className.includes('chat-message')), false)
+    holdSend = false
     remote = true
     view.open(bot)
     assert.equal(attach.hidden, true)
     fileInput.files = [file('a.txt', 'text/plain')]
     fileInput.emit('change')
     assert.match(notes.at(-1)!, /only when bots run on this computer/)
-    assert.equal(uploads.length, 2)
+    assert.equal(uploads.length, 3)
     view.close()
   } finally {
     for (const [i, k] of ['document', 'window'].entries()) {

@@ -82,7 +82,8 @@ export function createChatView(
   const pending = () => (bot ? (pendingByBot.get(bot.id) ?? []) : [])
   const ready = () => pending().filter((p) => p.state === 'ready').map((p) => p.attachment!)
   const notify = (text: string) => (capabilities?.notify ? capabilities.notify(text) : (note.textContent = text))
-  // Uploads belong to the host they were made on: a host change drops them, even for a bot with the same ID.
+  // Drafts, pending sends and uploads belong to the host they were made on: a host change drops
+  // them, even for a bot with the same ID.
   let uploadHost = capabilities?.hostGeneration?.()
   function syncHost(): void {
     const host = capabilities?.hostGeneration?.()
@@ -91,6 +92,7 @@ export function createChatView(
     for (const list of pendingByBot.values())
       for (const entry of list) if (entry.preview) URL.revokeObjectURL?.(entry.preview)
     pendingByBot.clear()
+    drafts.clear()
   }
   function addFiles(files: File[]): void {
     syncHost()
@@ -507,6 +509,7 @@ export function createChatView(
     if (current.sending || (!current.draft.trim() && !files.length) || current.draft.length > 16000)
       return
     pendingByBot.set(id, all.filter((p) => p.state !== 'ready'))
+    const host = uploadHost
     void sendDraft(
       current,
       thread.messages.map((message) => message.id),
@@ -525,6 +528,11 @@ export function createChatView(
       Date.now,
       files
     ).then(() => {
+      // The host changed while this was sending: its draft and files are not the new host's.
+      if (host !== capabilities?.hostGeneration?.()) {
+        for (const entry of sending) if (entry.preview) URL.revokeObjectURL?.(entry.preview)
+        return
+      }
       if (current.sendFailed) {
         // Keep failed files with the restored draft so the person can retry as is.
         pendingByBot.set(id, [...sending, ...(pendingByBot.get(id) ?? [])])
