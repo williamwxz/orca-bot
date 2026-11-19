@@ -486,26 +486,37 @@ test('a step whose host stops answering is given up after a bounded wait, not fo
     const notes: string[] = []
     let polls = 0
     let online = true
-    const desktop = { mode: 'shared', maxInstances: 2, idleMinutes: 480, state: 'stopped', step: { id: 3, action: 'start', running: true } }
-    const frame = { plugin: { request: async (name: string) => {
+    let wentOffline = false
+    const lifecycle: string[] = []
+    // A replace was running; it finishes while the host is unreachable.
+    let desktop: any = { mode: 'shared', maxInstances: 2, idleMinutes: 480, state: 'repair', reason: 'old-image', step: { id: 3, action: 'recreate', running: true } }
+    const frame = { plugin: { request: async (name: string, input: any) => {
+      if (name === 'desktop.act') { lifecycle.push(input.action); return { step: { id: 4, action: input.action, running: true } } }
       if (name !== 'computer.status') return { ok: true }
       polls++
       // One good "still running" answer after opening, then the host goes away.
-      if (polls > 2) online = false
+      if (polls > 2 && online && !wentOffline) { wentOffline = true; online = false; desktop = { ...desktop, state: 'running', reason: undefined, step: { id: 3, action: 'recreate', running: false } } }
       if (!online) throw new Error('offline')
-      return { vm: 'stopped', desktop }
+      return { vm: 'ready', desktop }
     } } }
     const picker = createCapabilityPicker(root as any, frame as any, { changed: async () => {}, manage: () => {}, notify: (t) => notes.push(t) })
     await picker.open('computer', { id: 'a', name: 'Scout', state: 'idle', computer: 'vm' } as any, new Element() as any)
     const key = (k: string) => all(root).find((n) => n.dataset.key === k)!
-    assert.equal(key('desktop:start').textContent, 'Starting…')
+    assert.equal(key('desktop:recreate').textContent, 'Replacing…')
     for (let i = 0; i < FOLLOW_MISSES * 3 + 10; i++) await new Promise<void>((r) => setImmediate(r))
     assert.deepEqual(notes, ['Could not confirm how the step ended. Check the private desktop again.'])
-    assert.equal(key('desktop:start').textContent, 'Start it now')
-    assert.equal(key('desktop:start').disabled, false)
     const settled = polls
     for (let i = 0; i < 10; i++) await new Promise<void>((r) => setImmediate(r))
     assert.equal(polls, settled, 'no more polling once given up')
+    // Only a re-check is offered: the cached status still says "replace".
+    assert.equal(all(root).some((n) => n.dataset.key === 'desktop:recreate'), false)
+    assert.equal(key('desktop:check').textContent, 'Check again')
+    online = true
+    key('desktop:check').emit()
+    for (let i = 0; i < 6; i++) await new Promise<void>((r) => setImmediate(r))
+    assert.deepEqual(lifecycle, [], 'the first click sends no lifecycle step')
+    // The fresh status shows the replace already worked.
+    assert.equal(key('desktop:stop').textContent, 'Stop')
     picker.close()
   } finally {
     for (const [i, k] of ['document', 'window', 'setTimeout'].entries()) {

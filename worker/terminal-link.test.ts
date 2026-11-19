@@ -334,6 +334,68 @@ test('switching to another paired host answers at once while the first host fini
   assert.equal(server.terminals.get('term_1')!.status, 'exited')
 })
 
+test('a terminal whose worker stops answering mid-step is left running, never closed on a guess', async () => {
+  const server = fakeServer({
+    status: () => ({ state: 'running', message: '' }),
+    'desktop.step': () => ({ step: { id: 1, action: 'recreate', running: true } })
+  })
+  const deps = linkDeps(server)
+  let failing = false
+  deps.call = async (args) => {
+    // Every read of the answer fails, but the terminal itself is still running.
+    if (failing && args[0] === 'terminal' && args[1] === 'read' && args.includes('--cursor')) throw new Error('read failed')
+    return server.call(args)
+  }
+  const link = createTerminalLink(deps)
+  await link.request(host, 'status', {})
+  failing = true
+  await link.disconnect()
+  assert.equal(server.terminals.get('term_1')!.status, 'running')
+  assert.equal(server.calls.some((args) => args[0] === 'terminal' && args[1] === 'close'), false)
+})
+
+test('returning to a host before its desktop step ends takes back the same terminal and job', async () => {
+  const hostB = { id: 'mini-2', name: 'Mac Studio' }
+  let running = true
+  const server = fakeServer(
+    {
+      status: () => ({ state: 'running', message: '' }),
+      'desktop.step': () => ({ step: { id: 1, action: 'prepare', running } })
+    },
+    { hosts: [host.id, hostB.id] }
+  )
+  const store: { saved?: Saved } = {}
+  const deps = linkDeps(server, store)
+  let parked: (() => void)[] = []
+  deps.sleep = () => new Promise<void>((resolve) => parked.push(resolve))
+  const flushAll = async () => { for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r)) }
+  const link = createTerminalLink(deps)
+  // A → This computer → A.
+  await link.request(host, 'status', {})
+  void link.disconnect()
+  await flushAll()
+  await link.request(host, 'status', {})
+  assert.equal(server.terminals.size, 1, 'no second terminal on A')
+  for (const wake of parked.splice(0)) wake()
+  await flushAll()
+  assert.equal(server.terminals.get('term_1')!.status, 'running', 'the old retirement does not close the reclaimed terminal')
+  // A → B → A: B gets its own terminal; A is taken back, and saved as the current one again.
+  await link.request(hostB, 'status', {})
+  await flushAll()
+  assert.equal(server.terminals.get('term_2')!.status, 'running')
+  assert.equal(store.saved?.hostId, hostB.id)
+  await link.request(host, 'status', {})
+  assert.equal(store.saved?.handle, 'term_1')
+  assert.equal(server.terminals.get('term_1')!.status, 'running')
+  // When A's step ends and the link lets A go, it closes.
+  running = false
+  void link.disconnect()
+  await flushAll()
+  for (const wake of parked.splice(0)) wake()
+  await flushAll()
+  assert.equal(server.terminals.get('term_1')!.status, 'exited')
+})
+
 test('paired launcher detaches with fake process dependencies and validates the returned pid', async () => {
   const { EventEmitter } = await import('node:events')
   const { orphanSpawn } = await import('./relay-host.ts')

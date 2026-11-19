@@ -122,7 +122,42 @@ test('Settings stops following a step whose report disappears, and says the outc
     const settled = reads
     for (let i = 0; i < 10; i++) await flush()
     assert.equal(reads, settled, 'no more polling once given up')
+    // Only a re-check until fresh status arrives; then the real next step returns.
+    assert.equal(all(get('desktops-setup')).some((n) => n.dataset.key === 'desktop:prepare'), false)
+    all(get('desktops-setup')).find((n) => n.dataset.key === 'desktop:check')!.emit()
+    for (let i = 0; i < 6; i++) await flush()
     assert.equal(all(get('desktops-setup')).find((n) => n.dataset.key === 'desktop:prepare')!.disabled, false)
+  } finally {
+    if (saved) Object.defineProperty(globalThis, 'document', saved)
+    else delete (globalThis as any).document
+    if (savedTimer) Object.defineProperty(globalThis, 'setTimeout', savedTimer)
+  }
+})
+
+test('leaving Settings drops a status read still in flight, so nothing polls or announces later', async () => {
+  const saved = Object.getOwnPropertyDescriptor(globalThis, 'document')
+  const savedTimer = Object.getOwnPropertyDescriptor(globalThis, 'setTimeout')
+  Object.defineProperty(globalThis, 'document', { configurable: true, value: { createElement: (tag: string) => new Element(tag) } })
+  let timers = 0
+  Object.defineProperty(globalThis, 'setTimeout', { configurable: true, value: (fn: () => void) => { timers++; setImmediate(fn); return 0 } })
+  try {
+    const els = new Map<string, Element>()
+    const get = (id: string) => els.get(id) ?? (els.set(id, new Element()), els.get(id)!)
+    let answer!: (value: unknown) => void
+    const notes: string[] = []
+    const frame = { plugin: { request: async (name: string) => {
+      if (name === 'desktop.status') return new Promise((resolve) => { answer = resolve })
+      return {}
+    } } }
+    const view = createDesktopSettings(frame as any, get as any, (t) => notes.push(t))
+    const loading = view.refresh()
+    view.clear()
+    answer({ mode: 'shared', maxInstances: 2, idleMinutes: 480, state: 'stopped', step: { id: 2, action: 'start', running: true } })
+    await loading
+    for (let i = 0; i < 6; i++) await flush()
+    assert.equal(timers, 0, 'no poll was scheduled')
+    assert.deepEqual(notes, [])
+    assert.equal(get('desktops-setup').children.length, 0)
   } finally {
     if (saved) Object.defineProperty(globalThis, 'document', saved)
     else delete (globalThis as any).document

@@ -28,12 +28,16 @@ export function createDesktopSettings(
   let loadedFor: number | undefined
   let following: number | undefined
   let misses = 0
+  let unconfirmed = false
+  // Rises when the view is cleared: answers and continuations from before are dropped.
+  let epoch = 0
   let poll: ReturnType<typeof setTimeout> | undefined
   /** Gives up following after repeated misses: the outcome is shown as unconfirmed. */
   function miss(at: number): boolean {
     if (++misses < FOLLOW_MISSES) return false
     following = undefined
     misses = 0
+    unconfirmed = true
     if (status?.step?.running) status = { ...status, step: undefined }
     note.textContent = 'Could not confirm how the last step ended. Check again to see where the desktop is.'
     return true
@@ -51,6 +55,7 @@ export function createDesktopSettings(
         desktopBlock(status, {
           perBot: false,
           busy: busy === 'settings' ? undefined : busy,
+          unconfirmed,
           run: (action) => void act(action)
         })
       )
@@ -118,15 +123,18 @@ export function createDesktopSettings(
     options.append(idle, node('small', 'A desktop with a running turn is never stopped. Files and installed apps stay.', 'desktop-option-note'))
   }
 
-  async function load(): Promise<void> {
+  async function load(checked = false): Promise<void> {
     const at = generation()
+    const mine = epoch
+    const stale = () => at !== generation() || mine !== epoch
     try {
       const next = await frame.plugin.request('desktop.status', {})
-      if (at !== generation()) return
+      if (stale()) return
       status = next
       note.textContent = ''
+      if (checked) unconfirmed = false
     } catch (error) {
-      if (at !== generation()) return
+      if (stale()) return
       // While following a step, a failed poll keeps the controls and tries again, a while.
       if (following !== undefined) {
         loadedFor = at
@@ -154,23 +162,28 @@ export function createDesktopSettings(
   function follow(id: number, at: number): void {
     following = id
     clearTimeout(poll)
+    const mine = epoch
     poll = setTimeout(() => {
-      if (at === generation()) void load()
+      if (at === generation() && mine === epoch) void load()
     }, 2500)
   }
 
   async function act(action?: DesktopAction): Promise<void> {
     if (busy || status?.step?.running) return
+    const mine = epoch
     busy = action ?? 'check'
     render()
     try {
-      if (action) following = (await frame.plugin.request('desktop.act', { action })).step.id
+      if (action) {
+        const { step } = await frame.plugin.request('desktop.act', { action })
+        if (mine === epoch) following = step.id
+      }
     } catch (error) {
-      notify(error instanceof Error ? error.message : 'Could not start this step.')
+      if (mine === epoch) notify(error instanceof Error ? error.message : 'Could not start this step.')
     } finally {
-      busy = undefined
+      if (mine === epoch) busy = undefined
     }
-    await load()
+    if (mine === epoch) await load(!action)
   }
 
   async function save(change: { mode?: 'shared' | 'per-bot'; maxInstances?: number; idleMinutes?: number }) {
@@ -192,8 +205,10 @@ export function createDesktopSettings(
     /** Reads the status when Settings opens, and again after a host change. */
     refresh: () => (busy && loadedFor === generation() ? Promise.resolve() : load()),
     clear() {
+      epoch++
       clearTimeout(poll)
       following = undefined
+      busy = undefined
       misses = 0
       status = undefined
       note.textContent = ''

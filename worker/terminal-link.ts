@@ -186,46 +186,70 @@ export function createTerminalLink(deps: LinkDeps) {
   }
 
   /**
-   * Waits while the host's worker is running a private desktop step. That step lives in the
-   * worker this terminal runs, and replacing a desktop is two server calls: closing the
-   * terminal between them would leave the desktop removed and never recreated.
+   * Sessions let go while their host's worker may still run a private desktop step. Replacing a
+   * desktop is two server calls inside that worker, so its terminal is closed only once the
+   * worker says no step is running, or the terminal has plainly exited. Returning to the host
+   * takes the same session back, job and all. One per host.
    */
-  async function settle(s: Session): Promise<void> {
+  type Retiring = { s: Session; cancelled: boolean; probe: Promise<unknown> }
+  const retiring = new Map<string, Retiring>()
+
+  /** 'idle': safe to close. 'gone': the terminal exited. 'unknown': leave it running. */
+  async function settle(r: Retiring): Promise<'idle' | 'gone' | 'unknown' | 'cancelled'> {
     const until = deps.now() + SETTLE_MS
     let unanswered = 0
     while (deps.now() < until) {
+      if (r.cancelled) return 'cancelled'
+      const probe = exchange(r.s, 'desktop.step', {}, 10000)
+      r.probe = probe.catch(() => {})
       try {
-        const reply = await exchange(s, 'desktop.step', {}, 10000)
-        if (reply?.step?.running !== true) return
+        const reply = await probe
+        if (reply?.step?.running !== true) return 'idle'
         unanswered = 0
       } catch (error) {
-        // The host's worker refused (an older version, or no such request): it has no job.
-        if (error instanceof HostAnswer) return
-        // No answer: the job may still be running. Keep the terminal, unless it is plainly gone.
-        if (++unanswered >= SETTLE_UNANSWERED) return
+        // The host's worker refused (an older version with no jobs): nothing to wait for.
+        if (error instanceof HostAnswer) return 'idle'
+        const terminal = await deps.call(['terminal', 'read', '--limit', '1', ...at(r.s)]).catch(() => undefined)
+        if (terminal?.terminal?.status === 'exited') return 'gone'
+        // No answer, terminal not known to be gone: the job may be running. Stop asking after
+        // a while, but never close it on a guess.
+        if (++unanswered >= SETTLE_UNANSWERED) return 'unknown'
       }
+      if (r.cancelled) return 'cancelled'
       await deps.sleep(3000)
     }
+    return 'unknown'
   }
 
-  /** Lets a session finish its desktop step and close in the background; nothing waits for it. */
-  function retire(s: Session): void {
+  /** Lets a session finish its desktop step and close in the background. */
+  function retire(s: Session): Promise<void> {
     if (session === s) session = undefined
-    void settle(s).then(() => close(s), () => close(s))
+    const r: Retiring = { s, cancelled: false, probe: Promise.resolve() }
+    retiring.set(s.host.id, r)
+    return (async () => {
+      const verdict = await settle(r).catch(() => 'unknown' as const)
+      if (verdict === 'cancelled') return
+      if (retiring.get(s.host.id) === r) retiring.delete(s.host.id)
+      if (verdict === 'idle' || verdict === 'gone') await close(s)
+    })()
   }
 
-  /**
-   * Closes the terminal once the host has no setup step running. The session is let go at
-   * once, so a later request opens a fresh terminal instead of waiting for the step.
-   */
+  /** Takes back a session still settling on this host, so its worker and job stay in charge. */
+  async function reclaim(host: Host): Promise<Session | undefined> {
+    const r = retiring.get(host.id)
+    if (!r) return undefined
+    r.cancelled = true
+    retiring.delete(host.id)
+    await r.probe
+    await deps.save({ hostId: host.id, handle: r.s.handle }).catch(() => {})
+    return r.s
+  }
+
+  /** Lets the session go at once; it closes when its host has no desktop step running. */
   async function disconnect(): Promise<void> {
     cancelIdle()
     await queue
-    if (!session) return
-    const s = session
-    session = undefined
-    await settle(s)
-    await close(s)
+    if (session) await retire(session)
   }
 
   return {
@@ -233,14 +257,14 @@ export function createTerminalLink(deps: LinkDeps) {
     request(host: Host, name: string, input: unknown): Promise<any> {
       const run = async () => {
         // The old host finishes any desktop step on its own; this host does not wait for it.
-        if (session && session.host.id !== host.id) retire(session)
-        session ??= await open(host)
+        if (session && session.host.id !== host.id) void retire(session)
+        session ??= (await reclaim(host)) ?? (await open(host))
         const s = session
         try { return await exchange(s, name, input, name === 'mcp.act' ? 300000 : 30000) }
         catch (error) {
           // A broken connection is replaced next time; an answer from the host is not. The old
           // terminal still gets the chance to finish a desktop step before it closes.
-          if (!(error instanceof HostAnswer)) retire(s)
+          if (!(error instanceof HostAnswer)) void retire(s)
           throw error
         }
       }

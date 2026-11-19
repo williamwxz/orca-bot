@@ -122,6 +122,7 @@ export function createCapabilityPicker(
     let status: ComputerStatus | undefined
     let setupBusy: DesktopAction | 'check' | undefined
     let browserBusy = false
+    let unconfirmed = false
     let browserPoll: ReturnType<typeof setTimeout> | undefined
     let stepPoll: ReturnType<typeof setTimeout> | undefined
     /** True when a fresh status arrived; false keeps the last one (a poll can time out). */
@@ -146,8 +147,9 @@ export function createCapabilityPicker(
           return draw()
         }
         if (misses + 1 < FOLLOW_MISSES) return followStep(id, misses + 1)
-        // Give up honestly: drop the stale "running" and offer a re-check.
+        // Give up honestly: drop the stale "running" and offer only a re-check.
         setupBusy = undefined
+        unconfirmed = true
         if (status?.desktop?.step?.id === id) status = { ...status, desktop: { ...status.desktop, step: undefined } }
         hooks.notify?.('Could not confirm how the step ended. Check the private desktop again.')
         draw()
@@ -160,8 +162,9 @@ export function createCapabilityPicker(
       focusKey = `desktop:${action ?? 'check'}`
       draw()
       if (!action) {
-        await refreshStatus()
+        const fresh = await refreshStatus()
         if (!current()) return
+        if (fresh) unconfirmed = false
         setupBusy = undefined
         return draw()
       }
@@ -402,6 +405,7 @@ export function createCapabilityPicker(
           const block = desktopBlock(status.desktop, {
             perBot: status.desktop.mode === 'per-bot',
             busy: setupBusy,
+            unconfirmed,
             run: (action) => void runDesktop(action)
           })
           for (const control of block.querySelectorAll?.('button') ?? []) controls.push(control as HTMLButtonElement)

@@ -122,7 +122,13 @@ const BUSY: Record<DesktopAction, string> = {
  */
 export function desktopBlock(
   status: DesktopStatus,
-  options: { perBot: boolean; busy?: DesktopAction | 'check'; run: (action?: DesktopAction) => void }
+  options: {
+    perBot: boolean
+    busy?: DesktopAction | 'check'
+    /** The last step's outcome is unknown: only a re-check is offered until fresh status arrives. */
+    unconfirmed?: boolean
+    run: (action?: DesktopAction) => void
+  }
 ): HTMLElement {
   const block = node('div', '', 'desktop-setup')
   // A desktop that must be replaced has not really finished its last step.
@@ -157,7 +163,15 @@ export function desktopBlock(
   }
   const running = status.step?.running ? status.step.action : undefined
   const busy = options.busy ?? running
-  const next = desktopStep(status, options.perBot)
+  // Acting on a status from before an unconfirmed step could, say, replace a desktop twice.
+  const next = options.unconfirmed
+    ? {
+        title: 'Not sure how the last step ended',
+        line: 'Check where the desktop is now before doing anything else.',
+        action: undefined,
+        label: 'Check again'
+      }
+    : desktopStep(status, options.perBot)
   const head = node('div', '', 'desktop-state')
   head.append(node('strong', next.title), node('p', next.line, 'bot-menu-note'))
   const act = node('button', busy ? (busy === 'check' ? 'Checking…' : BUSY[busy]) : next.label, 'bot-menu-btn primary desktop-action') as HTMLButtonElement
