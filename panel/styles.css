@@ -469,3 +469,15 @@ html.dark .mcp-icon { background: #292b30; }
 .bot-settings .schedule-form > .bot-menu-note { margin: 0; }
 .bot-settings > * { flex-shrink: 0; }
 .bot-settings > button:not(.sheet-close) { align-self: flex-start; }
+
+/* Hermes backend: paged history, the reply being written, the host picker. */
+.thread-rows { display: flex; flex-direction: column; gap: inherit; }
+.messages .thread-earlier { align-self: center; height: 26px; padding: 0 12px; margin: 4px 0 8px; border-radius: 999px; font-size: 12px; color: var(--bd-muted); background: transparent; border: 1px solid var(--bd-composer-ring); }
+.messages .thread-earlier:hover:not(:disabled) { background: var(--bd-selected); color: var(--bd-ink); }
+.chat-message.live { opacity: .85; }
+.chat-message.text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.avatar.drawn { display: inline-flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; }
+#sidebar #host { width: 100%; margin: 6px 0 2px; }
+#roster .empty { margin: 12px 6px; font-size: 12px; color: var(--bd-muted); }
+.bot-row .state { font-size: 11px; color: var(--bd-muted); }
+.avatar.drawn { border-radius: 50%; }

@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.2.0 (19 November 2026)
+
+- **Now runs on Hermes Agent.** The plugin lists the bots of the Hermes install
+  on the bot host (each Hermes profile is a bot) and opens each one's Bot Chat,
+  the same conversation Hermes Desktop shows. OpenMausBot is no longer used,
+  installed or started.
+- **Whole history, a page at a time**: a chat opens on its newest messages and
+  **Show earlier messages** pages back to the start. New messages are added in
+  place, so a long chat is not redrawn on every refresh.
+- **Live replies**: the reply shows as it is written, with the tool running now.
+- **Paired Orca servers** still work, through the same pairing: choose the
+  server above the bot list.
+- **Removed**: connectors, private desktops, skills, memory and schedule
+  panels, export, automatic install and updates, and the permission settings.
+  All of that is managed in Hermes itself.
+
 ## 0.1.11 (19 November 2026)
 
 - **Bot settings behind a gear**: the gear at the top right of a bot's chat

@@ -3,8 +3,8 @@
   "manifestVersion": 2,
   "id": "bot-for-orca",
   "name": "Bot Team for Orca",
-  "version": "0.1.11",
-  "description": "A team of bots inside Orca. Runs the open-source OpenMausBot on your machine: a roster of bots, each its own Claude, Codex or Grok agent. Unofficial. Not made by or affiliated with Orca, OpenMausBot or the makers of the models it runs.",
+  "version": "0.2.0",
+  "description": "Your Hermes Agent bots in Orca’s sidebar: the list of bots on this computer or a paired Orca server, and each one’s chat. Unofficial. Not made by or affiliated with Orca or Nous Research.",
   "license": "Apache-2.0",
   "author": {
     "name": "William Weixin Zhang",
@@ -26,68 +26,11 @@
         "icon": "bot",
         "entry": "panel/index.html"
       }
-    ],
-    "commands": [
-      {
-        "id": "orcabot.open",
-        "title": "Bot Team for Orca: Open chat"
-      },
-      {
-        "id": "orcabot.stopServer",
-        "title": "Bot Team for Orca: Stop the OpenMausBot server"
-      }
-    ],
-    "settings": [
-      {
-        "key": "shareClaudeSetup",
-        "type": "boolean",
-        "default": false,
-        "title": "Give Claude bots my Claude tools",
-        "description": "Claude bots use the connectors, MCP servers, skills and instructions from your Claude setup. More tools means more tokens per message. Turn off to give Claude bots only what you add in OpenMausBot."
-      },
-      {
-        "key": "autoUpdate",
-        "type": "boolean",
-        "default": false,
-        "title": "Install updates automatically",
-        "description": "Bot Team for Orca checks GitHub for a newer release every six hours while its panel is open, retrying network failures after one minute. Turn on to install it without asking. An update that asks for new access always waits for your approval."
-      },
-      {
-        "key": "linkAgents",
-        "type": "boolean",
-        "default": false,
-        "title": "Let my Orca agents talk to the bots",
-        "description": "Adds Bot Team for Orca's tools to Claude, Codex, opencode and Antigravity on this computer. Links survive plugin uninstall; turn off to remove them first."
-      }
     ]
   },
   "capabilities": [
     {
-      "kind": "settings:own"
-    },
-    {
       "kind": "storage:own"
-    }
-  ],
-  "cover": {
-    "path": "images/cover.png",
-    "alt": "Bot Team for Orca: a team of AI bots in the sidebar, with a fictional Chief of Staff, researcher, writer and developer."
-  },
-  "screenshots": [
-    {
-      "path": "images/screenshot-bots.png",
-      "alt": "Light-theme bot list with fictional bots Milo, Scout, Quill and Patch, a Chief of Staff badge, previews and an unread dot.",
-      "caption": "Your team, right in the sidebar."
-    },
-    {
-      "path": "images/screenshot-chat.png",
-      "alt": "Dark-theme chat with fictional researcher Scout, sample messages, a working avatar and the status Working · 12s.",
-      "caption": "Keep the conversation moving."
-    },
-    {
-      "path": "images/screenshot-setup.png",
-      "alt": "Setup card for choosing whether to share Claude tools and connect Orca agents.",
-      "caption": "Choose what your bots can access."
     }
   ]
 }

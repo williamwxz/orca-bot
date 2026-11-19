@@ -1,356 +1,111 @@
-import { createCapabilityPicker } from './capability-picker.ts'
-import { createBotSettings } from './bot-settings.ts'
-import type { CapabilityHooks } from './capability-picker.ts'
-import { dayLabel, threadPreview } from './presentation.ts'
 import type { Requests } from '../worker/protocol.ts'
-import type { Bot } from '../shared/roster.ts'
-import { computerLabel, modelText } from '../shared/roster.ts'
-import {
-  collapseActivities,
-  refreshInterval,
-  sendDraft,
-  reconcileAttempts,
-  elapsedTime,
-  displayText
-} from '../shared/chat.ts'
-import type { Thread, Composer } from '../shared/chat.ts'
-import { MAX_ATTACHMENTS, uploadProblem } from '../shared/attachments.ts'
-import type { SentFile, Uploaded } from '../shared/attachments.ts'
-
-/** A file picked for the next message: uploaded at once, sent with the message. */
-type Pending = {
-  id: number
-  name: string
-  kind: Uploaded['kind']
-  state: 'uploading' | 'ready' | 'failed'
-  attachment?: Uploaded
-  preview?: string
-}
-function base64(bytes: Uint8Array): string {
-  let binary = ''
-  for (let i = 0; i < bytes.length; i += 0x8000)
-    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
-  return btoa(binary)
-}
+import { MAX_MESSAGE, elapsed, mergeMessages } from '../shared/bots.ts'
+import type { Bot, ChatMessage, Live } from '../shared/bots.ts'
 
 export type FrameApi = {
   plugin: {
-    request<K extends keyof Requests>(
-      name: K,
-      input: Requests[K]['input']
-    ): Promise<Requests[K]['output']>
+    request<K extends keyof Requests>(name: K, input: Requests[K]['input']): Promise<Requests[K]['output']>
   }
   shell?: { openExternal(url: string): Promise<unknown> }
 }
-const node = <K extends keyof HTMLElementTagNameMap>(tag: K, text = '') => {
+export type ChatHooks = {
+  back(): void
+  notify(text: string): void
+  /** Rises when the bot host changes; a reply asked before it is dropped. */
+  hostGeneration(): number
+  /** The chosen host's stable ID: drafts follow it, so returning to a host finds its drafts. */
+  hostKey(): string
+}
+
+/** Messages fetched on each poll; enough to cover what a turn adds between two polls. */
+const POLL_ROWS = 40
+/** Messages fetched when a chat opens and for each "earlier" page. */
+const PAGE_ROWS = 80
+
+const node = <K extends keyof HTMLElementTagNameMap>(tag: K, text = '', cls = '') => {
   const el = document.createElement(tag)
   el.textContent = text
+  if (cls) el.className = cls
   return el
 }
-function button(label: string, click: () => void): HTMLButtonElement {
-  const el = node('button', label)
-  el.type = 'button'
-  el.setAttribute('aria-label', label)
-  el.addEventListener('click', click)
-  return el
+
+export function dayLabel(at: number, previous: number | undefined, now = Date.now()): string | undefined {
+  if (!at) return undefined
+  const day = new Date(at)
+  if (previous && new Date(previous).toDateString() === day.toDateString()) return undefined
+  const today = new Date(now)
+  if (day.toDateString() === today.toDateString()) return 'Today'
+  if (day.toDateString() === new Date(now - 86400000).toDateString()) return 'Yesterday'
+  return day.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', ...(day.getFullYear() === today.getFullYear() ? {} : { year: 'numeric' }) })
 }
-export function createChatView(
-  root: HTMLElement,
-  frame: FrameApi,
-  avatar: (bot: Bot) => HTMLElement,
-  open: (id: string) => void,
-  back: () => void,
-  preview?: (id: string, text: string | undefined) => void,
-  capabilities?: CapabilityHooks,
-  /** Why the Bot Dashboard can't open here, or undefined when it can. */
-  dashboardNote: () => string | undefined = () => undefined
-) {
+
+/**
+ * One bot's Bot Chat: the newest messages on open, earlier ones a page at a time, the reply as it
+ * is written, and a composer. It polls, so it works the same over a paired server's relay.
+ */
+export function createChatView(root: HTMLElement, frame: FrameApi, avatar: (bot: Bot) => HTMLElement, hooks: ChatHooks) {
   let bot: Bot | undefined
   let generation = 0
-  let timer: ReturnType<typeof setTimeout> | undefined
-  let reading = false
-  let identityKey = ''
-  let clockTimer: ReturnType<typeof setTimeout> | undefined
-  const observedWorking = new Map<string, number>()
-  const finishedWorking = new Set<string>()
+  let messages: ChatMessage[] = []
+  let older: string | undefined
+  /** The conversation shown: when the worker names another, everything held belongs to the old one. */
+  let chatId: string | undefined
+  let live: Live | undefined
   let loaded = false
-  let workingKey = ''
-  let thread: Thread = { messages: [], hasMore: false }
-  const drafts = new Map<string, Composer>()
-  let state: Composer = { draft: '', attempts: [], sending: false }
-  const pendingByBot = new Map<string, Pending[]>()
-  let nextPending = 0
-  const pending = () => (bot ? (pendingByBot.get(bot.id) ?? []) : [])
-  const ready = () => pending().filter((p) => p.state === 'ready').map((p) => p.attachment!)
-  const notify = (text: string) => (capabilities?.notify ? capabilities.notify(text) : (note.textContent = text))
-  // Drafts, pending sends and uploads belong to the host they were made on: a host change drops
-  // them, even for a bot with the same ID.
-  let uploadHost = capabilities?.hostGeneration?.()
-  function syncHost(): void {
-    const host = capabilities?.hostGeneration?.()
-    if (host === uploadHost) return
-    uploadHost = host
-    for (const list of pendingByBot.values())
-      for (const entry of list) if (entry.preview) URL.revokeObjectURL?.(entry.preview)
-    pendingByBot.clear()
-    drafts.clear()
-  }
-  function addFiles(files: File[]): void {
-    syncHost()
-    if (!bot || !files.length) return
-    if (dashboardNote()) {
-      notify('Files and photos can be sent only when bots run on this computer.')
-      return
-    }
-    const id = bot.id
-    const host = uploadHost
-    const list = pendingByBot.get(id) ?? []
-    pendingByBot.set(id, list)
-    for (const file of files) {
-      if (list.length >= MAX_ATTACHMENTS) {
-        notify(`Send at most ${MAX_ATTACHMENTS} files in one message.`)
-        break
-      }
-      const mime = file.type || 'application/octet-stream'
-      const problem = uploadProblem(file.name || 'File', mime, file.size)
-      if (problem) {
-        notify(problem)
-        continue
-      }
-      const entry: Pending = {
-        id: ++nextPending,
-        name: file.name || 'Pasted image',
-        kind: mime.startsWith('image/') ? 'image' : 'file',
-        state: 'uploading',
-        ...(mime.startsWith('image/') && typeof URL.createObjectURL === 'function'
-          ? { preview: URL.createObjectURL(file) }
-          : {})
-      }
-      list.push(entry)
-      void (async () => {
-        try {
-          const data = base64(new Uint8Array(await file.arrayBuffer()))
-          const uploaded = await frame.plugin.request('attachment.upload', { name: entry.name, mime, data })
-          // The host changed while this was uploading: the file is not for the new host.
-          if (host !== capabilities?.hostGeneration?.()) return
-          entry.attachment = uploaded
-          entry.kind = uploaded.kind
-          entry.state = 'ready'
-        } catch (error) {
-          if (host !== capabilities?.hostGeneration?.()) return
-          entry.state = 'failed'
-          notify(error instanceof Error ? error.message : `Could not upload ${entry.name}.`)
-        }
-        if (bot?.id === id) renderTray()
-      })()
-    }
-    renderTray()
-  }
-  function removePending(entry: Pending): void {
-    if (!bot) return
-    const list = pendingByBot.get(bot.id) ?? []
-    pendingByBot.set(bot.id, list.filter((p) => p !== entry))
-    if (entry.preview) URL.revokeObjectURL?.(entry.preview)
-    renderTray()
-    input.focus()
-  }
-  function renderTray(): void {
-    const items = pending()
-    tray.hidden = !items.length
-    tray.replaceChildren(
-      ...items.map((entry) => {
-        const chip = node('div')
-        chip.className = `composer-file ${entry.state}`
-        if (entry.preview) {
-          const img = node('img')
-          img.src = entry.preview
-          img.alt = ''
-          chip.append(img)
-        } else chip.append(node('span', entry.kind === 'image' ? '🖼' : '📎'))
-        const name = node('span', entry.name)
-        name.className = 'composer-file-name'
-        chip.append(name)
-        if (entry.state !== 'ready')
-          chip.append(node('small', entry.state === 'uploading' ? 'Uploading…' : 'Failed'))
-        const remove = button(`Remove ${entry.name}`, () => removePending(entry))
-        remove.textContent = '×'
-        remove.className = 'composer-file-remove'
-        chip.append(remove)
-        return chip
-      })
-    )
-    updateSend()
-  }
-  function updateSend(): void {
-    const files = ready()
-    send.disabled =
-      state.sending ||
-      pending().some((p) => p.state === 'uploading') ||
-      (!state.draft.trim() && !files.length) ||
-      state.draft.length > 16000
-  }
-  function messageBody(parent: HTMLElement, text: string, attachments: SentFile[] = []): void {
-    if (text) linkedText(parent, displayText(text))
-    if (!attachments.length) return
-    const files = node('div')
-    files.className = 'chat-files'
-    for (const file of attachments)
-      files.append(node('span', `${file.kind === 'image' ? '🖼' : '📎'} ${file.name}`))
-    parent.append(files)
-  }
-  const header = node('div')
-  header.className = 'thread-header'
-  const identity = node('div')
-  identity.className = 'thread-identity'
-  const backButton = button('←', () => {
-    close()
-    back()
-  })
-  backButton.className = 'thread-back'
+  let loadingOlder = false
+  let sending = false
+  /** Sent from here and not yet in the stored history: shown at once, dropped when its row arrives. */
+  let pending: { text: string; at: number; before: Set<string> }[] = []
+  /** Stored rows already taken as the copy of a sent message: each acknowledges one send only. */
+  const acknowledged = new Set<string>()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let clock: ReturnType<typeof setTimeout> | undefined
+  /** Unsent text per bot on one host: the same profile name on another host is another bot. */
+  const drafts = new Map<string, string>()
+  const draftKey = (id: string) => `${hooks.hostKey()}:${id}`
+  const rendered = new Map<string, { element: HTMLElement; text: string }>()
+  let renderedIds: string[] = []
+
+  const header = node('div', '', 'thread-header')
+  const backButton = node('button', '←', 'thread-back')
+  backButton.type = 'button'
   backButton.setAttribute('aria-label', 'Back to bots')
-  // Where the bot works, as OpenMausBot's chat header shows it: a computer icon.
-  const computerButton = button('Backend', () => {
-    if (!bot || !picker) return
-    settings?.close()
-    void picker.open('computer', bot, computerButton)
-    computerButton.setAttribute('aria-expanded', 'true')
-  })
-  computerButton.className = 'computer-button'
-  computerButton.innerHTML =
-    '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1.75" y="2.5" width="12.5" height="8.5" rx="1.5"/><path d="M5.5 13.75h5M8 11v2.75"/></svg>'
-  computerButton.setAttribute('aria-haspopup', 'menu')
-  computerButton.setAttribute('aria-expanded', 'false')
-  // This bot's settings: model, connectors, computer, skills, memory and schedules in one panel.
-  const gearButton = button('Bot settings', () => {
-    if (!bot || !settings) return
-    picker?.close(false)
-    void settings.open(bot, gearButton)
-    gearButton.setAttribute('aria-expanded', 'true')
-  })
-  gearButton.className = 'computer-button bot-settings-button'
-  gearButton.innerHTML =
-    '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.8 1.3h2.4l.3 1.5a5.1 5.1 0 0 1 1.1.5l1.3-.9 1.7 1.7-.9 1.3a5.1 5.1 0 0 1 .5 1.1l1.5.3v2.4l-1.5.3a5.1 5.1 0 0 1-.5 1.1l.9 1.3-1.7 1.7-1.3-.9a5.1 5.1 0 0 1-1.1.5l-.3 1.5H6.8l-.3-1.5a5.1 5.1 0 0 1-1.1-.5l-1.3.9-1.7-1.7.9-1.3a5.1 5.1 0 0 1-.5-1.1L1.3 9.2V6.8l1.5-.3a5.1 5.1 0 0 1 .5-1.1l-.9-1.3 1.7-1.7 1.3.9a5.1 5.1 0 0 1 1.1-.5Z"/><circle cx="8" cy="8" r="2.2"/></svg>'
-  gearButton.title = 'Bot settings'
-  gearButton.setAttribute('aria-label', 'Bot settings')
-  gearButton.setAttribute('aria-haspopup', 'dialog')
-  gearButton.setAttribute('aria-expanded', 'false')
-  header.append(backButton, identity, ...(capabilities ? [computerButton, gearButton] : []))
-  const capabilityMenu = node('div')
-  capabilityMenu.className = 'bot-menu capability-menu'
-  capabilityMenu.hidden = true
-  const settingsRoot = node('div')
-  const settings = capabilities
-    ? createBotSettings(
-        settingsRoot,
-        frame,
-        {
-          notify,
-          hostGeneration: capabilities.hostGeneration,
-          // The pickers open from the gear, so closing one gives the keyboard back to it.
-          openModel: (target) => {
-            if (!picker) return
-            void picker.open('model', target, gearButton, 'models')
-            gearButton.setAttribute('aria-expanded', 'true')
-          },
-          openConnectors: (target) => {
-            if (!picker) return
-            void picker.open('connectors', target, gearButton)
-            gearButton.setAttribute('aria-expanded', 'true')
-          },
-          openBackend: (target) => {
-            if (!picker) return
-            void picker.open('computer', target, gearButton)
-            gearButton.setAttribute('aria-expanded', 'true')
-          }
-        },
-        () => gearButton.setAttribute('aria-expanded', 'false')
-      )
-    : undefined
-  const picker = capabilities
-    ? createCapabilityPicker(
-        capabilityMenu,
-        frame,
-        {
-          ...capabilities,
-          busyChanged: () => renderCapabilities(),
-          connectorCountChanged: (id, count) => {
-            if (bot?.id !== id) return
-            bot = { ...bot, connectorCount: count }
-            renderCapabilities()
-          },
-          changed: () => capabilities.changed()
-        },
-        () => {
-          computerButton.setAttribute('aria-expanded', 'false')
-          gearButton.setAttribute('aria-expanded', 'false')
-          renderCapabilities()
-        }
-      )
-    : undefined
-  function renderCapabilities() {
-    if (!bot) return
-    const where = computerLabel(bot.computer)
-    computerButton.title = `Backend: ${where}`
-    computerButton.setAttribute('aria-label', `Backend: ${where}`)
-    computerButton.disabled = !!picker?.switching()
-    gearButton.disabled = !!picker?.switching()
-    settings?.update(bot)
-  }
-  const list = node('div')
-  list.className = 'messages'
-  list.setAttribute('aria-label', 'Recent messages')
-  const note = node('p')
-  note.className = 'thread-note'
+  backButton.addEventListener('click', () => hooks.back())
+  const identity = node('div', '', 'thread-identity')
+  header.append(backButton, identity)
+  const list = node('div', '', 'messages')
+  list.setAttribute('aria-label', 'Messages')
+  const earlier = node('button', 'Show earlier messages', 'thread-earlier')
+  earlier.type = 'button'
+  earlier.addEventListener('click', () => void loadOlder())
+  const rows = node('div', '', 'thread-rows')
+  const liveRow = node('div', '', 'chat-message text bot live')
+  const note = node('p', '', 'thread-note')
   note.setAttribute('role', 'status')
-  const working = node('div')
-  working.className = 'working-line'
-  const composer = node('form')
-  composer.className = 'composer'
-  const label = node('label', 'Message')
-  label.htmlFor = 'quick-message'
+  const working = node('div', '', 'working-line')
+  working.hidden = true
+  const composer = node('form', '', 'composer')
   const input = node('textarea')
   input.id = 'quick-message'
-  input.maxLength = 16000
   input.rows = 3
+  input.maxLength = MAX_MESSAGE
+  const label = node('label', 'Message')
+  label.htmlFor = 'quick-message'
   const send = node('button', '↑')
   send.type = 'submit'
   send.setAttribute('aria-label', 'Send')
   send.title = 'Send'
-  const fileInput = node('input')
-  fileInput.type = 'file'
-  fileInput.multiple = true
-  fileInput.hidden = true
-  fileInput.setAttribute('aria-hidden', 'true')
-  const attach = node('button', '+')
-  attach.type = 'button'
-  attach.className = 'attach'
-  attach.setAttribute('aria-label', 'Attach files or photos')
-  attach.title = 'Attach files or photos'
-  attach.addEventListener('click', () => fileInput.click())
-  fileInput.addEventListener('change', () => {
-    addFiles(Array.from(fileInput.files ?? []))
-    fileInput.value = ''
-  })
-  const tray = node('div')
-  tray.className = 'composer-files'
-  tray.setAttribute('aria-label', 'Attachments')
-  const box = node('div')
-  box.className = 'composer-box'
-  box.append(tray, input)
-  composer.append(label, attach, fileInput, box, send)
-  working.hidden = true
-  const workingText = node('span')
-  const workingLabel = document.createTextNode('')
-  const sheen = node('span')
-  sheen.className = 'working-sheen'
-  sheen.setAttribute('aria-hidden', 'true')
-  const letters = node('span')
-  sheen.append(letters)
-  workingText.append(workingLabel, sheen)
-  root.append(header, list, note, working, composer, capabilityMenu, ...(settings ? [settingsRoot] : []))
-  const atBottom = () => list.scrollHeight - list.scrollTop - list.clientHeight < 40
-  function linkedText(parent: HTMLElement, text: string): void {
-    const pattern = /https?:\/\/[^\s<>]+/g
+  const box = node('div', '', 'composer-box')
+  box.append(input)
+  composer.append(label, box, send)
+  list.append(earlier, rows, liveRow)
+  root.append(header, list, note, working, composer)
+
+  const atBottom = () => list.scrollHeight - list.scrollTop - list.clientHeight < 60
+  const current = (token: number, host: number) => token === generation && host === hooks.hostGeneration()
+
+  function body(parent: HTMLElement, text: string): void {
+    const pattern = /https?:\/\/[^\s<>)\]]+/g
     let start = 0
     for (const match of text.matchAll(pattern)) {
       parent.append(document.createTextNode(text.slice(start, match.index)))
@@ -358,225 +113,215 @@ export function createChatView(
       link.href = match[0]
       link.addEventListener('click', (event) => {
         event.preventDefault()
-        if (!frame.shell) {
-          note.textContent = 'Open the full chat to use this link.'
-          return
-        }
-        void frame.shell.openExternal(match[0]).catch(() => {
-          note.textContent = 'Could not open this link.'
-        })
+        void frame.shell?.openExternal(match[0])
       })
       parent.append(link)
       start = match.index + match[0].length
     }
     parent.append(document.createTextNode(text.slice(start)))
   }
+
+  function row(message: ChatMessage): HTMLElement {
+    const el = node('div', '', `chat-message ${message.kind} ${message.role}`)
+    if (message.kind === 'text') body(el, message.text)
+    else el.textContent = message.text
+    return el
+  }
+
+  /** Draws what changed: new rows are added in place, so a long history is never rebuilt on a poll. */
   function render(): void {
     if (!bot) return
-    const bottom = atBottom(),
-      top = list.scrollTop
-    const nextIdentityKey = JSON.stringify([
-      bot.id,
-      bot.name,
-      modelText(bot),
-      bot.avatar
-    ])
-    if (identityKey !== nextIdentityKey) {
-      identityKey = nextIdentityKey
-      identity.replaceChildren(avatar(bot))
-      const names = node('div')
-      names.append(node('strong', bot.name))
-      if (modelText(bot)) names.append(node('small', modelText(bot)))
-      identity.append(names)
+    const stick = atBottom()
+    const before = list.scrollHeight
+    const top = list.scrollTop
+    const shown = [...messages, ...pending.map((p, i) => ({ id: `pending-${p.at}-${i}`, at: p.at, role: 'user' as const, kind: 'text' as const, text: p.text }))]
+    const ids = shown.map((m) => m.id)
+    const appended = ids.length >= renderedIds.length && renderedIds.every((id, i) => ids[i] === id)
+    const prepended = !appended && ids.length >= renderedIds.length && renderedIds.every((id, i) => ids[ids.length - renderedIds.length + i] === id)
+    if (!appended && !prepended) {
+      rows.replaceChildren()
+      rendered.clear()
     }
-    renderCapabilities()
-    input.placeholder = `Message ${bot.name}`
-    renderWorking()
-    list.replaceChildren()
-    if (thread.hasMore) list.append(node('p', 'Earlier messages are in the full chat.'))
-    let previousAt: number | undefined
-    for (const message of collapseActivities(thread.messages)) {
+    const fragment = document.createDocumentFragment()
+    const fresh = appended ? shown.slice(renderedIds.length) : prepended ? shown.slice(0, ids.length - renderedIds.length) : shown
+    let previousAt = appended && renderedIds.length ? shown[renderedIds.length - 1]?.at : undefined
+    for (const message of fresh) {
       const stamp = dayLabel(message.at, previousAt)
       if (stamp) {
-        const separator = node('time')
-        separator.className = 'day-separator'
-        separator.dateTime = new Date(message.at).toISOString()
+        const separator = node('time', '', 'day-separator')
         separator.setAttribute('data-label', stamp)
         separator.setAttribute('aria-label', stamp)
-        list.append(separator)
+        fragment.append(separator)
       }
-      previousAt = message.at
-      const item = node('div')
-      item.className = `chat-message ${message.kind} ${message.role}`
-      if (message.kind === 'text') messageBody(item, message.text, message.attachments)
-      else item.append(document.createTextNode(message.text))
-      if (message.kind === 'unsupported')
-        item.append(
-          button('Open bot', () => {
-            if (bot) open(bot.id)
-          })
-        )
-      list.append(item)
+      previousAt = message.at || previousAt
+      const el = row(message)
+      rendered.set(message.id, { element: el, text: message.text })
+      fragment.append(el)
     }
-    for (const attempt of state.attempts) {
-      const item = node('div')
-      item.className = `chat-message text user ${attempt.state}`
-      messageBody(item, attempt.text, attempt.attachments)
-      if (attempt.error || attempt.state === 'pending')
-        item.append(node('small', attempt.error ?? 'Sending…'))
-      list.append(item)
+    if (prepended) rows.prepend(fragment)
+    else rows.append(fragment)
+    // A stored row whose text changed since it was drawn (a reply that finished) is redrawn alone.
+    for (const message of shown) {
+      const held = rendered.get(message.id)
+      if (held && held.text !== message.text) {
+        const el = row(message)
+        held.element.replaceWith(el)
+        rendered.set(message.id, { element: el, text: message.text })
+      }
     }
-    if (!thread.messages.length && !state.attempts.length)
-      list.append(node('p', 'No recent messages.'))
-    attach.hidden = !!dashboardNote()
-    renderTray()
-    if (input.value !== state.draft) input.value = state.draft
-    list.scrollTop = bottom ? list.scrollHeight : top
+    renderedIds = ids
+    earlier.hidden = !older
+    earlier.disabled = loadingOlder
+    earlier.textContent = loadingOlder ? 'Loading…' : 'Show earlier messages'
+    liveRow.hidden = !live?.text
+    if (live?.text) {
+      liveRow.replaceChildren()
+      body(liveRow, live.text)
+    }
+    note.textContent = loaded && !shown.length && !live ? 'No messages yet. Say hello.' : loaded ? '' : 'Loading…'
+    renderWorking()
+    send.disabled = sending || !input.value.trim()
+    if (prepended) list.scrollTop = top + (list.scrollHeight - before)
+    else if (stick) list.scrollTop = list.scrollHeight
+    else list.scrollTop = top
   }
+
   function renderWorking(): void {
-    clearTimeout(clockTimer)
-    if (!bot) return
-    if (bot.state === 'working' && !observedWorking.has(bot.id))
-      observedWorking.set(bot.id, Date.now())
-    const since = state.sendFailed
-      ? undefined
-      : (state.wait?.since ??
-        (bot.state === 'working' && !finishedWorking.has(bot.id)
-          ? observedWorking.get(bot.id)
-          : undefined))
-    working.hidden = since === undefined
-    if (since === undefined) {
-      workingKey = ''
-      working.replaceChildren()
+    clearTimeout(clock)
+    working.hidden = !live || !bot
+    if (!live || !bot) return
+    const text = `${live.tool ?? 'Working'} · ${elapsed(live.startedAt, Date.now())}`
+    working.replaceChildren(avatar({ ...bot, working: true }), node('span', text))
+    clock = setTimeout(renderWorking, 1000)
+  }
+
+  /** The chat (generation) whose read is in flight. A read for an older chat never blocks a new one. */
+  let reading: number | undefined
+  let readAgain = false
+  /** Asks for a read. One runs at a time per chat and only it sets the next poll; a request made meanwhile runs right after. */
+  function read(): void {
+    if (reading === generation) {
+      readAgain = true
       return
     }
-    const key = JSON.stringify([bot.id, bot.avatar])
-    if (workingKey !== key) {
-      workingKey = key
-      working.replaceChildren(avatar({ ...bot, state: 'working' }), workingText)
-    }
-    workingLabel.textContent = `Working · ${elapsedTime(since, Date.now())}`
-    letters.setAttribute('data-text', workingLabel.textContent)
-    if (!document.hidden) clockTimer = setTimeout(renderWorking, 1000)
+    void readOnce()
   }
-  function schedule(): void {
+  /** Drops everything shown for the previous conversation of this bot. */
+  function forget(): void {
+    messages = []
+    older = undefined
+    pending = []
+    acknowledged.clear()
+    rendered.clear()
+    renderedIds = []
+    rows.replaceChildren()
+  }
+  async function readOnce(): Promise<void> {
     clearTimeout(timer)
-    if (bot && !document.hidden)
-      timer = setTimeout(
-        () => void read(),
-        refreshInterval(bot.state, state.sending || !!state.wait)
-      )
-  }
-  async function read(): Promise<void> {
-    if (!bot || document.hidden || reading) return
-    const id = bot.id,
-      token = generation
-    reading = true
+    const target = bot
+    if (!target || document.hidden) return
+    const token = generation
+    const host = hooks.hostGeneration()
+    reading = token
+    readAgain = false
     try {
-      const next = await frame.plugin.request('thread.read', { botId: id, limit: 20 })
-      if (token !== generation) return
-      const reply = next.messages.some(
-        (entry) =>
-          entry.role === 'bot' &&
-          entry.kind === 'text' &&
-          (state.wait
-            ? !state.wait.baseline.has(entry.id) && entry.at >= state.wait.sentAt - 5000
-            : loaded && !thread.messages.some((old) => old.id === entry.id))
-      )
-      if (reply) {
-        state.wait = undefined
-        if (bot?.state === 'working') finishedWorking.add(bot.id)
-      }
-      thread = next
-      preview?.(id, threadPreview(next.messages))
-      loaded = true
-      Object.assign(state, reconcileAttempts(state.attempts, next.messages, state.matchedIds))
-      note.textContent = ''
-      render()
-    } catch {
-      if (token === generation) {
-        note.replaceChildren(
-          document.createTextNode('Could not refresh messages. '),
-          button('Open bot', () => open(id))
-        )
-      }
-    } finally {
-      if (token === generation) {
-        reading = false
-        schedule()
-      }
-    }
-  }
-  composer.addEventListener('submit', (event) => {
-    event.preventDefault()
-    syncHost()
-    if (!bot) return
-    const id = bot.id,
-      current = state
-    const all = pending()
-    if (all.some((p) => p.state === 'uploading')) return
-    const sending = all.filter((p) => p.state === 'ready')
-    const files = sending.map((p) => p.attachment!)
-    // Enter submits even while Send is disabled: refuse here, before any file leaves the tray.
-    if (current.sending || (!current.draft.trim() && !files.length) || current.draft.length > 16000)
-      return
-    pendingByBot.set(id, all.filter((p) => p.state !== 'ready'))
-    const host = uploadHost
-    void sendDraft(
-      current,
-      thread.messages.map((message) => message.id),
-      (text, attachments) =>
-        frame.plugin.request('message.send', {
-          botId: id,
-          text,
-          ...(attachments.length ? { attachments } : {})
-        }),
-      () => {
-        if (state === current && bot?.id === id) {
-          render()
-          schedule()
+      const thread = await frame.plugin.request('thread.read', { botId: target.id, limit: loaded ? POLL_ROWS : PAGE_ROWS })
+      if (current(token, host)) {
+        // Archived or replaced in Hermes: the old history and any unacknowledged sends go with it.
+        // A first chat appearing replaces nothing: a first send waiting for it keeps its place.
+        if (loaded && chatId !== undefined && thread.chat !== chatId) {
+          forget()
+          loaded = false
         }
-      },
-      Date.now,
-      files
-    ).then(() => {
-      // The host changed while this was sending: its draft and files are not the new host's.
-      if (host !== capabilities?.hostGeneration?.()) {
-        for (const entry of sending) if (entry.preview) URL.revokeObjectURL?.(entry.preview)
-        return
+        chatId = thread.chat
+        if (!loaded) {
+          messages = thread.messages
+          older = thread.older
+          loaded = true
+        } else {
+          const known = new Set(messages.map((m) => m.id))
+          // Nothing held yet (a first chat just appeared), or a poll that shares no row with what is
+          // held missed some in between: start from this page and its cursor. Pending sends stay.
+          if (!messages.length || (thread.messages.length && !thread.messages.some((m) => known.has(m.id)))) {
+            messages = thread.messages
+            older = thread.older
+          } else messages = mergeMessages(messages, thread.messages, 'newer')
+        }
+        live = thread.live
+        // A sent message leaves "pending" once a stored row that was not there when it was sent carries
+        // its text. One row acknowledges one send, so sending the same text twice waits for two rows.
+        pending = pending.filter((p) => {
+          const row = thread.messages.find((m) => m.role === 'user' && !p.before.has(m.id) && !acknowledged.has(m.id) && m.text.trim() === p.text.trim())
+          if (row) acknowledged.add(row.id)
+          return !row
+        })
+        note.textContent = ''
+        render()
       }
-      if (current.sendFailed) {
-        // Keep failed files with the restored draft so the person can retry as is.
-        pendingByBot.set(id, [...sending, ...(pendingByBot.get(id) ?? [])])
-      } else for (const entry of sending) if (entry.preview) URL.revokeObjectURL?.(entry.preview)
-      if (bot?.id === id) {
-        renderTray()
-        void read()
+    } catch (error) {
+      if (current(token, host)) note.textContent = error instanceof Error ? error.message : 'Could not load messages.'
+    }
+    // A read for a chat that is no longer open ends quietly: the open chat runs its own loop.
+    if (reading === token) reading = undefined
+    if (!current(token, host)) return
+    if (readAgain) return void readOnce()
+    if (!document.hidden) timer = setTimeout(read, live || sending || pending.length ? 1200 : 5000)
+  }
+
+  async function loadOlder(): Promise<void> {
+    const target = bot
+    if (!target || !older || loadingOlder) return
+    const token = generation
+    const host = hooks.hostGeneration()
+    loadingOlder = true
+    render()
+    try {
+      const page = await frame.plugin.request('thread.read', { botId: target.id, older, limit: PAGE_ROWS })
+      if (!current(token, host)) return
+      // A page from a conversation that has since been replaced is not this one's history.
+      if (page.chat === chatId) {
+        messages = mergeMessages(messages, page.messages, 'older')
+        older = page.older
       }
-    })
+    } catch (error) {
+      if (!current(token, host)) return
+      hooks.notify(error instanceof Error ? error.message : 'Could not load earlier messages.')
+    }
+    loadingOlder = false
+    render()
+  }
+
+  composer.addEventListener('submit', async (event) => {
+    event.preventDefault()
+    const target = bot
+    const text = input.value.trim()
+    if (!target || !text || sending) return
+    const token = generation
+    const host = hooks.hostGeneration()
+    sending = true
+    const entry = { text, at: Date.now(), before: new Set(messages.filter((m) => m.role === 'user').map((m) => m.id)) }
+    pending.push(entry)
+    input.value = ''
+    drafts.delete(draftKey(target.id))
+    render()
+    list.scrollTop = list.scrollHeight
+    try {
+      await frame.plugin.request('message.send', { botId: target.id, text })
+    } catch (error) {
+      if (!current(token, host)) return
+      // Nothing was sent: the text goes back into the composer, never resent on its own.
+      pending = pending.filter((p) => p !== entry)
+      if (!input.value) input.value = text
+      hooks.notify(error instanceof Error ? error.message : 'Could not send. Try again.')
+    }
+    if (!current(token, host)) return
+    sending = false
+    render()
+    read()
   })
   input.addEventListener('input', () => {
-    state.draft = input.value
-    updateSend()
-  })
-  input.addEventListener('paste', (event) => {
-    const files = Array.from(event.clipboardData?.files ?? [])
-    if (!files.length) return
-    event.preventDefault()
-    addFiles(files)
-  })
-  composer.addEventListener('dragover', (event) => {
-    if (!event.dataTransfer?.types?.includes('Files')) return
-    event.preventDefault()
-    composer.classList?.add('dropping')
-  })
-  composer.addEventListener('dragleave', () => composer.classList?.remove('dropping'))
-  composer.addEventListener('drop', (event) => {
-    composer.classList?.remove('dropping')
-    const files = Array.from(event.dataTransfer?.files ?? [])
-    if (!files.length) return
-    event.preventDefault()
-    addFiles(files)
+    if (bot) drafts.set(draftKey(bot.id), input.value)
+    send.disabled = sending || !input.value.trim()
   })
   input.addEventListener('keydown', (event) => {
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && event.keyCode !== 229) {
@@ -584,75 +329,48 @@ export function createChatView(
       composer.requestSubmit()
     }
   })
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) read()
+    else clearTimeout(timer)
+  })
+
   function close(): void {
     generation++
-    picker?.close(false)
-    settings?.close()
-    bot = undefined
-    reading = false
     clearTimeout(timer)
-    clearTimeout(clockTimer)
+    clearTimeout(clock)
+    readAgain = false
+    bot = undefined
     root.hidden = true
   }
-  document.addEventListener('visibilitychange', () => {
-    clearTimeout(timer)
-    clearTimeout(clockTimer)
-    if (!document.hidden) {
-      renderWorking()
-      void read()
-    }
-  })
-  window.addEventListener('pagehide', () => {
-    clearTimeout(timer)
-    clearTimeout(clockTimer)
-  })
-  window.addEventListener('pageshow', () => {
-    renderWorking()
-    void read()
-  })
+
   return {
     close,
-    dismissCapabilities: () => {
-      picker?.close(false)
-      settings?.close()
-    },
-    open(next: Bot) {
+    open(next: Bot): void {
       close()
-      syncHost()
       bot = next
+      forget()
+      chatId = undefined
+      live = undefined
       loaded = false
-      thread = { messages: [], hasMore: false }
-      state = drafts.get(next.id) ?? { draft: '', attempts: [], sending: false }
-      drafts.set(next.id, state)
+      loadingOlder = false
+      sending = false
+      identity.replaceChildren(avatar(next))
+      const names = node('div')
+      names.append(node('strong', next.name), node('small', next.model))
+      identity.append(names)
+      input.value = drafts.get(draftKey(next.id)) ?? ''
+      input.placeholder = `Message ${next.name}`
       root.hidden = false
-      note.textContent = 'Loading…'
       render()
-      list.scrollTop = list.scrollHeight
-      input.focus()
-      void read()
+      read()
     },
-    update(next: Bot[]) {
-      for (const entry of next) {
-        if (entry.state === 'working') {
-          if (!observedWorking.has(entry.id)) observedWorking.set(entry.id, Date.now())
-        } else {
-          observedWorking.delete(entry.id)
-          finishedWorking.delete(entry.id)
-        }
-      }
-      if (!bot) return
-      const latest = next.find((item) => item.id === bot!.id && !item.addable)
-      if (!latest) {
-        close()
-        back()
-        return
-      }
-      const changed = latest.state !== bot.state
-      if (changed && latest.state === 'working') state.sendFailed = false
-      bot = latest
-      picker?.update(latest)
-      render()
-      if (changed) schedule()
+    /** A fresh roster row for the open bot: its name or model may have changed in Hermes. */
+    update(next: Bot): void {
+      if (bot?.id !== next.id) return
+      const wasWorking = bot.working
+      bot = next
+      // The roster saw the bot start working before this chat's own poll did: look now.
+      if (next.working && !wasWorking && !live) read()
     }
   }
 }

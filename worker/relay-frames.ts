@@ -1,5 +1,3 @@
-import { validateBotCreate } from '../shared/roster.ts'
-import { validateModelSelection } from '../shared/models.ts'
 import { gunzipSync, gzipSync } from 'node:zlib'
 
 // Orca's terminal stream drops some spaces and keeps only the newest 2000 lines, so replies
@@ -10,8 +8,13 @@ export const NEXT = 'n'
 export const READY = '@bt:ready'
 
 export const pack = (value: unknown): string => gzipSync(JSON.stringify(value)).toString('base64')
-export const unpack = (data: string): any =>
-  JSON.parse(gunzipSync(Buffer.from(data, 'base64')).toString('utf8'))
+/** The largest packed line and unpacked request a host reads from a client. */
+export const MAX_LINE = 400_000
+export const MAX_REQUEST_BYTES = 1_000_000
+/** The largest reply a client unpacks: a full page of long messages fits with room to spare. */
+export const MAX_REPLY_BYTES = 16_000_000
+export const unpack = (data: string, maxBytes = MAX_REPLY_BYTES): any =>
+  JSON.parse(gunzipSync(Buffer.from(data, 'base64'), { maxOutputLength: maxBytes }).toString('utf8'))
 
 export function frames(id: string, value: unknown): string[] {
   const parts = pack(value).match(new RegExp(`.{1,${FRAME_SIZE}}`, 'g')) ?? ['']
@@ -26,60 +29,38 @@ export function parseFrame(line: string): Frame | undefined {
     : undefined
 }
 
-/** Splits raw terminal input into complete lines, keeping a partial last line for later. */
-export function lineReader(onLine: (line: string) => void): (chunk: string) => void {
+/**
+ * Splits raw terminal input into complete lines, keeping a partial last line for later. A line
+ * longer than `maxLine` is dropped whole, up to its end, so input without a line break cannot grow
+ * the buffer without limit.
+ */
+export function lineReader(onLine: (line: string) => void, maxLine = Infinity): (chunk: string) => void {
   let buffer = ''
+  let skipping = false
   return (chunk) => {
     buffer += chunk
     let end: number
     while ((end = buffer.search(/[\r\n]/)) >= 0) {
       const line = buffer.slice(0, end)
       buffer = buffer.slice(end + 1)
-      if (line) onLine(line)
+      if (skipping) skipping = false
+      else if (line && line.length <= maxLine) onLine(line)
+    }
+    if (buffer.length > maxLine) {
+      buffer = ''
+      skipping = true
     }
   }
 }
 
-/** Panel requests answered by a paired server; host selection and plugin updates stay local. */
-export const RELAYED = [
-  'models.list',
-  'mcp.list',
-  'mcp.act',
-  'status',
-  'bots.list',
-  'bots.create',
-  'bots.act',
-  'groups.rename',
-  'thread.read',
-  'computer.status',
-  'desktop.status',
-  'desktop.step',
-  'desktop.act',
-  'desktop.settings',
-  'browser.install',
-  'learning.read',
-  'learning.skill',
-  'learning.settings',
-  'team.export',
-  'team.export.status',
-  'memory.save',
-  'schedules.list',
-  'schedules.act',
-  'message.send',
-  'bots.addMausBot',
-  'chat.open',
-  'setup.get',
-  'setup.answer',
-  'prefs.get',
-  'prefs.set',
-  'server.install',
-  'server.stop'
-] as const
+/** Panel requests answered by a paired server; choosing the host stays on this computer. */
+export const RELAYED = ['status', 'bots.list', 'thread.read', 'message.send'] as const
 export const PING = 'relay.ping'
 
+/** Nothing reaches a server's worker unshaped: every relayed input is a small plain object. */
 export function validateRelayInput(name: unknown, input: unknown): void {
-  if (name === 'bots.create') validateBotCreate(input)
-  if (name !== 'bots.act' || !input || typeof input !== 'object') return
-  const action = input as Record<string, unknown>
-  if (action.action === 'model') validateModelSelection(action.instanceId, action.model)
+  if (input === undefined || input === null) return
+  if (typeof input !== 'object' || Array.isArray(input)) throw new Error('Invalid request.')
+  if (JSON.stringify(input).length > 40000) throw new Error('This request is too large.')
+  void name
 }

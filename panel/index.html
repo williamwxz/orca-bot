@@ -9,155 +9,23 @@
 <body>
   <main>
     <div id="main-view">
-    <div id="sidebar">
-    <header>
-      <div id="list-header">
-        <h1 id="list-title">Bot Team for Orca</h1>
-        <div class="header-actions">
-          <button id="add-bot" type="button" aria-label="Add bot" title="Add bot" disabled>
-            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10" /></svg>
-          </button>
-          <button id="open-settings" type="button" aria-label="Settings" title="Settings">
-            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M6.8 1.3h2.4l.3 1.5a5.1 5.1 0 0 1 1.1.5l1.3-.9 1.7 1.7-.9 1.3a5.1 5.1 0 0 1 .5 1.1l1.5.3v2.4l-1.5.3a5.1 5.1 0 0 1-.5 1.1l.9 1.3-1.7 1.7-1.3-.9a5.1 5.1 0 0 1-1.1.5l-.3 1.5H6.8l-.3-1.5a5.1 5.1 0 0 1-1.1-.5l-1.3.9-1.7-1.7.9-1.3a5.1 5.1 0 0 1-.5-1.1L1.3 9.2V6.8l1.5-.3a5.1 5.1 0 0 1 .5-1.1l-.9-1.3 1.7-1.7 1.3.9a5.1 5.1 0 0 1 1.1-.5Z" />
-              <circle cx="8" cy="8" r="2.2" />
-            </svg>
-          </button>
-        </div>
+      <div id="sidebar">
+        <header>
+          <div id="list-header">
+            <h1 id="list-title">Bots</h1>
+          </div>
+          <select id="host" aria-label="Bots run on" hidden></select>
+          <p id="message" role="status">Connecting to Hermes…</p>
+        </header>
+        <section id="running" aria-label="Bots" hidden>
+          <div id="roster" aria-label="Bots"></div>
+        </section>
+        <button id="retry" type="button" hidden>Retry</button>
       </div>
-      <p id="message" role="status">Starting…</p>
-      <div id="update-banner" hidden>
-        <span id="update-banner-text"></span>
-        <button id="update-banner-install" type="button">Update</button>
-      </div>
-    </header>
-    <section id="install-card" hidden>
-      <p id="install-card-notice"></p>
-      <button id="install-omb" type="button">Install OpenMausBot</button>
-    </section>
-    <section id="setup" aria-labelledby="setup-title" hidden>
-      <h2 id="setup-title">Set up Bot Team for Orca</h2>
-      <p class="setup-lead">Choose what to allow. You can change this later in Settings.</p>
-      <label class="setup-option">
-        <span class="setup-copy"><strong>Bots can use my tools</strong><small id="share-tools-copy"></small></span>
-        <input id="share-tools" class="switch" type="checkbox" role="switch" />
-      </label>
-      <label class="setup-option" id="link-agents-label">
-        <span class="setup-copy"><strong>My Orca agents can talk to the bots</strong><small>Adds Bot Team for Orca's tools to <span id="agent-names">Claude, Codex, opencode and Antigravity</span><span id="agent-host"></span>, so an agent can message a bot or read its replies.</small></span>
-        <input id="link-agents" class="switch" type="checkbox" role="switch" />
-      </label>
-      <div class="setup-actions">
-        <button id="setup-skip" type="button">Not now</button>
-        <button id="setup-allow" type="button">Save choices</button>
-      </div>
-      <p id="setup-message" role="status"></p>
-    </section>
-    <section id="running" aria-label="Chat and bots" hidden>
-      <div id="roster-view">
-      <div id="roster" aria-label="Bots"></div>
-      <p id="refresh-note" role="status"></p>
-      </div>
-    </section>
-    <button id="retry" type="button" hidden>Retry</button>
+      <section id="bot-view" aria-label="Bot conversation" hidden></section>
+      <div id="chat-empty"><p>Choose a bot to start chatting.</p></div>
     </div>
-    <section id="bot-view" aria-label="Bot conversation" hidden></section>
-    <div id="chat-empty"><p>Choose a bot to start chatting.</p></div>
-    </div>
-    <section id="settings-view" aria-labelledby="settings-title" hidden>
-      <div class="settings-header">
-        <button id="settings-back" type="button" aria-label="Back to bots" title="Back to bots">←</button>
-        <h2 id="settings-title">Settings</h2>
-      </div>
-      <h3 class="settings-section-title" id="settings-host-title">Bot host</h3>
-      <div class="settings-group" role="group" aria-labelledby="settings-host-title">
-        <div class="settings-row">
-          <span class="setup-copy"><strong>Bots run on</strong><small>This computer, or an Orca server paired with it in Orca.</small></span>
-          <select id="host" aria-label="Bots run on"></select>
-        </div>
-        <div class="settings-row">
-          <span class="setup-copy"><strong>OpenMausBot</strong><small id="omb-status"></small></span>
-          <button id="stop-server" type="button">Stop</button>
-        </div>
-        <div id="settings-install-card" class="settings-row" hidden>
-          <p id="settings-install-card-notice" class="settings-note"></p>
-          <button id="settings-install-omb" type="button">Install OpenMausBot</button>
-        </div>
-      </div>
-      <h3 class="settings-section-title" id="settings-bots-title">Bots</h3>
-      <div class="settings-group" role="group" aria-labelledby="settings-bots-title">
-        <div class="settings-row">
-          <span class="setup-copy"><strong>Connectors</strong><small id="mcp-summary" role="status"></small></span>
-          <button id="mcp-manage" class="settings-open" type="button">Manage</button>
-        </div>
-        <div class="settings-row">
-          <span class="setup-copy"><strong>Private desktops</strong><small>Each bot can have its own desktop on the bot host, kept apart from yours.</small></span>
-          <button id="desktops-manage" class="settings-open" type="button">Set up</button>
-        </div>
-        <label class="setup-option settings-row">
-          <span class="setup-copy"><strong>Learn skills on their own</strong><small>After a task with many steps, a bot may save or improve a skill. Uses the bot's own AI. See a bot's skills with the gear in its chat.</small></span>
-          <input id="learning-auto" class="switch" type="checkbox" role="switch" />
-        </label>
-        <p id="learning-note" class="settings-note" role="status"></p>
-      </div>
-      <h3 class="settings-section-title" id="settings-permissions-title">Permissions</h3>
-      <div class="settings-group" role="group" aria-labelledby="settings-permissions-title">
-        <p id="permissions-note" class="settings-note"></p>
-        <label class="setup-option settings-row">
-          <span class="setup-copy"><strong>Bots can use my tools</strong><small id="pref-share-tools-copy"></small></span>
-          <input id="pref-share-tools" class="switch" type="checkbox" role="switch" />
-        </label>
-        <label class="setup-option settings-row" id="pref-link-agents-label">
-          <span class="setup-copy"><strong>My Orca agents can talk to the bots</strong><small>Adds Bot Team for Orca's tools to <span id="pref-agent-names">Claude, Codex, opencode and Antigravity</span><span id="pref-agent-host"></span>, so an agent can message a bot or read its replies.</small></span>
-          <input id="pref-link-agents" class="switch" type="checkbox" role="switch" />
-        </label>
-      </div>
-      <h3 class="settings-section-title" id="settings-plugin-title">Updates and export</h3>
-      <div class="settings-group" role="group" aria-labelledby="settings-plugin-title">
-        <div class="settings-row">
-          <span class="setup-copy"><strong>Updates</strong><small id="update-status"></small></span>
-          <span class="settings-row-actions">
-            <button id="update-install" type="button" hidden>Update</button>
-            <button id="update-check" type="button">Check now</button>
-          </span>
-        </div>
-        <label class="setup-option settings-row">
-          <span class="setup-copy"><strong>Install updates automatically</strong><small>An update that asks for new access always waits for your approval.</small></span>
-          <input id="update-auto" class="switch" type="checkbox" role="switch" />
-        </label>
-        <div class="settings-row">
-          <span class="setup-copy"><strong>Export bots</strong><small>Each bot's persona, memory and own skills as plain files in Downloads on the bot host, for Hermes Agent, Claude Code or Codex. No chats or credentials.</small></span>
-          <button id="export-team" type="button">Export</button>
-        </div>
-        <p id="export-note" class="settings-note" role="status"></p>
-      </div>
-    </section>
-    <section id="desktops-view" aria-labelledby="desktops-title" hidden>
-      <div class="settings-header">
-        <button id="desktops-back" type="button" aria-label="Back to Settings" title="Back to Settings">←</button>
-        <h2 id="desktops-title">Private desktops</h2>
-      </div>
-      <div class="settings-group" id="desktops-group">
-        <p class="settings-note">Your bots get their own desktop on the bot host, kept apart from yours.</p>
-        <p id="desktops-note" class="settings-note" role="status"></p>
-        <div id="desktops-setup"></div>
-        <div id="desktops-options"></div>
-      </div>
-    </section>
-    <section id="mcp-view" aria-labelledby="mcp-title" hidden>
-      <div class="settings-header">
-        <button id="mcp-back" type="button" aria-label="Back to Settings">←</button>
-        <h2 id="mcp-title">Connectors</h2>
-        <button id="mcp-refresh" type="button" aria-label="Refresh" title="Refresh">
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M13 6a5.25 5.25 0 1 0 .15 3.65M13 2.5V6H9.5" />
-          </svg>
-        </button>
-      </div>
-      <p id="mcp-security" class="settings-note"></p>
-      <div id="mcp-groups"></div>
-    </section>
     <div id="toast" role="status" aria-live="polite" hidden></div>
-    <div id="bot-menu" class="bot-menu" role="menu" hidden></div>
   </main>
   <script type="module" src="app.ts"></script>
 </body>

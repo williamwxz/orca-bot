@@ -1,6 +1,6 @@
 import { join } from 'node:path'
-import type { CliDeps } from './omb-cli.ts'
-import { CliFailure, cliOptions } from './omb-cli.ts'
+import type { CliDeps } from './cli.ts'
+import { CliFailure, cliOptions } from './cli.ts'
 
 /** An Orca CLI failure. Only Orca's error code is kept: its message can contain a pairing URL. */
 export class OrcaCliError extends Error {

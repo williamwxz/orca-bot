@@ -1,16 +1,8 @@
 import { createToast } from './toast.ts'
-import { createMcpView } from './mcp-view.ts'
-import { createSetup, agentNames } from './setup.ts'
 import { createChatView } from './chat-view.ts'
-import { createSettings } from './settings.ts'
-import { createBotMenu } from './bot-menu.ts'
-import { createDesktopSettings } from './desktop-settings.ts'
-import { INSTALL_NOTICE } from '../shared/omb-version.ts'
-import { dropActions, groupRoster, groupTarget, modelText } from '../shared/roster.ts'
 import type { FrameApi } from './chat-view.ts'
-import type { Bot, BotAction, DropTarget } from '../shared/roster.ts'
+import type { Bot } from '../shared/bots.ts'
 import type { Hosts } from '../worker/paired-host.ts'
-import { avatarSvg } from '../shared/appearance.ts'
 
 const frame = (globalThis as unknown as { orca: FrameApi }).orca
 const element = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
@@ -18,749 +10,205 @@ const message = element<HTMLParagraphElement>('message')
 const retry = element<HTMLButtonElement>('retry')
 const running = element<HTMLElement>('running')
 const roster = element<HTMLElement>('roster')
-const refreshNote = element<HTMLElement>('refresh-note')
-const toast = createToast(element('toast'))
-const addButton = element<HTMLButtonElement>('add-bot')
-let creating = false
-let serverRunning = false
-function updateAddButton() {
-  addButton.disabled = creating || !serverRunning
-  addButton.setAttribute('aria-busy', String(creating))
-}
-addButton.addEventListener('click', event => {
-  event.stopPropagation()
-  if (!addButton.disabled) botMenu.openCreate(addButton)
-})
-const setup = createSetup((answer) => frame.plugin.request('setup.answer', answer))
-const shareTools = element<HTMLInputElement>('share-tools')
-const linkAgents = element<HTMLInputElement>('link-agents')
-
 const hostSelect = element<HTMLSelectElement>('host')
-let hosts: Hosts | undefined
-const hostChosen = () =>
-  !hosts || hosts.selected === 'local' || hosts.hosts.some((host) => host.id === hosts!.selected)
-// The Dashboard is a web page served on the bot host; through a paired server it opens in
-// Orca's remote browser, which works poorly. Remote bots are managed in the panel instead.
-const REMOTE_DASHBOARD =
-  'The Bot Dashboard opens only when bots run on this computer. Manage these bots here in the panel.'
-const dashboardNote = () =>
-  hosts && hosts.selected !== 'local' ? REMOTE_DASHBOARD : undefined
-function markDashboardButton(button: HTMLElement): void {
-  button.hidden = !!dashboardNote()
-}
-const remoteName = () =>
-  hosts && hosts.selected !== 'local'
-    ? hosts.hosts.find((host) => host.id === hosts!.selected)?.name
-    : undefined
+const toast = createToast(element('toast'))
+const LOCAL = 'local'
+const wide = () => window.innerWidth >= 720
 
-function renderSetup(hostName = remoteName()): void {
-  const state = setup.state
-  const target = hostName ?? 'this computer'
-  element('setup').hidden = element('list-header').hidden || !state.loaded || state.answered
-  element('link-agents-label').hidden = !agentNames(state.agents)
-  element('share-tools-copy').textContent =
-    `Claude bots use the Claude connectors, MCP servers, skills and instructions on ${target}. Codex bots always use the Codex setup on ${target}.`
-  element('agent-host').textContent = ` on ${target}`
-  element('agent-names').textContent = agentNames(state.agents)
-  element('setup-message').textContent = state.message
-  for (const id of ['setup-allow', 'setup-skip'])
-    element<HTMLButtonElement>(id).disabled = state.busy
-  shareTools.disabled = linkAgents.disabled = state.busy
-}
-async function answerSetup(allow: boolean): Promise<void> {
-  setup.state.shareTools = shareTools.checked
-  setup.state.linkAgents = linkAgents.checked
-  const applying = setup.answer(allow)
-  renderSetup()
-  await applying
-  if (setup.state.answered && setup.state.message) toast.show(setup.state.message)
-  renderSetup()
-  await refreshAfterChange()
-}
-
-function renderHosts(): void {
-  if (!hosts) return
-  const choices = [
-    ...(hostChosen() ? [] : [['', 'Choose\u2026']]),
-    ['local', 'This computer'],
-    ...hosts.hosts.map((host) => [host.id, host.name])
-  ]
-  hostSelect.replaceChildren(
-    ...choices.map(([value, label]) => {
-      const option = document.createElement('option')
-      option.value = value
-      option.textContent = label
-      option.disabled = !value
-      return option
-    })
-  )
-  hostSelect.value = hostChosen() ? hosts.selected : ''
-}
-let connectorHostId: string | undefined
-function updateConnectorHost(id: string, name?: string): void {
-  if (connectorHostId === id) return
-  if (connectorHostId !== undefined) {
-    hostGeneration++
-    creating = serverRunning = false
-    updateAddButton()
-    toast.hide()
-    botMenu.close()
-    chatView.close()
-    bots = []
-    selected = undefined
-    chatting = undefined
-    layout()
-    renderBots()
-  }
-  connectorHostId = id
-  mcp.hostChanged(id, name)
-  desktops.clear()
-}
-async function loadHosts(): Promise<void> {
-  try {
-    hosts = await frame.plugin.request('hosts.get', {})
-  } catch {
-    /* Keep the last choice shown; status reports the problem. */
-  }
-  renderHosts()
-  updateConnectorHost(hosts?.selected ?? '', remoteName())
-  askForHost()
-}
-// Rises on every host change, so answers from the previous host are dropped, not shown.
-let hostGeneration = 0
-async function chooseHost(id: string): Promise<void> {
-  if (!id) return
-  hostGeneration++
-  creating = serverRunning = false
-  updateAddButton()
-  toast.hide()
-  botMenu.close()
-  hostSelect.disabled = true
-  const nextRemote = hosts?.hosts.find((host) => host.id === id)?.name
-  updateConnectorHost(id, nextRemote)
-  settings.beginHostChange(nextRemote)
-  setup.state.loaded = false
-  renderSetup(nextRemote)
-  let hostProblem = ''
-  // Clear the old host's bots at once, so nothing of theirs can be clicked while switching.
-  bots = []
-  selected = undefined
-  previews.clear()
-  readBots.clear()
-  chatView.update(bots)
-  renderBots()
-  running.hidden = true
-  message.hidden = false
-  message.textContent = 'Connecting\u2026'
-  try {
-    hosts = await frame.plugin.request('hosts.select', { id })
-  } catch (error) {
-    hostProblem = error instanceof Error ? error.message : 'Could not change where your bots run.'
-    message.textContent = hostProblem
-    await loadHosts()
-  } finally {
-    hostSelect.disabled = false
-    renderHosts()
-  }
-  await refreshAfterChange()
-  await settings.hostChanged(hostProblem)
-  await mcp.refresh()
-  if (settingsShown) await desktops.refresh()
-}
-hostSelect.addEventListener('change', () => void chooseHost(hostSelect.value))
-const mcp = createMcpView(frame, element, toast.show)
-const settings = createSettings(frame, element, () => refreshAfterChange(), toast.show)
-const desktops = createDesktopSettings(frame, element, toast.show, () => hostGeneration)
-let settingsShown = false
-let mcpStatus = ''
-function showSettings(show: boolean): void {
-  settingsShown = show
-  botMenu.close()
-  chatView.dismissCapabilities()
-  element('main-view').hidden = show
-  element('settings-view').hidden = !show
-  element('mcp-view').hidden = true
-  element('desktops-view').hidden = true
-  if (show) { void settings.open(); void mcp.refresh(); void desktops.refresh() }
-  // Leaving Settings stops its polling; reopening reads the desktop again.
-  else desktops.clear()
-}
-element('open-settings').addEventListener('click', () => showSettings(true))
-element('settings-back').addEventListener('click', () => showSettings(false))
-// Private desktops has a page of its own, as Connectors does; the section itself is filled by desktops.
-element('desktops-manage').addEventListener('click', () => {
-  element('settings-view').hidden = true
-  element('desktops-view').hidden = false
-  void desktops.refresh()
-  element('desktops-back').focus()
-})
-element('desktops-back').addEventListener('click', () => {
-  element('desktops-view').hidden = true
-  element('settings-view').hidden = false
-  element('desktops-manage').focus()
-})
-// With servers paired and none chosen, the choice comes first, before anything starts.
-let askedHost = false
-function askForHost(): void {
-  if (askedHost || hostChosen() || !hosts?.hosts.length) return
-  askedHost = true
-  showSettings(true)
-}
-element('setup-allow').addEventListener('click', () => void answerSetup(true))
-element('setup-skip').addEventListener('click', () => void answerSetup(false))
-let timer: ReturnType<typeof setTimeout> | undefined
-let refreshPending: Promise<void> | undefined
-let opening = false
-let selected: string | undefined
-// The bot whose chat is open; its row is highlighted in the wide layout.
-let chatting: string | undefined
-// Wide panels show the list and the chat side by side, like OpenMausBot; narrow ones show one at a time.
-const wideQuery =
-  typeof window.matchMedia === 'function' ? window.matchMedia('(min-width: 720px)') : undefined
-const wide = () => !!wideQuery?.matches
 let bots: Bot[] = []
-let rosterKey = ''
-const changing = new Set<string>()
-const deleting = new Set<string>()
-const readBots = new Set<string>()
-const previews = new Map<string, string>()
-const rosterView = element<HTMLElement>('roster-view')
+let hosts: Hosts | undefined
+let chatting: string | undefined
+/** Rises when the bot host changes: replies asked of the previous host are dropped. */
+let hostGeneration = 0
+let timer: ReturnType<typeof setTimeout> | undefined
+/** The host generation whose refresh is running, if any. */
+let refreshing: number | undefined
+/** A host change is waiting for the worker: nothing may refresh against either host meanwhile. */
+let selecting = false
 
-let rosterRevision = 0
-async function readRoster(): Promise<Bot[]> {
-  const generation = hostGeneration
-  let revision: number
-  let next: Bot[]
-  do {
-    revision = rosterRevision
-    next = await frame.plugin.request('bots.list', {})
-  } while (generation === hostGeneration && revision !== rosterRevision)
-  return next
+/** A drawn avatar: the bot's initial on a colour picked from its name. */
+export function avatar(bot: Pick<Bot, 'id' | 'name' | 'working'>): HTMLElement {
+  const el = document.createElement('span')
+  el.className = `avatar avatar-${bot.working ? 'working' : 'idle'} drawn`
+  let hash = 0
+  for (const char of bot.id) hash = (hash * 31 + char.charCodeAt(0)) >>> 0
+  el.style.background = `hsl(${hash % 360} 55% 45%)`
+  el.style.color = '#fff'
+  el.textContent = (bot.name.trim()[0] ?? '?').toUpperCase()
+  el.setAttribute('aria-hidden', 'true')
+  return el
 }
 
-async function refreshCapabilities(): Promise<void> {
-  const generation = hostGeneration
-  const next = await readRoster()
-  if (generation !== hostGeneration) return
-  bots = next
-  chatView.update(bots)
-  renderBots()
+function when(at: number, now = Date.now()): string {
+  if (!at) return ''
+  const minutes = Math.floor((now - at) / 60000)
+  if (minutes < 1) return 'now'
+  if (minutes < 60) return `${minutes}m`
+  if (minutes < 1440) return `${Math.floor(minutes / 60)}h`
+  return `${Math.floor(minutes / 1440)}d`
 }
-function manageCapabilities(botId: string, enabled: boolean, fromChat = false) {
-  showSettings(true)
-  if (fromChat) chatView.close()
-  mcp.open({ tab: enabled ? 'bot' : 'provider', botId,
-    ...(fromChat ? { back: () => {
-      showSettings(false)
-      const bot = bots.find(b => b.id === botId)
-      if (bot) showBot(bot)
-    } } : {})
-  })
-}
-const botMenu = createBotMenu(element('bot-menu'), async (input: BotAction) => {
-  if (changing.has(input.botId)) return
-  const generation = hostGeneration
-  changing.add(input.botId)
-  if (input.action === 'delete') deleting.add(input.botId)
-  renderBots()
-  try {
-    const target = bots.find((bot) => bot.id === input.botId)
-    await frame.plugin.request('bots.act', input)
-    if (generation !== hostGeneration) return
-    if (input.action === 'delete') {
-      if (selected === input.botId) selected = undefined
-      bots = bots.flatMap((bot) => {
-        if (bot.id !== input.botId) return [bot]
-        return bot.defaultBot ? [{ ...bot, addable: true }] : []
-      })
-      chatView.update(bots)
-      renderBots()
-    }
-    await refreshAfterChange()
-    if (generation !== hostGeneration) return
-    if (input.action === 'delete')
-      toast.show(`${target?.defaultBot ? 'Hidden' : 'Deleted'} ${target?.name ?? 'bot'}.`)
-    else if (input.action === 'rename') toast.show(`Renamed to ${input.name}.`)
-    else if (input.action === 'pin') toast.show(input.pinned ? 'Pinned.' : 'Unpinned.')
-    else toast.show(input.action === 'model' ? 'Model updated.' : input.action === 'computer' ? 'Backend updated.' : 'Group updated.')
-  } catch (error) {
-    if (generation === hostGeneration) toast.show(error instanceof Error ? error.message : 'Could not update this bot.')
-  } finally {
-    deleting.delete(input.botId)
-    changing.delete(input.botId)
-    renderBots()
-  }
-}, async (input) => {
-  const generation = hostGeneration
-  await frame.plugin.request('groups.rename', input)
-  if (generation !== hostGeneration) return
-  bots = bots.map((bot) => ({
-    ...bot,
-    section: bot.section === input.section ? input.name : bot.section,
-    knownSections: bot.knownSections?.map((name) => name === input.section ? input.name : name)
-  }))
-  renderBots()
-  await refreshAfterChange()
-  if (generation !== hostGeneration) return
-  toast.show(`Renamed group to ${input.name}.`)
-  return Array.from(roster.querySelectorAll<HTMLElement>('[data-focus]')).find(
-    (node) => node.dataset.focus === `group-${input.name}`
-  )
-}, {
-  list: () => frame.plugin.request('mcp.list', {}),
-  act: input => frame.plugin.request('mcp.act', input),
-  manage: (botId, enabled) => manageCapabilities(botId, enabled)
-}, { frame, hooks: { notify: toast.show, changed: refreshCapabilities, manage: (botId, enabled) => manageCapabilities(botId, enabled), hostGeneration: () => hostGeneration, sheet: () => !wide(), openNative: (botId) => void open(botId), nativeAvailable: () => !dashboardNote() } }, async input => {
-  if (creating || !serverRunning) throw new Error('Wait until the server is ready.')
-  const generation = hostGeneration
-  creating = true
-  updateAddButton()
-  renderBots()
-  try {
-    const created = await frame.plugin.request('bots.create', input)
-    if (generation !== hostGeneration) return
-    ++rosterRevision
-    const bot: Bot = { id: created.botId, name: created.name, title: '', state: 'idle',
-      unread: false, main: false, modelLabel: '', section: created.section ?? input.section }
-    bots = [...bots.filter(item => item.id !== bot.id), bot]
-    chatView.update(bots)
-    renderBots()
-    showBot(bot)
-    toast.show(`Created ${created.name}.`)
-  } finally {
-    if (generation === hostGeneration) { creating = false; updateAddButton(); renderBots() }
-  }
-}, { open: (botId) => void open(botId), available: () => !dashboardNote() }
-)
 
-const chatView = createChatView(
-  element('bot-view'),
-  frame,
-  makeAvatar,
-  (id) => void open(id),
-  () => {
-    chatting = undefined
-    layout()
-    renderHosts()
-    renderBots()
-  },
-  (id, preview) => {
-    if (preview) previews.set(id, preview)
-    else previews.delete(id)
-  },
-  { notify: toast.show, changed: refreshCapabilities, manage: (botId, enabled) => manageCapabilities(botId, enabled, true), hostGeneration: () => hostGeneration, sheet: () => !wide(), openNative: (botId) => void open(botId), nativeAvailable: () => !dashboardNote() },
-  dashboardNote
-)
-function layout(): void {
-  const showList = !chatting || wide()
-  rosterView.hidden = !showList
-  element('list-header').hidden = !showList
-  renderSetup()
-}
-wideQuery?.addEventListener?.('change', () => {
-  layout()
-  renderBots()
+const chatView = createChatView(element('bot-view'), frame, avatar, {
+  back: () => showBot(undefined),
+  notify: toast.show,
+  hostGeneration: () => hostGeneration,
+  hostKey: () => hosts?.selected ?? ''
 })
-function showBot(bot: Bot): void {
-  botMenu.close()
-  readBots.add(bot.id)
-  chatting = bot.id
-  layout()
-  renderHosts()
-  chatView.open(bot)
-  renderBots()
-}
-function makeAvatar(bot: Bot): HTMLElement {
-  const avatar = document.createElement('span')
-  avatar.className = `avatar avatar-${bot.state} ${bot.avatar ? 'picture' : 'drawn'}`
-  if (bot.avatar) {
-    const img = document.createElement('img')
-    img.src = bot.avatar
-    img.alt = ''
-    avatar.append(img)
-  } else avatar.innerHTML = avatarSvg(bot.id)
-  if (bot.state === 'waiting') {
-    const badge = document.createElement('span')
-    badge.className = 'clock-badge'
-    badge.setAttribute('aria-label', 'Waiting')
-    badge.append(icon('clock'))
-    avatar.append(badge)
-  }
-  if (bot.state === 'working') {
-    const label = document.createElement('span')
-    label.className = 'motion-label'
-    label.textContent = 'Working'
-    avatar.append(label)
-  }
-  return avatar
-}
-const icons = {
-  plus: '<path d="M8 3v10M3 8h10"/>',
-  crown: '<path d="M3 12 1.5 5l4 2L8 3l2.5 4 4-2-1.5 7Z"/><path d="M3 14h10"/>',
-  clock: '<circle cx="8" cy="8" r="5.5"/><path d="M8 4.5V8l2.5 1.5"/>'
-}
-function icon(kind: keyof typeof icons): SVGElement {
-  const span = document.createElement('span')
-  span.innerHTML = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[kind]}</svg>`
-  return span.firstElementChild as SVGElement
-}
-async function open(botId?: string, success?: string): Promise<void> {
-  if (opening) return
-  const note = dashboardNote()
-  if (note) {
-    toast.show(success ?? note)
-    return
-  }
-  const generation = hostGeneration
-  opening = true
-  selected = botId
-  renderBots()
-  try {
-    const reply = await frame.plugin.request('chat.open', botId ? { botId } : {})
-    if (generation === hostGeneration) toast.show(success ?? reply.message)
-  } catch (error) {
-    if (generation === hostGeneration) toast.show(error instanceof Error ? error.message : 'Could not open chat.')
-  } finally {
-    opening = false
-    renderBots()
-  }
-}
 
-async function addMausBot(bot: Bot): Promise<void> {
-  if (changing.has(bot.id)) return
-  const generation = hostGeneration
-  changing.add(bot.id)
+function showBot(bot: Bot | undefined): void {
+  chatting = bot?.id
+  if (bot) chatView.open(bot)
+  else chatView.close()
+  element('sidebar').hidden = !!bot && !wide()
   renderBots()
-  try {
-    await frame.plugin.request('bots.addMausBot', { botId: bot.id })
-    await refreshAfterChange()
-    if (generation === hostGeneration) await open(bot.id, `Added ${bot.name}.`)
-  } catch (error) {
-    if (generation === hostGeneration) toast.show(error instanceof Error ? error.message : 'Could not add MausBot.')
-  } finally {
-    changing.delete(bot.id)
-    renderBots()
-  }
-}
-
-// Drag a bot onto a group heading or any bot in it to move it there.
-let dragging: Bot | undefined
-let renderDeferred = false
-const dropKey = (target: DropTarget) =>
-  target.kind === 'section' ? `section:${target.name}` : target.kind
-function highlightDrop(key?: string): void {
-  for (const node of roster.querySelectorAll<HTMLElement>('[data-drop]'))
-    node.classList.toggle('drop-target', node.dataset.drop === key)
-}
-function endDrag(): void {
-  dragging = undefined
-  highlightDrop()
-  for (const node of roster.querySelectorAll<HTMLElement>('.dragging')) node.classList.remove('dragging')
-  if (renderDeferred) {
-    renderDeferred = false
-    renderBots()
-  }
-}
-roster.addEventListener('dragover', (event) => {
-  if (dragging && !event.defaultPrevented) highlightDrop()
-})
-roster.addEventListener('dragleave', (event) => {
-  if (dragging && !roster.contains(event.relatedTarget as Node | null)) highlightDrop()
-})
-function acceptDrop(node: HTMLElement, target: DropTarget): void {
-  node.dataset.drop = dropKey(target)
-  node.addEventListener('dragover', (event) => {
-    if (!dragging || !dropActions(dragging, target).length) return
-    event.preventDefault()
-    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
-    highlightDrop(dropKey(target))
-  })
-  node.addEventListener('drop', (event) => {
-    const bot = dragging
-    if (!bot) return
-    event.preventDefault()
-    endDrag()
-    void moveBot(bot, target)
-  })
-}
-async function moveBot(bot: Bot, target: DropTarget): Promise<void> {
-  const actions = dropActions(bot, target)
-  if (!actions.length || changing.has(bot.id)) return
-  const generation = hostGeneration
-  changing.add(bot.id)
-  renderBots()
-  try {
-    for (const input of actions) {
-      await frame.plugin.request('bots.act', input)
-      if (generation !== hostGeneration) return
-    }
-    ++rosterRevision
-    bots = bots.map((item) => {
-      if (item.id !== bot.id) return item
-      const moved = { ...item }
-      for (const input of actions) {
-        if (input.action === 'pin') moved.pinned = input.pinned
-        if (input.action === 'group') moved.section = input.section ?? undefined
-      }
-      return moved
-    })
-    renderBots()
-    toast.show(
-      target.kind === 'pinned'
-        ? `Pinned ${bot.name}.`
-        : target.kind === 'section'
-          ? `Moved ${bot.name} to ${target.name}.`
-          : `Moved ${bot.name} out of its group.`
-    )
-  } catch (error) {
-    if (generation === hostGeneration)
-      toast.show(error instanceof Error ? error.message : 'Could not move this bot.')
-  } finally {
-    changing.delete(bot.id)
-    renderBots()
-  }
-  await refreshAfterChange()
-}
-
-function makeBotRow(bot: Bot, sections: string[], target: DropTarget): HTMLElement {
-  const row = document.createElement('div')
-  row.className = `bot-row${selected === bot.id || (chatting === bot.id && wide()) ? ' selected' : ''}`
-  row.draggable = !opening && !changing.has(bot.id)
-  row.addEventListener('dragstart', (event) => {
-    if (opening || changing.has(bot.id)) return event.preventDefault()
-    dragging = bot
-    botMenu.close()
-    event.dataTransfer?.setData('text/plain', bot.name)
-    if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'
-    row.classList.add('dragging')
-  })
-  row.addEventListener('dragend', () => endDrag())
-  acceptDrop(row, target)
-  const chat = document.createElement('button')
-  chat.type = 'button'
-  chat.className = 'bot-chat'
-  chat.dataset.focus = `${bot.id}-chat`
-  chat.setAttribute('aria-disabled', String(opening || changing.has(bot.id)))
-  chat.setAttribute('aria-busy', String(deleting.has(bot.id)))
-  chat.title = bot.title || `Open ${bot.name}'s chat`
-  chat.setAttribute('aria-label', `Open ${bot.name}'s chat`)
-  const avatar = makeAvatar(bot)
-  const name = document.createElement('span')
-  name.className = 'bot-name'
-  name.textContent = bot.name
-  const copy = document.createElement('span')
-  copy.className = 'bot-copy'
-  const heading = document.createElement('span')
-  heading.className = 'bot-heading'
-  heading.append(name)
-  copy.append(heading)
-  chat.append(avatar, copy)
-  if (bot.main) {
-    const main = document.createElement('span')
-    main.className = 'main-badge'
-    main.append(icon('crown'), document.createTextNode('Chief of Staff'))
-    heading.append(main)
-  }
-  chat.addEventListener('click', () => {
-    if (!opening && !changing.has(bot.id)) showBot(bot)
-  })
-  row.addEventListener('click', (event) => {
-    if (opening || changing.has(bot.id)) return
-    if (!(event?.target as Element | undefined)?.closest?.('button')) showBot(bot)
-  })
-  const openMenu = (event: Event) => botMenu.open(bot, sections, event, chat, changing.has(bot.id))
-  row.addEventListener('contextmenu', openMenu)
-  row.addEventListener('keydown', (event) => {
-    if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) openMenu(event)
-  })
-  const model = document.createElement('span')
-  model.className = 'model'
-  model.textContent = previews.get(bot.id) ?? modelText(bot)
-  copy.append(model)
-  const state = document.createElement('span')
-  state.className = 'state'
-  if (deleting.has(bot.id)) {
-    const spinner = document.createElement('span')
-    spinner.className = 'deleting-spinner'
-    spinner.setAttribute('aria-hidden', 'true')
-    state.append(spinner)
-  } else if (bot.unread && !readBots.has(bot.id)) {
-    const unread = document.createElement('span')
-    unread.className = 'unread-dot'
-    unread.setAttribute('aria-label', 'Unread')
-    unread.title = 'Unread'
-    state.append(unread)
-  }
-  row.append(chat, state)
-  return row
 }
 
 function renderBots(): void {
-  // Rebuilding the list mid-drag would drop the row being dragged.
-  if (dragging) {
-    renderDeferred = true
-    return
-  }
-  const key = JSON.stringify([bots, creating, addButton.disabled, selected, chatting, wide(), opening, dashboardNote(), [...changing], [...deleting], [...readBots], [...previews]])
-  if (key === rosterKey) return
-  rosterKey = key
-  const focused = (document.activeElement as HTMLElement)?.dataset.focus
-  roster.replaceChildren()
-  const grouped = groupRoster(bots)
-  if (!grouped.ungroupedTop.length && !grouped.groups.length) {
+  const focused = (document.activeElement as HTMLElement | null)?.dataset?.focus
+  roster.replaceChildren(
+    ...bots.map((bot) => {
+      const row = document.createElement('div')
+      row.className = `bot-row${chatting === bot.id ? ' selected' : ''}`
+      const chat = document.createElement('button')
+      chat.type = 'button'
+      chat.className = 'bot-chat'
+      chat.dataset.focus = bot.id
+      chat.setAttribute('aria-label', `Open ${bot.name}'s chat`)
+      const copy = document.createElement('span')
+      copy.className = 'bot-copy'
+      const heading = document.createElement('span')
+      heading.className = 'bot-heading'
+      const name = document.createElement('span')
+      name.className = 'bot-name'
+      name.textContent = bot.name
+      heading.append(name)
+      const line = document.createElement('span')
+      line.className = 'model'
+      line.textContent = bot.working ? 'Working…' : bot.preview || bot.model || 'No messages yet'
+      copy.append(heading, line)
+      chat.append(avatar(bot), copy)
+      chat.addEventListener('click', () => showBot(bot))
+      const state = document.createElement('span')
+      state.className = 'state'
+      state.textContent = when(bot.lastActive)
+      row.append(chat, state)
+      return row
+    })
+  )
+  if (!bots.length) {
     const empty = document.createElement('p')
     empty.className = 'empty'
-    empty.textContent = 'No bots yet.'
+    empty.textContent = 'No bots yet. Create a profile in Hermes and it appears here.'
     roster.append(empty)
-    const openButton = document.createElement('button')
-    openButton.type = 'button'
-    openButton.textContent = 'Jump to Bot Dashboard'
-    openButton.disabled = opening
-    markDashboardButton(openButton)
-    openButton.addEventListener('click', () => void open())
-    const add = document.createElement('button')
-    add.type = 'button'
-    add.className = 'bot-menu-btn primary'
-    add.textContent = 'Add bot'
-    add.disabled = addButton.disabled
-    add.addEventListener('click', event => { event.stopPropagation(); botMenu.openCreate(add) })
-    roster.append(add, openButton)
   }
-  for (const bot of grouped.ungroupedTop) {
-    roster.append(makeBotRow(bot, grouped.sections, { kind: 'rest' }))
-  }
-  for (const group of grouped.groups) {
-    const heading = document.createElement('div')
-    heading.className = 'roster-group-title'
-    heading.textContent = group.title
-    if (grouped.sections.includes(group.title)) {
-      heading.tabIndex = 0
-      heading.setAttribute('role', 'button')
-      heading.dataset.focus = `group-${group.title}`
-      heading.setAttribute('aria-haspopup', 'menu')
-      const openGroup = (event: Event) => botMenu.openGroup(group.title, event, heading, addButton.disabled)
-      heading.addEventListener('contextmenu', openGroup)
-      heading.addEventListener('keydown', (event) => {
-        if (['Enter', ' ', 'ContextMenu'].includes(event.key) || (event.shiftKey && event.key === 'F10'))
-          openGroup(event)
-      })
-    }
-    acceptDrop(heading, groupTarget(group))
-    roster.append(heading)
-    for (const bot of group.bots) {
-      roster.append(makeBotRow(bot, grouped.sections, groupTarget(group)))
-    }
-  }
-  for (const bot of grouped.addable) {
-    const add = document.createElement('button')
-    add.className = 'add-mausbot'
-    add.type = 'button'
-    add.append(icon('plus'), document.createTextNode('Add MausBot'))
-    add.disabled = changing.has(bot.id)
-    add.addEventListener('click', () => void addMausBot(bot))
-    roster.append(add)
-  }
-  if (focused)
-    Array.from(roster.querySelectorAll<HTMLElement>('[data-focus]'))
-      .find((node) => node.dataset.focus === focused)
-      ?.focus()
+  if (focused) (roster.querySelector(`[data-focus="${focused}"]`) as HTMLElement | null)?.focus()
 }
 
-function refresh(explicitRetry = false): Promise<void> {
-  refreshPending ??= refreshNow(explicitRetry).finally(() => {
-    refreshPending = undefined
-  })
-  return refreshPending
+function renderHosts(): void {
+  const choices = [{ id: LOCAL, name: 'This computer' }, ...(hosts?.hosts ?? [])]
+  // The picker only matters once an Orca server is paired, or when the saved choice is one that
+  // is no longer there (an unpaired server) and another has to be chosen.
+  const chosen = choices.some((host) => host.id === hosts?.selected)
+  hostSelect.hidden = choices.length < 2 && (!hosts || chosen)
+  hostSelect.replaceChildren(
+    ...(chosen ? [] : [new Option('Choose where your bots run…', '', true, true)]),
+    ...choices.map((host) => new Option(host.name, host.id, false, host.id === hosts?.selected))
+  )
 }
 
-async function refreshAfterChange(): Promise<void> {
-  await refreshPending
-  await refresh()
-}
-
-async function refreshNow(explicitRetry: boolean): Promise<void> {
-  clearTimeout(timer)
-  if (document.hidden) return
-  retry.disabled = true
-  let delay = 5000
+async function refresh(retrying = false): Promise<void> {
+  if (selecting || refreshing === hostGeneration) return
   const generation = hostGeneration
-  const current = () => generation === hostGeneration
+  refreshing = generation
+  clearTimeout(timer)
   try {
-    // Ask Orca again while the chosen server is unknown, so a passing failure recovers by itself.
-    if (!hostChosen()) await loadHosts()
-    try {
-      const initial = !setup.state.loaded
-      setup.load(await frame.plugin.request('setup.get', {}))
-      if (initial) {
-        shareTools.checked = setup.state.shareTools
-        linkAgents.checked = setup.state.linkAgents
-      }
-      renderSetup()
-    } catch {
-      /* Retry with the next refresh; bots still load. */
+    if (!hosts) {
+      // Published only if no host change happened meanwhile: that change's reply decides.
+      const got: Hosts = await frame.plugin.request('hosts.get', {})
+      if (generation !== hostGeneration) return
+      hosts = got
+    } else if (generation !== hostGeneration) return
+    renderHosts()
+    // No choice yet, or the chosen server is no longer paired: nothing is asked of any host.
+    if (!hosts.selected || hosts.message) {
+      if (chatting) showBot(undefined)
+      bots = []
+      message.hidden = false
+      message.textContent = hosts.message || 'Choose where your bots run.'
+      running.hidden = true
+      retry.hidden = !hosts.message.includes('Retry')
+      return
     }
-    const status = await frame.plugin.request('status', { retry: explicitRetry })
-    if (!current()) return
-    serverRunning = status.state === 'running'
-    updateAddButton()
-    settings.setStatus(status, remoteName())
-    const connectorStatus = JSON.stringify([status.state, status.port, remoteName()])
-    if (connectorStatus !== mcpStatus) {
-      mcpStatus = connectorStatus
-      if (settingsShown) void mcp.refresh()
+    const status = await frame.plugin.request('status', retrying ? { retry: true } : {})
+    if (generation !== hostGeneration) return
+    if (status.state !== 'running') {
+      message.hidden = false
+      message.textContent = status.message || 'Could not reach Hermes.'
+      running.hidden = true
+      retry.hidden = false
+      bots = []
+      // Back to the list, sidebar and all: closing only the chat would leave a narrow panel empty.
+      showBot(undefined)
+      return
     }
-    // Avoid duplicating the install notice in both #message and #install-card.
-    const installShown = !element('install-card').hidden
-    const headerMessage = installShown
-      ? status.state === 'needs_install'
-        ? ''
-        : status.message.replace(INSTALL_NOTICE, '').trim()
-      : status.message
-    message.textContent = headerMessage
-    message.hidden = !headerMessage
-    running.hidden = status.state !== 'running'
-    // While servers are listed, choosing one is the way forward; Retry is for failures.
-    retry.hidden =
-      status.state === 'running' ||
-      status.state === 'starting' ||
-      status.state === 'needs_install' ||
-      (!hostChosen() && !!hosts?.hosts.length)
-    if (status.state === 'starting') delay = 2000
-    if (status.state === 'running') {
-      try {
-        const nextBots = await readRoster()
-        if (!current()) return
-        for (const bot of nextBots) if (!bot.unread) readBots.delete(bot.id)
-        bots = nextBots
-        chatView.update(bots)
-        renderBots()
-        refreshNote.textContent = ''
-      } catch {
-        refreshNote.textContent = 'Could not refresh. Keeping the last list.'
-      }
-    }
-  } catch {
-    if (!current()) return
+    const next = await frame.plugin.request('bots.list', {})
+    if (generation !== hostGeneration) return
+    bots = next
+    message.hidden = true
+    retry.hidden = true
+    running.hidden = false
+    renderBots()
+    const open = bots.find((bot) => bot.id === chatting)
+    if (open) chatView.update(open)
+    else if (chatting) showBot(undefined)
+  } catch (error) {
+    if (generation !== hostGeneration) return
     message.hidden = false
-    serverRunning = false
-    updateAddButton()
-    message.textContent = 'Could not read status. Please retry.'
+    message.textContent = error instanceof Error ? error.message : 'Could not load the bots.'
     retry.hidden = false
   } finally {
-    retry.disabled = false
-    if (!document.hidden) timer = setTimeout(() => void refresh(), delay)
+    if (refreshing === generation) refreshing = undefined
+    // Only the current host's refresh schedules the next one.
+    if (generation === hostGeneration && !selecting && !document.hidden) timer = setTimeout(() => void refresh(), bots.some((bot) => bot.working) ? 2000 : 5000)
   }
 }
 
-retry.addEventListener('click', () => void refresh(true))
-document.addEventListener('visibilitychange', () => {
+hostSelect.addEventListener('change', async () => {
+  const id = hostSelect.value
+  if (!id) return
+  const mine = ++hostGeneration
+  selecting = true
   clearTimeout(timer)
-  if (!document.hidden) void start()
+  hosts = undefined
+  bots = []
+  renderBots()
+  chatting = undefined
+  chatView.close()
+  element('sidebar').hidden = false
+  running.hidden = true
+  message.hidden = false
+  message.textContent = 'Connecting to Hermes…'
+  let chosen: Hosts | undefined
+  try {
+    chosen = await frame.plugin.request('hosts.select', { id })
+  } catch (error) {
+    if (mine === hostGeneration) toast.show(error instanceof Error ? error.message : 'Could not change where bots run.')
+  }
+  // Another choice was made meanwhile: its own reply decides.
+  if (mine !== hostGeneration) return
+  selecting = false
+  hosts = chosen
+  void refresh(true)
 })
-window.addEventListener('pagehide', () => clearTimeout(timer))
-const start = () => {
-  void settings.checkUpdates()
-  return loadHosts().then(() => refresh())
-}
-window.addEventListener('pageshow', () => void start())
-void start()
+retry.addEventListener('click', () => {
+  hosts = undefined
+  void refresh(true)
+})
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) void refresh()
+  else clearTimeout(timer)
+})
+window.addEventListener('resize', () => {
+  element('sidebar').hidden = !!chatting && !wide()
+})
+void refresh()
