@@ -122,8 +122,12 @@ async function refresh(retrying = false): Promise<void> {
   refreshing = generation
   clearTimeout(timer)
   try {
-    hosts ??= await frame.plugin.request('hosts.get', {})
-    if (generation !== hostGeneration) return
+    if (!hosts) {
+      // Published only if no host change happened meanwhile: that change's reply decides.
+      const got: Hosts = await frame.plugin.request('hosts.get', {})
+      if (generation !== hostGeneration) return
+      hosts = got
+    } else if (generation !== hostGeneration) return
     renderHosts()
     // No choice yet, or the chosen server is no longer paired: nothing is asked of any host.
     if (!hosts.selected || hosts.message) {
