@@ -3,7 +3,7 @@
   "manifestVersion": 2,
   "id": "bot-for-orca",
   "name": "Bot Team for Orca",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "description": "A team of bots inside Orca. Runs the open-source OpenMausBot on your machine: a roster of bots, each its own Claude, Codex or Grok agent. Unofficial. Not made by or affiliated with Orca, OpenMausBot or the makers of the models it runs.",
   "license": "Apache-2.0",
   "author": {
@@ -44,6 +44,13 @@
         "default": false,
         "title": "Give Claude bots my Claude tools",
         "description": "Claude bots use the connectors, MCP servers, skills and instructions from your Claude setup. More tools means more tokens per message. Turn off to give Claude bots only what you add in OpenMausBot."
+      },
+      {
+        "key": "shareAccountConnectors",
+        "type": "boolean",
+        "default": false,
+        "title": "Also give Claude bots my claude.ai connectors",
+        "description": "With Claude tools shared, also loads every connector of your claude.ai account (such as Gmail, Linear or Vercel) into each Claude bot. Their tool catalog is sent with every message, which can add tens of thousands of tokens per turn. Leave off and give bots connectors in Settings → Connectors instead."
       },
       {
         "key": "autoUpdate",

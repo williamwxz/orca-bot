@@ -469,3 +469,4 @@ html.dark .mcp-icon { background: #292b30; }
 .bot-settings .schedule-form > .bot-menu-note { margin: 0; }
 .bot-settings > * { flex-shrink: 0; }
 .bot-settings > button:not(.sheet-close) { align-self: flex-start; }
+.settings-subrow { padding-left: 14px; }

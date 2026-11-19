@@ -270,13 +270,21 @@ export async function findServer(
   return undefined
 }
 
+/**
+ * What Claude bots take from the person's own Claude setup: nothing (false), their tools, plugins,
+ * skills and instructions (true), or those plus the connectors of their claude.ai account ('all').
+ * The account's connectors are a catalog of every tool on every connected app, sent with each turn,
+ * and no bot was assigned them, so they are a choice of their own.
+ */
+export type Share = boolean | 'all'
+
 // Only this private helper handles the selected path; public results contain flags only.
 export function claudeEnvironment(
   deps: Pick<
     ServerDeps,
     'platform' | 'home' | 'env' | 'read' | 'realpath' | 'isDirectory' | 'userInfo'
   >,
-  share: boolean
+  share: Share
 ) {
   const path = deps.platform === 'win32' ? win32 : posix
   let home: string | undefined
@@ -314,7 +322,14 @@ export function claudeEnvironment(
   // The setting controls this override even if the parent process supplied it.
   delete env.OMB_CLAUDE_INHERIT_USER_CONFIG
   if (share) env.OMB_CLAUDE_INHERIT_USER_CONFIG = '1'
-  return { env, flags: { claudeHome: !!env.CLAUDE_CONFIG_DIR, inherit: share }, found: !!home }
+  // Claude Code's own switch for the claude.ai account's connectors. The setting decides, whatever the parent set.
+  delete env.ENABLE_CLAUDEAI_MCP_SERVERS
+  if (share && share !== 'all') env.ENABLE_CLAUDEAI_MCP_SERVERS = 'false'
+  return {
+    env,
+    flags: { claudeHome: !!env.CLAUDE_CONFIG_DIR, inherit: !!share, ...(share ? { connectors: share === 'all' } : {}) },
+    found: !!home
+  }
 }
 
 async function ownedServer(
@@ -334,7 +349,7 @@ async function ownedServer(
 
 export async function claudeSetupStatus(
   port: number,
-  share: boolean,
+  share: Share,
   deps: ServerDeps = defaultServerDeps()
 ): Promise<{ restart: boolean; message: string; updating?: boolean }> {
   const owned = await ownedServer(port, deps)
@@ -351,7 +366,8 @@ export async function claudeSetupStatus(
     !Number.isInteger(record.env) ||
     record.env < ENV_VERSION ||
     record.claudeHome !== flags.claudeHome ||
-    record.inherit !== flags.inherit
+    record.inherit !== flags.inherit ||
+    record.connectors !== flags.connectors
   return {
     restart,
     message: !found ? '' : restart ? 'Claude setup changes will apply when bots are idle.' : ''
@@ -474,7 +490,7 @@ async function startUnlocked(
   bin: string,
   port: number,
   deps: ServerDeps = defaultServerDeps(),
-  share = false
+  share: Share = false
 ): Promise<Server> {
   try {
     const setup = claudeEnvironment(deps, share)
@@ -537,7 +553,7 @@ export async function isPluginServer(
 const attempts = new WeakMap<ServerDeps, Promise<ServerResult>>()
 export function ensureServer(
   deps: ServerDeps = defaultServerDeps(),
-  share = false,
+  share: Share = false,
   allowInstall = false
 ): Promise<ServerResult> {
   const existing = attempts.get(deps)
@@ -652,7 +668,7 @@ export function startServer(
   bin: string,
   port: number,
   deps = defaultServerDeps(),
-  share = false
+  share: Share = false
 ): Promise<Server> {
   return withServerLock(deps, async () => {
     const existing = await findServer(deps)

@@ -45,6 +45,7 @@ import {
   serverHealthy,
   claudeSetupStatus
 } from './omb-server.ts'
+import type { Share } from './omb-server.ts'
 import type { ServerResult, StopResult } from './omb-server.ts'
 import { TESTED_OPENMAUSBOT_VERSION, compareVersions } from '../shared/omb-version.ts'
 
@@ -66,10 +67,10 @@ export type WorkerDeps = {
   withLifecycle?: <T>(operation: () => Promise<T>) => Promise<T>
   checkHealth: (port: number) => Promise<boolean>
   now: () => number
-  ensureServer: (share: boolean, allowInstall?: boolean) => Promise<ServerResult>
+  ensureServer: (share: Share, allowInstall?: boolean) => Promise<ServerResult>
   claudeSetupStatus?: (
     port: number,
-    share: boolean
+    share: Share
   ) => Promise<{ restart: boolean; message: string; updating?: boolean }>
   rosterBusy?: (port: number) => Promise<boolean>
   prepareServer?: (allowInstall: boolean) => Promise<unknown>
@@ -200,6 +201,7 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
 
   const prefKeys = {
     shareTools: ['settings', 'shareClaudeSetup'],
+    shareConnectors: ['settings', 'shareAccountConnectors'],
     linkAgents: ['settings', 'linkAgents'],
     setupAnswered: ['storage', 'setupAnswered'],
     installConsent: ['storage', 'openmausbotInstallConsent'],
@@ -342,20 +344,22 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
     const prefs = await syncPrefs()
     return {
       shareTools: prefs.shareTools,
+      shareConnectors: prefs.shareConnectors,
       linkAgents: prefs.linkAgents,
       agents: deps.findAgents?.() ?? { claude: false, codex: false }
     }
   }
   orca.panels.handle('prefs.get', preferences)
   // The next status check applies a change, as it does for a change in Orca's Settings.
-  orca.panels.handle('prefs.set', async (input: Partial<SetupAnswer>) => {
+  orca.panels.handle('prefs.set', async (input: Partial<SetupAnswer & { shareConnectors: boolean }>) => {
     if (!input || typeof input !== 'object') throw new Error('Choose a setting.')
-    for (const key of ['shareTools', 'linkAgents'] as const)
+    for (const key of ['shareTools', 'shareConnectors', 'linkAgents'] as const)
       if (input[key] !== undefined && typeof input[key] !== 'boolean')
         throw new Error('Choose a setting.')
     await syncPrefs()
     await writePrefs({
       ...(input.shareTools !== undefined ? { shareTools: input.shareTools } : {}),
+      ...(input.shareConnectors !== undefined ? { shareConnectors: input.shareConnectors } : {}),
       ...(input.linkAgents !== undefined ? { linkAgents: input.linkAgents } : {}),
       // A choice made here answers the setup card too.
       setupAnswered: true
@@ -389,7 +393,7 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
     }
     const allowInstall = prefs.installConsent
     const answered = prefs.setupAnswered
-    const share = answered && prefs.shareTools
+    const share: Share = answered && prefs.shareTools ? (prefs.shareConnectors ? 'all' : true) : false
     const nextLinkSetting = prefs.linkAgents
     if (linkSetting !== nextLinkSetting) {
       linkSetting = nextLinkSetting
@@ -463,7 +467,7 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
                 lifecycle(async () => {
                   await opening?.catch(() => {})
                   const fresh = await syncPrefs()
-                  const restartShare = fresh.setupAnswered && fresh.shareTools
+                  const restartShare: Share = fresh.setupAnswered && fresh.shareTools ? (fresh.shareConnectors ? 'all' : true) : false
                   const stillNeedsRestart = await deps.claudeSetupStatus?.(
                     checked.port!,
                     restartShare

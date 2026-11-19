@@ -254,6 +254,7 @@ test('host preferences sync two-way between a remote host local worker and a pai
     assert.equal(hostPrefs.read()?.setupAnswered, true)
     assert.deepEqual(await relayWorker.request('prefs.get', {}), {
       shareTools: true,
+      shareConnectors: false,
       linkAgents: false,
       agents: { claude: true, codex: false }
     })
@@ -262,6 +263,7 @@ test('host preferences sync two-way between a remote host local worker and a pai
     await relayWorker.request('prefs.set', { linkAgents: true, shareTools: false })
     assert.deepEqual(await serverLocal.request('prefs.get', {}), {
       shareTools: false,
+      shareConnectors: false,
       linkAgents: true,
       agents: { claude: true, codex: false }
     })

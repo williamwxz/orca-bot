@@ -529,7 +529,7 @@ test('selected-host accepts only an absolute contained directory ending in home,
 
 test('server environment and pid flags cover home, sharing and explicit config combinations', async () => {
   for (const found of [false, true])
-    for (const share of [false, true])
+    for (const share of [false, true, 'all'] as const)
       for (const preset of [false, true]) {
         const { deps, files, calls } = fake()
         if (found) {
@@ -538,6 +538,7 @@ test('server environment and pid flags cover home, sharing and explicit config c
         }
         if (preset) deps.env.CLAUDE_CONFIG_DIR = '/explicit/config'
         deps.env.OMB_CLAUDE_INHERIT_USER_CONFIG = 'parent-value'
+        deps.env.ENABLE_CLAUDEAI_MCP_SERVERS = 'parent-value'
         deps.fetch = async () => healthy()
         await startServer('/fake/bin/omb', 8799, deps, share)
         assert.deepEqual((calls[0].options as any).env, {
@@ -549,18 +550,23 @@ test('server environment and pid flags cover home, sharing and explicit config c
           ...(preset || found
             ? { CLAUDE_CONFIG_DIR: preset ? '/explicit/config' : selectedHome }
             : {}),
-          ...(share ? { OMB_CLAUDE_INHERIT_USER_CONFIG: '1' } : {})
+          ...(share ? { OMB_CLAUDE_INHERIT_USER_CONFIG: '1' } : {}),
+          // Sharing tools leaves the claude.ai account's connectors out unless they are chosen too.
+          ...(share === true ? { ENABLE_CLAUDEAI_MCP_SERVERS: 'false' } : {})
         })
         assert.deepEqual(JSON.parse(files.get('/fake/.orca-bot/server.pid')!), {
           launcherPid: 42,
           serverPid: 43,
           port: 8799,
           claudeHome: found || preset,
-          inherit: share,
+          inherit: !!share,
+          ...(share ? { connectors: share === 'all' } : {}),
           env: 2
         })
         assert.equal((await claudeSetupStatus(8799, share, deps)).restart, false)
         assert.equal((await claudeSetupStatus(8799, !share, deps)).restart, true)
+        // Changing only the account-connector choice restarts too.
+        if (share) assert.equal((await claudeSetupStatus(8799, share === 'all' ? true : 'all', deps)).restart, true)
         assert.equal((await claudeSetupStatus(8799, share, deps)).message, '')
       }
 })
@@ -645,6 +651,7 @@ test('environment version migrates owned records once even when Claude flags mat
         port: 8799,
         claudeHome: false,
         inherit: true,
+        connectors: false,
         env
       })
     )

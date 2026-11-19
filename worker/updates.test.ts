@@ -150,17 +150,23 @@ test('permissions can change after setup, and a change answers the setup card', 
   try {
     assert.deepEqual(await worker.request('prefs.get', {}), {
       shareTools: false,
+      shareConnectors: false,
       linkAgents: true,
       agents: { claude: true, codex: false }
     })
     const saved = await worker.request('prefs.set', { shareTools: true })
     assert.deepEqual(saved, {
       shareTools: true,
+      shareConnectors: false,
       linkAgents: true,
       agents: { claude: true, codex: false }
     })
     assert.equal(host.data().settings.shareClaudeSetup, true)
     assert.equal(host.data().storage.setupAnswered, true)
+    // The claude.ai account's connectors are a choice of their own, off until made.
+    assert.equal((await worker.request('prefs.set', { shareConnectors: true })).shareConnectors, true)
+    assert.equal(host.data().settings.shareAccountConnectors, true)
+    await assert.rejects(worker.request('prefs.set', { shareConnectors: 1 } as never), /Choose a setting/)
     await assert.rejects(worker.request('prefs.set', { linkAgents: 'yes' } as never), /Choose a setting/)
     assert.equal(host.data().settings.linkAgents, true)
   } finally {

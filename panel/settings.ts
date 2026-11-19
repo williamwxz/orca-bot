@@ -79,12 +79,15 @@ export function createSettings(frame: FrameApi, element: Elements, changed: () =
   function renderPreferences(prefs: Preferences | undefined, problem = ''): void {
     element('permissions-note').textContent = problem
     renderImportCopy()
-    for (const id of ['pref-share-tools', 'pref-link-agents']) input(id).disabled = !prefs
+    for (const id of ['pref-share-tools', 'pref-share-connectors', 'pref-link-agents']) input(id).disabled = !prefs
     if (!prefs) {
-      input('pref-share-tools').checked = input('pref-link-agents').checked = false
+      input('pref-share-tools').checked = input('pref-share-connectors').checked = input('pref-link-agents').checked = false
       return
     }
     input('pref-share-tools').checked = prefs.shareTools
+    // Account connectors only reach bots that share the Claude setup at all.
+    input('pref-share-connectors').checked = prefs.shareTools && prefs.shareConnectors
+    input('pref-share-connectors').disabled = !prefs.shareTools
     input('pref-link-agents').checked = prefs.linkAgents
     element('pref-link-agents-label').hidden = !agentNames(prefs.agents)
     element('pref-agent-names').textContent = agentNames(prefs.agents)
@@ -151,15 +154,15 @@ export function createSettings(frame: FrameApi, element: Elements, changed: () =
     }
   }
 
-  async function setPreference(key: 'shareTools' | 'linkAgents', value: boolean): Promise<void> {
+  async function setPreference(key: 'shareTools' | 'shareConnectors' | 'linkAgents', value: boolean): Promise<void> {
     const generation = preferencesGeneration
-    input(key === 'shareTools' ? 'pref-share-tools' : 'pref-link-agents').disabled = true
+    input(key === 'shareTools' ? 'pref-share-tools' : key === 'shareConnectors' ? 'pref-share-connectors' : 'pref-link-agents').disabled = true
     try {
       const prefs = await frame.plugin.request('prefs.set', { [key]: value })
       if (generation !== preferencesGeneration) return
       renderPreferences(prefs)
       note(
-        key === 'shareTools'
+        key !== 'linkAgents'
           ? 'Saved. OpenMausBot restarts to apply it when no bot is working.'
           : 'Saved.'
       )
@@ -207,6 +210,10 @@ export function createSettings(frame: FrameApi, element: Elements, changed: () =
   input('pref-share-tools').addEventListener(
     'change',
     () => void setPreference('shareTools', input('pref-share-tools').checked)
+  )
+  input('pref-share-connectors').addEventListener(
+    'change',
+    () => void setPreference('shareConnectors', input('pref-share-connectors').checked)
   )
   input('pref-link-agents').addEventListener(
     'change',

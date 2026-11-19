@@ -8,6 +8,7 @@ export type StoredPrefs = {
   connectorKey?: string
   connectors?: Provenance
   shareTools?: boolean
+  shareConnectors?: boolean
   linkAgents?: boolean
   setupAnswered?: boolean
   installConsent?: boolean
@@ -26,6 +27,7 @@ function cleanPrefs(raw: unknown): StoredPrefs | undefined {
   if (typeof bag.connectorKey === 'string' && /^[a-f0-9]{64}$/.test(bag.connectorKey))
     out.connectorKey = bag.connectorKey
   if (typeof bag.shareTools === 'boolean') out.shareTools = bag.shareTools
+  if (typeof bag.shareConnectors === 'boolean') out.shareConnectors = bag.shareConnectors
   if (typeof bag.linkAgents === 'boolean') out.linkAgents = bag.linkAgents
   if (typeof bag.setupAnswered === 'boolean') out.setupAnswered = bag.setupAnswered
   if (typeof bag.stopped === 'boolean') out.stopped = bag.stopped
@@ -76,6 +78,7 @@ export function fileHostPrefs(
       const next: StoredPrefs = { ...(read() ?? {}) }
       for (const key of [
         'shareTools',
+        'shareConnectors',
         'linkAgents',
         'setupAnswered',
         'installConsent',

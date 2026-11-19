@@ -20,7 +20,7 @@ export type Status = {
 
 export type Setup = { answered: boolean; agents: FoundAgents } & Partial<SetupAnswer>
 export type SetupAnswer = { shareTools: boolean; linkAgents: boolean }
-export type Preferences = SetupAnswer & { agents: FoundAgents }
+export type Preferences = SetupAnswer & { shareConnectors: boolean; agents: FoundAgents }
 
 export type Requests = {
   'models.list': { input: Record<string, never>; output: Models }
@@ -53,7 +53,7 @@ export type Requests = {
   'bots.list': { input: Record<string, never>; output: Bot[] }
   status: { input: { retry?: boolean }; output: Status }
   'prefs.get': { input: Record<string, never>; output: Preferences }
-  'prefs.set': { input: Partial<SetupAnswer>; output: Preferences }
+  'prefs.set': { input: Partial<SetupAnswer & { shareConnectors: boolean }>; output: Preferences }
   'updates.get': { input: { check?: boolean }; output: Updates }
   'updates.install': { input: Record<string, never>; output: Updates }
   'updates.auto': { input: { on: boolean }; output: Updates }

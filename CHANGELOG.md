@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.12 (19 November 2026)
+
+- **Fewer tokens per message**: Claude bots that share your Claude tools no
+  longer load the connectors of your claude.ai account by default. That catalog
+  was sent with every message (about 18,000 tokens on the setup we measured:
+  70,000 down to 52,000 for a one-word message) and gave bots tools nobody
+  assigned them. **Behavior change**: a bot that relied on an account connector
+  such as Gmail or Linear loses it until you turn on **Settings → Permissions →
+  Include my claude.ai connectors**, or give it a connector under
+  **Connectors**. OpenMausBot restarts once, when bots are idle, to apply it.
+- **README**: when to use OpenMausBot and this plugin, how workspace, groups,
+  bots and conversations relate, and what each message costs.
+
 ## 0.1.11 (19 November 2026)
 
 - **Bot settings behind a gear**: the gear at the top right of a bot's chat

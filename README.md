@@ -20,6 +20,75 @@ Codex or Grok agent, and a chat window for each.
 
 Unofficial. Not made by or affiliated with Orca, OpenMausBot or the makers of the models it runs. For now it runs on macOS only: it has not been tested on Windows or Linux, and Orca's mobile app does not show plugins yet.
 
+## When to use it
+
+Use OpenMausBot with this plugin when:
+
+- **You want a standing team, not one more chat.** Each bot keeps its own role,
+  memory, skills and schedules between conversations, and bots can hand work to
+  each other. For a single task in a repository, an ordinary Orca agent is
+  simpler.
+- **You already pay for Claude or Codex.** Bots run the real Claude Code and
+  Codex with your existing sign-ins, so they follow those tools as they improve
+  and you need no new account or API key.
+- **You work in Orca.** The team sits in the sidebar, your Orca agents can
+  message the bots, and nothing leaves your computer except what the models
+  and connectors themselves send.
+- **You want to be able to leave.** Skills are standard `SKILL.md` folders and
+  memory is plain Markdown; **Export bots** writes them in the layout Hermes
+  Agent, Claude Code and Codex read.
+
+Look elsewhere when:
+
+- You want to reach an assistant from Telegram, Discord or WhatsApp. OpenMausBot
+  has its own phone app and Slack; [Hermes Agent](https://github.com/NousResearch/hermes-agent)
+  connects to many chat apps.
+- You need a product with a company's support behind it. OpenMausBot is young
+  and changes quickly; this plugin pins a version it was tested with.
+- You are on Windows or Linux (not tested yet).
+
+## How it is organised
+
+OpenMausBot has one **workspace** per installation: everything under
+`~/.orca-bot` on the bot host. Inside it:
+
+| Level | What it holds | Where you set it |
+|---|---|---|
+| Workspace | The connector catalog, the defaults new bots start with, and switches such as **Learn skills on their own** | Settings |
+| Group (OpenMausBot calls it a department) | A folder of bots in the sidebar, with shared instructions. It is not a wall: any bot can talk to any other | Drag bots, or a bot's context menu |
+| Bot | Its model, **which connectors it may use**, computer, skills, memory and schedules | The gear in its chat |
+| Conversation | One thread with a bot: its own transcript and context, on the bot's model unless you pick another | Full chat |
+
+So connectors are turned on once for the workspace and then **allowed per bot**;
+a newly enabled connector starts with no bots. There is no per-group or
+per-conversation connector list.
+
+## What each message costs
+
+Every message a bot handles starts with a fixed prompt: the engine's own
+instructions and tools, OpenMausBot's, and whatever you share. Measured on one
+setup with a one-word message to a Claude bot:
+
+| Setup | Tokens sent before your message |
+|---|---|
+| **Bots can use my tools** off | about 40,000 (estimated, not measured) |
+| On (the default once you allow it) | about 52,000 |
+| On, with **Include my claude.ai connectors** | about 70,000 |
+
+Most of it is cached by the model provider after the first message of a
+conversation, so later messages are billed at a fraction, but it still fills
+the context window and counts toward plan limits. To spend less:
+
+- Leave **Include my claude.ai connectors** off. That account catalog (every
+  tool of every connected app) was about 18,000 tokens here, and none of it was
+  assigned to a bot. Give a bot the connectors it needs under **Connectors**.
+- Turn **Bots can use my tools** off for bots that need none of your Claude
+  plugins, skills or instructions.
+- Disable Claude Code plugins you do not use; each adds its skills and tools to
+  every bot that shares your setup.
+
+Your numbers depend on your plugins, connectors and instructions.
+
 ## How to use
 
 **You need** Orca 1.4.246 or newer, and Node.js 24 or newer with `node` and
@@ -116,7 +185,9 @@ The gear button in the panel header opens Settings, in four parts:
     applies to every bot on the selected host.
 - **Permissions**: the choices from the setup card, which you can change at any
   time: whether bots can use your Claude tools and whether your Orca agents can
-  talk to the bots. They apply to the selected bot host. Remote changes also
+  talk to the bots. Under the first, **Include my claude.ai connectors** (off by
+  default) also loads every connector of your claude.ai account into each Claude
+  bot; see [What each message costs](#what-each-message-costs). They apply to the selected bot host. Remote changes also
   sync with Orca on that host.
 - **Updates and export**:
   - **Updates**: the version you have and whether a newer one is out. By
@@ -247,8 +318,9 @@ of that `orca` command on this computer.
    bot in the full chat if you want to approve each step.
 2. **Shared tools give bots more access.** Claude tools are shared and Orca
    agents are linked only after you approve in the setup card. With sharing on,
-   Claude bots can use your connectors, MCP servers, instructions, skills and
-   hooks. A malicious page or document could trick a bot into misusing those
+   Claude bots can use your MCP servers, plugins, instructions, skills and
+   hooks, and with **Include my claude.ai connectors** also every connector of
+   your claude.ai account, whether or not a bot was assigned it. A malicious page or document could trick a bot into misusing those
    tools. Change sharing and agent linking in Orca's Settings.
 3. **Any program on this computer can talk to the server.** OpenMausBot trusts
    local programs as the owner. This is its design, and it means other software
