@@ -1,4 +1,5 @@
 import { createCapabilityPicker } from './capability-picker.ts'
+import { createLearningSheet } from './learning-sheet.ts'
 import type { CapabilityHooks } from './capability-picker.ts'
 import { dayLabel, threadPreview } from './presentation.ts'
 import type { Requests } from '../worker/protocol.ts'
@@ -93,6 +94,7 @@ export function createChatView(
       for (const entry of list) if (entry.preview) URL.revokeObjectURL?.(entry.preview)
     pendingByBot.clear()
     drafts.clear()
+    skillCounts.clear()
   }
   function addFiles(files: File[]): void {
     syncHost()
@@ -210,6 +212,7 @@ export function createChatView(
   // Where the bot works, as OpenMausBot's chat header shows it: a computer icon.
   const computerButton = button('Backend', () => {
     if (!bot || !picker) return
+    learning?.close()
     void picker.open('computer', bot, computerButton)
     computerButton.setAttribute('aria-expanded', 'true')
   })
@@ -224,22 +227,49 @@ export function createChatView(
   capabilityMenu.hidden = true
   const modelPill = button('Model', () => {
     if (!bot || !picker) return
+    learning?.close()
     void picker.open('model', bot, modelPill, 'models')
     modelPill.setAttribute('aria-expanded', 'true')
   })
   const connectorPill = button('Connectors', () => {
     if (!bot || !picker) return
+    learning?.close()
     void picker.open('connectors', bot, connectorPill)
     connectorPill.setAttribute('aria-expanded', 'true')
   })
+  const skillsPill = button('Skills', () => {
+    if (!bot || !learning) return
+    picker?.close(false)
+    void learning.open(bot, skillsPill)
+    skillsPill.setAttribute('aria-expanded', 'true')
+  })
+  // Enabled skills per bot, once its sheet has been opened on this host.
+  const skillCounts = new Map<string, number>()
+  const learningRoot = node('div')
+  const learning = capabilities
+    ? createLearningSheet(
+        learningRoot,
+        frame,
+        {
+          notify,
+          hostGeneration: capabilities.hostGeneration,
+          counted: (id, count) => {
+            skillCounts.set(id, count)
+            renderCapabilities()
+          }
+        },
+        () => skillsPill.setAttribute('aria-expanded', 'false')
+      )
+    : undefined
   const bar = node('div')
   bar.className = 'chat-capabilities'
-  for (const pill of [modelPill, connectorPill]) {
+  for (const pill of [modelPill, connectorPill, skillsPill]) {
     pill.className = 'capability-pill'
     pill.setAttribute('aria-haspopup', 'menu')
     pill.setAttribute('aria-expanded', 'false')
     bar.append(pill)
   }
+  skillsPill.setAttribute('aria-haspopup', 'dialog')
   const picker = capabilities
     ? createCapabilityPicker(
         capabilityMenu,
@@ -283,6 +313,10 @@ export function createChatView(
     connectorPill.title = 'Choose connectors for this bot'
     connectorPill.textContent = `${count ? `Connectors · ${count}` : 'Connectors'} ▾`
     connectorPill.setAttribute('aria-label', count ? `Connectors: ${count} allowed` : 'Connectors')
+    const skills = skillCounts.get(bot.id)
+    skillsPill.title = 'Skills and memory'
+    skillsPill.textContent = `${skills ? `Skills · ${skills}` : 'Skills'} ▾`
+    skillsPill.setAttribute('aria-label', skills ? `Skills and memory: ${skills} skills on` : 'Skills and memory')
   }
   const list = node('div')
   list.className = 'messages'
@@ -335,7 +369,7 @@ export function createChatView(
   const letters = node('span')
   sheen.append(letters)
   workingText.append(workingLabel, sheen)
-  root.append(header, ...(capabilities ? [bar] : []), list, note, working, composer, capabilityMenu)
+  root.append(header, ...(capabilities ? [bar] : []), list, note, working, composer, capabilityMenu, ...(learning ? [learningRoot] : []))
   const atBottom = () => list.scrollHeight - list.scrollTop - list.clientHeight < 40
   function linkedText(parent: HTMLElement, text: string): void {
     const pattern = /https?:\/\/[^\s<>]+/g
@@ -575,6 +609,7 @@ export function createChatView(
   function close(): void {
     generation++
     picker?.close(false)
+    learning?.close()
     bot = undefined
     reading = false
     clearTimeout(timer)
@@ -599,7 +634,10 @@ export function createChatView(
   })
   return {
     close,
-    dismissCapabilities: () => picker?.close(false),
+    dismissCapabilities: () => {
+      picker?.close(false)
+      learning?.close()
+    },
     open(next: Bot) {
       close()
       syncHost()

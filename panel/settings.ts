@@ -19,6 +19,7 @@ export function createSettings(frame: FrameApi, element: Elements, changed: () =
   let status: Status | undefined
   let updates: Updates | undefined
   let preferencesGeneration = 0
+  let learningGeneration = 0
   let updateGeneration = 0
   let installing = false
   let bannerFeedback = ''
@@ -118,6 +119,38 @@ export function createSettings(frame: FrameApi, element: Elements, changed: () =
     renderUpdates()
   }
 
+  function renderLearning(autoLearn: boolean | undefined, problem = ''): void {
+    element('learning-note').textContent = problem
+    input('learning-auto').disabled = autoLearn === undefined
+    input('learning-auto').checked = !!autoLearn
+  }
+
+  async function loadLearning(): Promise<void> {
+    const generation = ++learningGeneration
+    try {
+      const { autoLearn } = await frame.plugin.request('learning.settings', {})
+      if (generation === learningGeneration) renderLearning(autoLearn)
+    } catch (error) {
+      if (generation === learningGeneration)
+        renderLearning(undefined, failure(error, 'Could not read the learning setting.'))
+    }
+  }
+
+  async function setLearning(autoLearn: boolean): Promise<void> {
+    const generation = ++learningGeneration
+    input('learning-auto').disabled = true
+    try {
+      const saved = await frame.plugin.request('learning.settings', { autoLearn })
+      if (generation !== learningGeneration) return
+      renderLearning(saved.autoLearn)
+      note(saved.autoLearn ? 'Saved. Bots now learn skills on their own.' : 'Saved.')
+    } catch (error) {
+      if (generation !== learningGeneration) return
+      note(failure(error, 'Could not save.'))
+      await loadLearning()
+    }
+  }
+
   async function setPreference(key: 'shareTools' | 'linkAgents', value: boolean): Promise<void> {
     const generation = preferencesGeneration
     input(key === 'shareTools' ? 'pref-share-tools' : 'pref-link-agents').disabled = true
@@ -179,6 +212,7 @@ export function createSettings(frame: FrameApi, element: Elements, changed: () =
     'change',
     () => void setPreference('linkAgents', input('pref-link-agents').checked)
   )
+  input('learning-auto').addEventListener('change', () => void setLearning(input('learning-auto').checked))
   button('update-check').addEventListener('click', async () => {
     button('update-check').disabled = true
     element('update-status').textContent = 'Checking for updates\u2026'
@@ -211,17 +245,19 @@ export function createSettings(frame: FrameApi, element: Elements, changed: () =
       remote = nextRemote
       ++preferencesGeneration
       renderPreferences(undefined, 'Changing where bots run\u2026')
+      ++learningGeneration
+      renderLearning(undefined)
     },
     async hostChanged(problem = ''): Promise<void> {
       const generation = preferencesGeneration + 1
-      await loadPreferences()
+      await Promise.all([loadPreferences(), loadLearning()])
       if (generation === preferencesGeneration) note(problem)
     },
     /** Fills the screen each time it opens: permissions and updates can change elsewhere. */
     async open(): Promise<void> {
       note('')
       renderServer()
-      await Promise.all([loadPreferences(), loadUpdates()])
+      await Promise.all([loadPreferences(), loadLearning(), loadUpdates()])
     },
     /** Checks for a new version; successful results are cached for six hours. */
     checkUpdates: () => loadUpdates(),

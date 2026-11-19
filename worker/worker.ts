@@ -15,6 +15,7 @@ import { readThread, sendMessage, newSendId } from './omb-chat.ts'
 import { uploadAttachment } from './omb-attachments.ts'
 import { computerStatus } from './omb-computer.ts'
 import { desktopAct, desktopStatus, installBrowser, updateDesktopSettings } from './omb-desktops.ts'
+import { readLearning, readLearningSettings, setSkill, updateLearningSettings } from './omb-learning.ts'
 import type { DesktopAction } from '../shared/roster.ts'
 const DESKTOP_ACTIONS: DesktopAction[] = ['prepare', 'create', 'start', 'stop', 'recreate']
 import { MAX_ATTACHMENTS, composeMessage } from '../shared/attachments.ts'
@@ -81,6 +82,10 @@ export type WorkerDeps = {
   desktopAct?: (input: Parameters<typeof desktopAct>[0]) => ReturnType<typeof desktopAct>
   updateDesktopSettings?: (input: Parameters<typeof updateDesktopSettings>[0]) => ReturnType<typeof updateDesktopSettings>
   installBrowser?: (input: { port: number }) => Promise<void>
+  readLearning?: (input: Parameters<typeof readLearning>[0]) => ReturnType<typeof readLearning>
+  setSkill?: (input: Parameters<typeof setSkill>[0]) => ReturnType<typeof setSkill>
+  readLearningSettings?: (input: { port: number }) => ReturnType<typeof readLearningSettings>
+  updateLearningSettings?: (input: Parameters<typeof updateLearningSettings>[0]) => ReturnType<typeof updateLearningSettings>
   uploadAttachment?: (input: { port: number; name: string; mime: string; data: string }) => ReturnType<typeof uploadAttachment>
   listBots: (input: { port: number }) => Promise<Bot[]>
 }
@@ -139,6 +144,10 @@ export function defaultWorkerDeps(): WorkerDeps {
     desktopAct: (input) => desktopAct(input, http),
     updateDesktopSettings: (input) => updateDesktopSettings(input, http),
     installBrowser: (input) => installBrowser(input, http),
+    readLearning: (input) => readLearning(input, http),
+    setSkill: (input) => setSkill(input, http),
+    readLearningSettings: (input) => readLearningSettings(input, http),
+    updateLearningSettings: (input) => updateLearningSettings(input, http),
     listBots: (input) => listBots(input, http)
   }
 }
@@ -708,6 +717,24 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
     if (!deps.installBrowser) throw new Error('The browser is unavailable.')
     await deps.installBrowser({ port })
     return { installing: true as const }
+  })
+  orca.panels.handle('learning.read', (input: { botId: string }) => {
+    const port = knownBot(input)
+    if (!deps.readLearning) throw new Error('Skills and memory are unavailable.')
+    return deps.readLearning({ port, botId: input.botId })
+  })
+  orca.panels.handle('learning.skill', (input: { botId: string; name: string; enabled: boolean }) => {
+    const port = knownBot(input)
+    if (!deps.setSkill) throw new Error('Skills and memory are unavailable.')
+    return deps.setSkill({ port, botId: input.botId, name: input.name, enabled: input.enabled })
+  })
+  orca.panels.handle('learning.settings', (input: { autoLearn?: boolean }) => {
+    const port = runningPort()
+    if (!deps.readLearningSettings || !deps.updateLearningSettings)
+      throw new Error('Skills and memory are unavailable.')
+    return input?.autoLearn === undefined
+      ? deps.readLearningSettings({ port })
+      : deps.updateLearningSettings({ port, autoLearn: input.autoLearn })
   })
   // Not relayed: on a paired server the bytes would crawl through the terminal link.
   orca.panels.handle('attachment.upload', async (input: { name: string; mime: string; data: string }) => {

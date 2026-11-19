@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.11 (19 November 2026)
+
+- **Skills and memory in the chat**: a **Skills** pill in each bot's chat opens
+  a panel from the right with the bot's skills, a switch for each, and a
+  **Learned** tag on those the bot wrote itself, plus its memory (`MEMORY.md`)
+  and how much of it loads each turn.
+- **Settings → Learning**: **Bots learn skills on their own** turns on
+  OpenMausBot's automatic skill review. After a task with many tool steps, a bot
+  looks back over it and may save or improve a skill.
+- **Settled cards read as one line**: a card that asks nothing, such as
+  "Skill … enabled", no longer says "This needs the full chat."
+- **OpenMausBot 0.1.171**: faster replies (Codex turns stay warm, Claude starts
+  ahead of your message), bots can set themselves reminders, longer hand-offs
+  between bots, and scheduled runs retry when a cloud desktop does not wake.
+
 ## 0.1.10 (19 November 2026)
 
 - **Set up private desktops in the panel**: choosing **Private desktop** in a

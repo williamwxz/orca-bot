@@ -28,7 +28,7 @@ Grok signed in on this computer.
 
 1. Install Bot Team for Orca in Orca and open the **Bot Team for Orca** panel in the right
    sidebar. Click **Install OpenMausBot** to approve downloading
-   `openmausbot@0.1.169` from npm (about 75 MB) into `~/.orca-bot`.
+   `openmausbot@0.1.171` from npm (about 75 MB) into `~/.orca-bot`.
    Opening the panel alone does not install it. Until Bot Team for Orca is in
    Orca's plugin catalog, load it from a copy of
    this repository with `orca plugin dev load .`.
@@ -68,9 +68,14 @@ Good to know:
   under **OpenMausBot**. Disable keeps credentials there; Remove deletes the server and
   its stored credentials and clears its bot assignments. First-run setup never imports tools.
   Codex-backed bots still load `~/.codex/config.toml` directly, independently of these mappings.
+- The **Skills** pill in a bot's chat opens what the bot has learned: its skills, with
+  a switch for each and a **Learned** tag on those it wrote itself, and its memory
+  (`MEMORY.md`) with how many of its lines load each turn. Writing and editing skills
+  and memory stay in the full chat; type `/learn` there to save what a bot just did.
 
 - The panel shows the last 20 messages as plain text and sends messages of up to
-  16,000 characters. Anything richer says "This needs the full chat."
+  16,000 characters. A settled card, such as "Skill … enabled" after a bot learns a
+  skill, shows as one line; anything richer says "This needs the full chat."
 - **Add MausBot** brings back the main bot if you hid it.
 - The **Set up Bot Team for Orca** card asks before sharing Claude tools or linking your
   Claude, Codex, opencode and Antigravity agents to the bots. Change either choice later in Orca's Settings.
@@ -90,6 +95,10 @@ The gear button in the panel header opens Settings:
   time: whether bots can use your Claude tools, whether your Orca agents can
   talk to the bots, and bringing in tools from your other AI apps. They apply to
   the selected bot host. Remote changes also sync with Orca on that host.
+- **Learning**: **Bots learn skills on their own** (off by default in
+  OpenMausBot). After a task with many tool steps, a bot looks back over it and
+  may save or improve a skill. The review uses the bot's own AI and counts toward
+  its usage. It applies to every bot on the selected host.
 - **Updates**: the version you have and whether a newer one is out. By default
   the panel shows a banner and asks before updating; **Install updates
   automatically** updates by itself, once per new version. An update that asks
@@ -235,6 +244,12 @@ of that `orca` command on this computer.
    model list and announcements, `models.dev` for provider models, and npm for
    the latest Codex version. These requests reveal your IP address to those
    services; we found nothing else in them.
+
+9. **Learned skills are instructions the bot wrote for itself.** With
+   **Bots learn skills on their own** on, a bot can save or change a skill
+   without asking; each change shows in its chat with **Undo** in the full chat.
+   A skill can be wrong like any other instruction. Switch it off under
+   **Skills** in the chat, or delete it in the full chat.
 
 To remove everything: turn off **Let my Orca agents talk to the bots**, stop
 the server from the command palette, uninstall the
