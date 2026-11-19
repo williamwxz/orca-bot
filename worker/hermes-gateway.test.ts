@@ -118,3 +118,16 @@ test('the connection unused longest closes when there are too many', async () =>
   assert.equal(sockets.filter((s) => s.closed).map((s) => s.profile).join(), 'bot-0')
   assert.equal(gateway.connected(`bot-${MAX_CONNECTIONS}`), true)
 })
+
+test('only a held connection survives making room, and releasing it lets it go', async () => {
+  const { deps, sockets } = fake()
+  const gateway = createGateway(deps)
+  await gateway.request('bot-0', 'ping')
+  gateway.hold('bot-0')
+  await gateway.request('bot-1', 'ping')
+  for (let i = 2; i <= MAX_CONNECTIONS; i++) await gateway.request(`bot-${i}`, 'ping')
+  assert.equal(sockets.filter((s) => s.closed).map((s) => s.profile).join(), 'bot-1')
+  gateway.release('bot-0')
+  await gateway.request('bot-extra', 'ping')
+  assert.equal(sockets.filter((s) => s.closed).map((s) => s.profile).sort().join(), 'bot-0,bot-1')
+})

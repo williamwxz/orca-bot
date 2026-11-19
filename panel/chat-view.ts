@@ -13,6 +13,8 @@ export type ChatHooks = {
   notify(text: string): void
   /** Rises when the bot host changes; a reply asked before it is dropped. */
   hostGeneration(): number
+  /** The chosen host's stable ID: drafts follow it, so returning to a host finds its drafts. */
+  hostKey(): string
 }
 
 /** Messages fetched on each poll; enough to cover what a turn adds between two polls. */
@@ -46,6 +48,8 @@ export function createChatView(root: HTMLElement, frame: FrameApi, avatar: (bot:
   let generation = 0
   let messages: ChatMessage[] = []
   let older: string | undefined
+  /** The conversation shown: when the worker names another, everything held belongs to the old one. */
+  let chatId: string | undefined
   let live: Live | undefined
   let loaded = false
   let loadingOlder = false
@@ -58,7 +62,7 @@ export function createChatView(root: HTMLElement, frame: FrameApi, avatar: (bot:
   let clock: ReturnType<typeof setTimeout> | undefined
   /** Unsent text per bot on one host: the same profile name on another host is another bot. */
   const drafts = new Map<string, string>()
-  const draftKey = (id: string) => `${hooks.hostGeneration()}:${id}`
+  const draftKey = (id: string) => `${hooks.hostKey()}:${id}`
   const rendered = new Map<string, { element: HTMLElement; text: string }>()
   let renderedIds: string[] = []
 
@@ -191,15 +195,26 @@ export function createChatView(root: HTMLElement, frame: FrameApi, avatar: (bot:
     clock = setTimeout(renderWorking, 1000)
   }
 
-  let reading = false
+  /** The chat (generation) whose read is in flight. A read for an older chat never blocks a new one. */
+  let reading: number | undefined
   let readAgain = false
-  /** Asks for a read. Only one runs at a time and only it sets the next poll; a request made meanwhile runs right after. */
+  /** Asks for a read. One runs at a time per chat and only it sets the next poll; a request made meanwhile runs right after. */
   function read(): void {
-    if (reading) {
+    if (reading === generation) {
       readAgain = true
       return
     }
     void readOnce()
+  }
+  /** Drops everything shown for the previous conversation of this bot. */
+  function forget(): void {
+    messages = []
+    older = undefined
+    pending = []
+    acknowledged.clear()
+    rendered.clear()
+    renderedIds = []
+    rows.replaceChildren()
   }
   async function readOnce(): Promise<void> {
     clearTimeout(timer)
@@ -207,11 +222,17 @@ export function createChatView(root: HTMLElement, frame: FrameApi, avatar: (bot:
     if (!target || document.hidden) return
     const token = generation
     const host = hooks.hostGeneration()
-    reading = true
+    reading = token
     readAgain = false
     try {
       const thread = await frame.plugin.request('thread.read', { botId: target.id, limit: loaded ? POLL_ROWS : PAGE_ROWS })
       if (current(token, host)) {
+        // Archived or replaced in Hermes: the old history and any unacknowledged sends go with it.
+        if (loaded && thread.chat !== chatId) {
+          forget()
+          loaded = false
+        }
+        chatId = thread.chat
         if (!loaded) {
           messages = thread.messages
           older = thread.older
@@ -238,9 +259,9 @@ export function createChatView(root: HTMLElement, frame: FrameApi, avatar: (bot:
     } catch (error) {
       if (current(token, host)) note.textContent = error instanceof Error ? error.message : 'Could not load messages.'
     }
-    reading = false
-    // A chat opened or a host changed during the read starts its own; this one schedules nothing.
-    if (!current(token, host)) return void (bot && !document.hidden && readOnce())
+    // A read for a chat that is no longer open ends quietly: the open chat runs its own loop.
+    if (reading === token) reading = undefined
+    if (!current(token, host)) return
     if (readAgain) return void readOnce()
     if (!document.hidden) timer = setTimeout(read, live || sending || pending.length ? 1200 : 5000)
   }
@@ -255,8 +276,11 @@ export function createChatView(root: HTMLElement, frame: FrameApi, avatar: (bot:
     try {
       const page = await frame.plugin.request('thread.read', { botId: target.id, older, limit: PAGE_ROWS })
       if (!current(token, host)) return
-      messages = mergeMessages(messages, page.messages, 'older')
-      older = page.older
+      // A page from a conversation that has since been replaced is not this one's history.
+      if (page.chat === chatId) {
+        messages = mergeMessages(messages, page.messages, 'older')
+        older = page.older
+      }
     } catch (error) {
       if (!current(token, host)) return
       hooks.notify(error instanceof Error ? error.message : 'Could not load earlier messages.')
@@ -322,17 +346,12 @@ export function createChatView(root: HTMLElement, frame: FrameApi, avatar: (bot:
     open(next: Bot): void {
       close()
       bot = next
-      messages = []
-      older = undefined
+      forget()
+      chatId = undefined
       live = undefined
-      pending = []
-      acknowledged.clear()
       loaded = false
       loadingOlder = false
       sending = false
-      rendered.clear()
-      renderedIds = []
-      rows.replaceChildren()
       identity.replaceChildren(avatar(next))
       const names = node('div')
       names.append(node('strong', next.name), node('small', next.model))

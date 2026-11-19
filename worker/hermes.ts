@@ -10,7 +10,7 @@ const DEFAULT_PROFILE = 'default'
 const CURSOR = /^[\x21-\x7e]{1,2000}$/
 /** How long a bot's model and preview are reused before asking its connection again. */
 const DETAIL_AGE = 8000
-/** The same for a bot nobody has open: asking opens a connection, so it is done less often. */
+/** The same for a bot that is not replying: asking opens a connection, so it is done less often. */
 const QUIET_DETAIL_AGE = 60000
 const COLD_WAIT = 4000
 const MAX_BOTS = 60
@@ -44,12 +44,22 @@ export function createHermes(deps: HermesDeps = defaultHermesDeps()) {
   let refreshSlots = REFRESH_AT_ONCE
   const refreshQueue: (() => void)[] = []
 
+  /** A reply is being written: its connection must stay open until it ends. */
+  const begin = (bot: string, live: Live) => {
+    lives.set(bot, live)
+    gateway.hold(bot)
+  }
+  const end = (bot: string) => {
+    lives.delete(bot)
+    gateway.release(bot)
+  }
+
   gateway.onEvent((profile, event: GatewayEvent) => {
     const chat = chats.get(profile)
     // Only the attached Bot Chat's own events count; another session on the profile is not this chat.
     if (!chat?.live || event.sessionId !== chat.live) return
-    if (event.type === 'message.start') lives.set(profile, { text: '', startedAt: deps.now() })
-    else if (event.type === 'message.complete' || event.type === 'error') lives.delete(profile)
+    if (event.type === 'message.start') begin(profile, { text: '', startedAt: deps.now() })
+    else if (event.type === 'message.complete' || event.type === 'error') end(profile)
     else {
       const live = lives.get(profile)
       if (!live) return
@@ -62,6 +72,7 @@ export function createHermes(deps: HermesDeps = defaultHermesDeps()) {
   // live ID means nothing on the next socket. Forget both, even if a new connection opens at once.
   gateway.onDrop((profile) => {
     lives.delete(profile)
+    gateway.release(profile)
     const chat = chats.get(profile)
     if (chat) chat.live = undefined
   })
@@ -80,7 +91,7 @@ export function createHermes(deps: HermesDeps = defaultHermesDeps()) {
       // Archived or deleted in Hermes: nothing here may keep reading or sending to the old one.
       if (held) {
         chats.delete(bot)
-        lives.delete(bot)
+        end(bot)
       }
       return undefined
     }
@@ -88,7 +99,7 @@ export function createHermes(deps: HermesDeps = defaultHermesDeps()) {
     // A different chat, or the same one compacted onto a new segment: attach again from scratch.
     const chat: Chat = { ...found }
     chats.set(bot, chat)
-    lives.delete(bot)
+    end(bot)
     return chat
   }
 
@@ -124,7 +135,6 @@ export function createHermes(deps: HermesDeps = defaultHermesDeps()) {
         }
         const chat: Chat = { registry: created.stored_session_id, resolved: created.stored_session_id, live: created.session_id }
         chats.set(bot, chat)
-        gateway.hold(bot)
         return chat
       } finally {
         creating.delete(bot)
@@ -144,10 +154,9 @@ export function createHermes(deps: HermesDeps = defaultHermesDeps()) {
         // The chat was replaced while this was in flight: its attachment belongs to nobody.
         if (chats.get(bot) !== chat) throw new Error('This chat changed in Hermes. Try again.')
         chat.live = reply.session_id
-        gateway.hold(bot)
         if (reply.running === true && !lives.has(bot)) {
           const text = typeof reply.inflight?.assistant === 'string' ? reply.inflight.assistant : ''
-          lives.set(bot, { text: text.slice(-MAX_MESSAGE), startedAt: typeof reply.turn_started_at === 'number' ? Math.round(reply.turn_started_at * 1000) : deps.now() })
+          begin(bot, { text: text.slice(-MAX_MESSAGE), startedAt: typeof reply.turn_started_at === 'number' ? Math.round(reply.turn_started_at * 1000) : deps.now() })
         }
         return chat.live!
       } finally {
@@ -206,7 +215,8 @@ export function createHermes(deps: HermesDeps = defaultHermesDeps()) {
       const cold: Promise<void>[] = []
       for (const row of rows) {
         const held = details.get(row.name)
-        const age = chats.get(row.name)?.live || lives.has(row.name) ? DETAIL_AGE : QUIET_DETAIL_AGE
+        // A bot writing a reply is asked often; any other only now and then, since asking opens a connection.
+        const age = lives.has(row.name) ? DETAIL_AGE : QUIET_DETAIL_AGE
         if (held && deps.now() - held.at < age) continue
         const refresh = refreshDetail(row.name)
         if (!held) cold.push(refresh)
@@ -234,6 +244,7 @@ export function createHermes(deps: HermesDeps = defaultHermesDeps()) {
       })
       const live = input.older === undefined && chats.get(bot) === chat ? lives.get(bot) : undefined
       return {
+        chat: chat.registry,
         messages: rowsView(reply),
         ...(typeof reply?.next_cursor === 'string' && CURSOR.test(reply.next_cursor) ? { older: reply.next_cursor } : {}),
         ...(live ? { live: { text: live.text, startedAt: live.startedAt, ...(live.tool ? { tool: live.tool } : {}) } } : {})
@@ -254,7 +265,7 @@ export function createHermes(deps: HermesDeps = defaultHermesDeps()) {
         if (error instanceof HermesError && error.code === 'refused') throw new Error('Hermes did not take this message. Check the bot in Hermes, then try again.')
         throw error
       }
-      if (chats.get(bot) === chat && !lives.has(bot)) lives.set(bot, { text: '', startedAt: deps.now() })
+      if (chats.get(bot) === chat && !lives.has(bot)) begin(bot, { text: '', startedAt: deps.now() })
       return { ok: true }
     },
 

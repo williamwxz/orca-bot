@@ -48,7 +48,8 @@ function when(at: number, now = Date.now()): string {
 const chatView = createChatView(element('bot-view'), frame, avatar, {
   back: () => showBot(undefined),
   notify: toast.show,
-  hostGeneration: () => hostGeneration
+  hostGeneration: () => hostGeneration,
+  hostKey: () => hosts?.selected ?? ''
 })
 
 function showBot(bot: Bot | undefined): void {

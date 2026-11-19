@@ -84,7 +84,7 @@ export function createGateway(deps: GatewayDeps = defaultGatewayDeps()) {
   const connections = new Map<string, Connection>()
   const listeners = new Set<(profile: string, event: GatewayEvent) => void>()
   const dropListeners = new Set<(profile: string) => void>()
-  /** Profiles whose connection carries a chat's events: never closed to make room for another. */
+  /** Profiles whose connection carries a reply in progress: never closed to make room for another. */
   const held = new Set<string>()
   let nextId = 0
 
@@ -206,9 +206,15 @@ export function createGateway(deps: GatewayDeps = defaultGatewayDeps()) {
       dropListeners.add(listener)
       return () => dropListeners.delete(listener)
     },
-    /** Keeps the profile's open connection from being closed to make room; ends when it drops. */
+    /**
+     * Keeps the profile's open connection from being closed to make room while a reply is being
+     * written on it; `release` ends that. An idle attachment may close: onDrop invalidates it.
+     */
     hold(profile: string): void {
       if (connections.get(profile)?.socket && !connections.get(profile)!.closed) held.add(profile)
+    },
+    release(profile: string): void {
+      held.delete(profile)
     },
     close() {
       for (const [profile, connection] of [...connections]) drop(profile, connection, new HermesError('closed', 'The connection to Hermes closed. Try again.'))

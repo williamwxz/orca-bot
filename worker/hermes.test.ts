@@ -30,6 +30,10 @@ function fake(answer: (call: Call) => unknown) {
       return () => {}
     },
     hold: (profile: string) => void held.push(profile),
+    release: (profile: string) => {
+      const at = held.lastIndexOf(profile)
+      if (at >= 0) held.splice(at, 1)
+    },
     close: () => {}
   } as unknown as Gateway
   const hermes = createHermes({ gateway, now: () => clock, id: () => `id-${++ids}`, wait: (_ms, done) => void setImmediate(done) })
@@ -68,7 +72,7 @@ test('the roster asks each bot on its own connection, then reuses the answer for
   const before = calls.length
   await hermes.listBots()
   assert.equal(calls.length, before + 1)
-  // Bots nobody has open are asked again only after a minute.
+  // Bots that are not replying are asked again only after a minute.
   tick(9000)
   await hermes.listBots()
   assert.equal(calls.length, before + 2)
@@ -91,6 +95,7 @@ test('a chat reads newest first by page, older pages by cursor, and a bot with n
   const { hermes, calls } = fake(standard)
   const page = await hermes.readThread({ botId: 'honex', limit: 500 })
   assert.deepEqual(page.messages.map((m) => `${m.role}:${m.text}`), ['user:hi', 'bot:hello'])
+  assert.equal(page.chat, 'chat-honex')
   assert.equal(page.older, 'cursor-1')
   assert.equal(page.live, undefined)
   const transcript = calls.find((c) => c.method === 'session.transcript')!
@@ -119,12 +124,14 @@ test('the reply shows while it is written and leaves when it is stored', async (
   emit('fresh', 'message.delta', 'live-chat-honex', { text: 'X' })
   emit('honex', 'message.delta', 'someone-else', { text: 'X' })
   assert.deepEqual((await hermes.readThread({ botId: 'honex' })).live, { text: 'Hello', startedAt: 1000, tool: 'Used terminal' })
+  // Only a reply in progress keeps the connection pinned; it is let go when the reply ends.
   assert.deepEqual(held, ['honex'])
   assert.equal((await hermes.listBots()).find((b) => b.id === 'honex')!.working, true)
   emit('honex', 'tool.complete', 'live-chat-honex')
   assert.equal((await hermes.readThread({ botId: 'honex' })).live!.tool, undefined)
   emit('honex', 'message.complete', 'live-chat-honex', { text: 'Hello' })
   assert.equal((await hermes.readThread({ botId: 'honex' })).live, undefined)
+  assert.deepEqual(held, [])
   // A dropped connection can no longer say the reply ended: it is not left "working" forever.
   // Its live ID is forgotten too, so the next read attaches again on the new connection.
   emit('honex', 'message.start', 'live-chat-honex')
@@ -240,6 +247,7 @@ test('a big roster asks a few bots at a time', async () => {
     onEvent: () => () => {},
     onDrop: () => () => {},
     hold: () => {},
+    release: () => {},
     close: () => {}
   } as unknown as Gateway
   const limited = createHermes({ gateway, now: () => 0, id: () => 'x', wait: () => {} })

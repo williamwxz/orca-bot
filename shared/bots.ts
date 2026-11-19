@@ -25,10 +25,12 @@ export type ChatMessage = {
 export type Live = { text: string; tool?: string; startedAt: number }
 
 /**
- * One page of a Bot Chat, oldest first. `older` fetches the page before it; absent at the start of
- * the conversation. `live` is present while the bot is replying.
+ * One page of a Bot Chat, oldest first. `chat` names the conversation: when it changes (the chat
+ * was archived or replaced in Hermes) what was shown before belongs to another one. Absent while
+ * the bot has no Bot Chat. `older` fetches the page before; absent at the start. `live` is present
+ * while the bot is replying.
  */
-export type Thread = { messages: ChatMessage[]; older?: string; live?: Live }
+export type Thread = { chat?: string; messages: ChatMessage[]; older?: string; live?: Live }
 
 export type Status = { state: 'running' | 'unavailable'; message: string; version?: string }
 

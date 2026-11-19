@@ -84,11 +84,14 @@ function setup(read: (input: any) => Thread | Error) {
   const calls: [string, any][] = []
   const notes: string[] = []
   let host = 0
+  let hostKey = 'local'
   let sendFails: string | undefined
+  let hold: Promise<void> | undefined
   const frame = {
     plugin: {
       request: async (name: string, input: any) => {
         calls.push([name, input])
+        if (hold && name === 'thread.read') await hold
         if (name === 'message.send') {
           if (sendFails) throw new Error(sendFails)
           return { ok: true }
@@ -100,7 +103,7 @@ function setup(read: (input: any) => Thread | Error) {
     }
   } as never
   const root = new Element('root')
-  const view = createChatView(root as never, frame, () => new Element('avatar') as never, { back: () => {}, notify: (t) => notes.push(t), hostGeneration: () => host })
+  const view = createChatView(root as never, frame, () => new Element('avatar') as never, { back: () => {}, notify: (t) => notes.push(t), hostGeneration: () => host, hostKey: () => hostKey })
   const find = (cls: string) => root.all().filter((e) => e.className.split(' ').includes(cls))
   const shown = () => find('chat-message').filter((e) => !e.hidden && !e.className.includes('live')).map((e) => e.textContent)
   return {
@@ -111,8 +114,12 @@ function setup(read: (input: any) => Thread | Error) {
       timers.splice(0).at(-1)?.()
       await flush()
     },
-    setHost: (h: number) => (host = h),
+    setHost: (h: number, key = h ? `server-${h}` : 'local') => {
+      host = h
+      hostKey = key
+    },
     failSend: (text?: string) => (sendFails = text),
+    slowReads: (gate?: Promise<void>) => (hold = gate),
     restore: () => keys.forEach((k, i) => (saved[i] ? Object.defineProperty(globalThis, k, saved[i]!) : delete (globalThis as any)[k]))
   }
 }
@@ -262,9 +269,48 @@ test('the same text sent twice waits for two stored rows, and drafts stay with t
     t.setHost(1)
     t.view.open(bot)
     assert.equal(t.input().value, '')
-    t.setHost(0)
+    // Back on the first host (a new generation, the same host): its draft is there again.
+    t.setHost(2, 'local')
     t.view.open(bot)
     assert.equal(t.input().value, 'private note')
+    await flush()
+    t.view.close()
+  } finally {
+    t.restore()
+  }
+})
+
+test('a chat archived in Hermes clears what was shown, and a slow read never holds up the next chat', async () => {
+  let page: Thread = { chat: 'c1', messages: [m('r1', 'user', 'old'), m('r2', 'bot', 'history')], older: 'cur' }
+  const t = setup(() => page)
+  try {
+    t.view.open(bot)
+    await flush()
+    assert.deepEqual(t.shown(), ['old', 'history'])
+    t.input().value = 'unsent'
+    t.form().requestSubmit()
+    await flush()
+    // The Bot Chat was archived: the next read has no chat at all.
+    page = { messages: [] }
+    await t.poll()
+    assert.deepEqual(t.shown(), [])
+    assert.equal(t.find('thread-earlier')[0].hidden, true)
+    assert.equal(t.find('thread-note')[0].textContent, 'No messages yet. Say hello.')
+    // A new one replaces it.
+    page = { chat: 'c2', messages: [m('n1', 'user', 'new')] }
+    await t.poll()
+    assert.deepEqual(t.shown(), ['new'])
+    // A read for one chat is slow; opening another starts that one's read at once.
+    let release!: () => void
+    t.slowReads(new Promise<void>((resolve) => (release = resolve)))
+    const reads = () => t.calls.filter(([name]) => name === 'thread.read').length
+    const before = reads()
+    t.view.open({ ...bot, id: 'other', name: 'Other' })
+    t.view.open(bot)
+    await flush()
+    assert.equal(reads(), before + 2)
+    t.slowReads(undefined)
+    release()
     await flush()
     t.view.close()
   } finally {
