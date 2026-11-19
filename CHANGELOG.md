@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.1.11 (19 November 2026)
+
+- **Bot settings behind a gear**: the gear at the top right of a bot's chat
+  replaces the Model and Connectors pills and opens one panel from the right
+  with the bot's model, connectors, computer, skills, memory and schedules.
+  The chat header shows the model under the bot's name.
+- **Skills**: a switch for each, tagged with where it comes from: learned by
+  the bot, Claude Code, Codex, the agents folder, a project, a team package or
+  added.
+- **Memory editing**: read and edit `MEMORY.md`, with how much of it loads each
+  turn. A save is refused if the bot changed its memory meanwhile.
+- **Schedules**: the bot's OpenMausBot routines, to pause, run now, delete, or
+  add (every day or weekdays at a time, every few minutes, or once).
+- **Settings → Bots → Learn skills on their own** turns on
+  OpenMausBot's automatic skill review. After a task with many tool steps, a bot
+  looks back over it and may save or improve a skill.
+- **Export bots** (Settings → Updates and export): each bot's persona, memory and own
+  skills as plain files in Downloads, laid out like Hermes Agent profiles, so
+  the team can move to another agent without OpenMausBot.
+- **Settings, reorganized**: four titled parts (Bot host, Bots, Permissions,
+  Updates and export) of one-line rows with the control on the right.
+  Private desktops moved to a page of its own, opened with **Set up**, like
+  Connectors.
+- **MCP Connectors is now Connectors**, and each provider's list folds; long
+  lists start folded.
+- **Settled cards read as one line**: a card that asks nothing, such as
+  "Skill … enabled", no longer says "This needs the full chat."
+- **OpenMausBot 0.1.171**: faster replies (Codex turns stay warm, Claude starts
+  ahead of your message), bots can set themselves reminders, longer hand-offs
+  between bots, and scheduled runs retry when a cloud desktop does not wake.
+
 ## 0.1.10 (19 November 2026)
 
 - **Set up private desktops in the panel**: choosing **Private desktop** in a

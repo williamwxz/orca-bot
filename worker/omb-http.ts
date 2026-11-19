@@ -24,7 +24,7 @@ export class HttpStatusError extends Error {
   }
 }
 
-export type HttpMethod = 'GET' | 'PATCH' | 'POST' | 'DELETE'
+export type HttpMethod = 'GET' | 'PATCH' | 'POST' | 'PUT' | 'DELETE'
 
 export type HttpDeps = {
   /** `timeoutMs` defaults to 10 seconds; setup steps that download or build pass longer. */

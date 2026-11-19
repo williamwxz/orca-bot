@@ -15,6 +15,11 @@ import { readThread, sendMessage, newSendId } from './omb-chat.ts'
 import { uploadAttachment } from './omb-attachments.ts'
 import { computerStatus } from './omb-computer.ts'
 import { desktopAct, desktopStatus, installBrowser, updateDesktopSettings } from './omb-desktops.ts'
+import { readLearning, readLearningSettings, saveMemory, setSkill, updateLearningSettings } from './omb-learning.ts'
+import type { ExportJob } from '../shared/learning.ts'
+import type { ScheduleAction } from '../shared/schedules.ts'
+import { actOnSchedule, listSchedules } from './omb-schedules.ts'
+import { exportTeam } from './omb-export.ts'
 import type { DesktopAction } from '../shared/roster.ts'
 const DESKTOP_ACTIONS: DesktopAction[] = ['prepare', 'create', 'start', 'stop', 'recreate']
 import { MAX_ATTACHMENTS, composeMessage } from '../shared/attachments.ts'
@@ -81,6 +86,14 @@ export type WorkerDeps = {
   desktopAct?: (input: Parameters<typeof desktopAct>[0]) => ReturnType<typeof desktopAct>
   updateDesktopSettings?: (input: Parameters<typeof updateDesktopSettings>[0]) => ReturnType<typeof updateDesktopSettings>
   installBrowser?: (input: { port: number }) => Promise<void>
+  readLearning?: (input: Parameters<typeof readLearning>[0]) => ReturnType<typeof readLearning>
+  setSkill?: (input: Parameters<typeof setSkill>[0]) => ReturnType<typeof setSkill>
+  readLearningSettings?: (input: { port: number }) => ReturnType<typeof readLearningSettings>
+  updateLearningSettings?: (input: Parameters<typeof updateLearningSettings>[0]) => ReturnType<typeof updateLearningSettings>
+  exportTeam?: (input: Parameters<typeof exportTeam>[0]) => ReturnType<typeof exportTeam>
+  saveMemory?: (input: Parameters<typeof saveMemory>[0]) => ReturnType<typeof saveMemory>
+  listSchedules?: (input: Parameters<typeof listSchedules>[0]) => ReturnType<typeof listSchedules>
+  actOnSchedule?: (input: Parameters<typeof actOnSchedule>[0]) => ReturnType<typeof actOnSchedule>
   uploadAttachment?: (input: { port: number; name: string; mime: string; data: string }) => ReturnType<typeof uploadAttachment>
   listBots: (input: { port: number }) => Promise<Bot[]>
 }
@@ -139,6 +152,14 @@ export function defaultWorkerDeps(): WorkerDeps {
     desktopAct: (input) => desktopAct(input, http),
     updateDesktopSettings: (input) => updateDesktopSettings(input, http),
     installBrowser: (input) => installBrowser(input, http),
+    readLearning: (input) => readLearning(input, http),
+    setSkill: (input) => setSkill(input, http),
+    readLearningSettings: (input) => readLearningSettings(input, http),
+    updateLearningSettings: (input) => updateLearningSettings(input, http),
+    exportTeam: (input) => exportTeam(input, http),
+    saveMemory: (input) => saveMemory(input, http),
+    listSchedules: (input) => listSchedules(input, http),
+    actOnSchedule: (input) => actOnSchedule(input, http),
     listBots: (input) => listBots(input, http)
   }
 }
@@ -677,7 +698,12 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
   })
   // Only the job, without inspecting the desktop: the paired-server link asks this before it
   // closes, and it must answer even while the server is busy with the step itself.
-  orca.panels.handle('desktop.step', () => ({ ...(desktopJob ? { step: { ...desktopJob } } : {}) }))
+  // Also says whether an export is running: the paired-server link keeps this worker's terminal open
+  // for either, since closing it would stop the job halfway.
+  orca.panels.handle('desktop.step', () => ({
+    ...(desktopJob ? { step: { ...desktopJob } } : {}),
+    ...(exportJob?.running ? { exporting: true as const } : {})
+  }))
   orca.panels.handle('desktop.act', (input: { action: DesktopAction; botId?: string }) => {
     const port = runningPort()
     if (!deps.desktopAct) throw new Error('Private desktops are unavailable.')
@@ -709,6 +735,65 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
     await deps.installBrowser({ port })
     return { installing: true as const }
   })
+  /** The bot's OpenMausBot instance ID, such as `claude` or `codex`, from the roster's `instance/model`. */
+  const botEngine = (botId: string) => lastRoster.find((bot) => bot.id === botId)?.model?.split('/')[0] ?? ''
+  orca.panels.handle('learning.read', (input: { botId: string }) => {
+    const port = knownBot(input)
+    if (!deps.readLearning) throw new Error('Skills and memory are unavailable.')
+    return deps.readLearning({ port, botId: input.botId, engine: botEngine(input.botId) })
+  })
+  orca.panels.handle('learning.skill', (input: { botId: string; name: string; enabled: boolean }) => {
+    const port = knownBot(input)
+    if (!deps.setSkill) throw new Error('Skills and memory are unavailable.')
+    return deps.setSkill({ port, botId: input.botId, name: input.name, enabled: input.enabled, engine: botEngine(input.botId) })
+  })
+  orca.panels.handle('memory.save', (input: { botId: string; text: string; hash: string }) => {
+    const port = knownBot(input)
+    if (!deps.saveMemory) throw new Error('Memory editing is unavailable.')
+    return deps.saveMemory({ port, botId: input.botId, text: input.text, hash: input.hash, engine: botEngine(input.botId) })
+  })
+  orca.panels.handle('schedules.list', (input: { botId: string }) => {
+    const port = knownBot(input)
+    if (!deps.listSchedules) throw new Error('Schedules are unavailable.')
+    return deps.listSchedules({ port, botId: input.botId })
+  })
+  orca.panels.handle('schedules.act', (input: { botId: string } & ScheduleAction) => {
+    const port = knownBot(input)
+    if (!deps.actOnSchedule) throw new Error('Schedules are unavailable.')
+    return deps.actOnSchedule({ ...input, port })
+  })
+  orca.panels.handle('learning.settings', (input: { autoLearn?: boolean }) => {
+    const port = runningPort()
+    if (!deps.readLearningSettings || !deps.updateLearningSettings)
+      throw new Error('Skills and memory are unavailable.')
+    return input?.autoLearn === undefined
+      ? deps.readLearningSettings({ port })
+      : deps.updateLearningSettings({ port, autoLearn: input.autoLearn })
+  })
+  // An export reads every bot's memory and skills one file at a time, longer than a panel request or
+  // the paired-server relay waits. So it runs here in the background and the panel follows it.
+  let exportJob: ExportJob | undefined
+  let exportJobs = 0
+  orca.panels.handle('team.export', () => {
+    const port = runningPort()
+    if (!deps.exportTeam) throw new Error('Export is unavailable.')
+    if (exportJob?.running) throw new Error('An export is already running.')
+    const job: ExportJob = { id: ++exportJobs, running: true }
+    exportJob = job
+    void (async () => {
+      try {
+        const bots = (await deps.listBots({ port })).filter((bot) => !bot.addable)
+        job.result = await deps.exportTeam!({ port, bots: bots.map(({ id, name }) => ({ id, name })) })
+      } catch (error) {
+        // Fixed wording only: a file system error would name local paths.
+        job.error = error instanceof Error && /^There are no bots/.test(error.message) ? error.message : 'Could not finish the export. Try again.'
+      } finally {
+        job.running = false
+      }
+    })()
+    return { ...job }
+  })
+  orca.panels.handle('team.export.status', () => (exportJob ? { job: { ...exportJob } } : {}))
   // Not relayed: on a paired server the bytes would crawl through the terminal link.
   orca.panels.handle('attachment.upload', async (input: { name: string; mime: string; data: string }) => {
     const port = runningPort()

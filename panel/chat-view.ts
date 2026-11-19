@@ -1,4 +1,5 @@
 import { createCapabilityPicker } from './capability-picker.ts'
+import { createBotSettings } from './bot-settings.ts'
 import type { CapabilityHooks } from './capability-picker.ts'
 import { dayLabel, threadPreview } from './presentation.ts'
 import type { Requests } from '../worker/protocol.ts'
@@ -210,6 +211,7 @@ export function createChatView(
   // Where the bot works, as OpenMausBot's chat header shows it: a computer icon.
   const computerButton = button('Backend', () => {
     if (!bot || !picker) return
+    settings?.close()
     void picker.open('computer', bot, computerButton)
     computerButton.setAttribute('aria-expanded', 'true')
   })
@@ -218,28 +220,52 @@ export function createChatView(
     '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1.75" y="2.5" width="12.5" height="8.5" rx="1.5"/><path d="M5.5 13.75h5M8 11v2.75"/></svg>'
   computerButton.setAttribute('aria-haspopup', 'menu')
   computerButton.setAttribute('aria-expanded', 'false')
-  header.append(backButton, identity, ...(capabilities ? [computerButton] : []))
+  // This bot's settings: model, connectors, computer, skills, memory and schedules in one panel.
+  const gearButton = button('Bot settings', () => {
+    if (!bot || !settings) return
+    picker?.close(false)
+    void settings.open(bot, gearButton)
+    gearButton.setAttribute('aria-expanded', 'true')
+  })
+  gearButton.className = 'computer-button bot-settings-button'
+  gearButton.innerHTML =
+    '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.8 1.3h2.4l.3 1.5a5.1 5.1 0 0 1 1.1.5l1.3-.9 1.7 1.7-.9 1.3a5.1 5.1 0 0 1 .5 1.1l1.5.3v2.4l-1.5.3a5.1 5.1 0 0 1-.5 1.1l.9 1.3-1.7 1.7-1.3-.9a5.1 5.1 0 0 1-1.1.5l-.3 1.5H6.8l-.3-1.5a5.1 5.1 0 0 1-1.1-.5l-1.3.9-1.7-1.7.9-1.3a5.1 5.1 0 0 1-.5-1.1L1.3 9.2V6.8l1.5-.3a5.1 5.1 0 0 1 .5-1.1l-.9-1.3 1.7-1.7 1.3.9a5.1 5.1 0 0 1 1.1-.5Z"/><circle cx="8" cy="8" r="2.2"/></svg>'
+  gearButton.title = 'Bot settings'
+  gearButton.setAttribute('aria-label', 'Bot settings')
+  gearButton.setAttribute('aria-haspopup', 'dialog')
+  gearButton.setAttribute('aria-expanded', 'false')
+  header.append(backButton, identity, ...(capabilities ? [computerButton, gearButton] : []))
   const capabilityMenu = node('div')
   capabilityMenu.className = 'bot-menu capability-menu'
   capabilityMenu.hidden = true
-  const modelPill = button('Model', () => {
-    if (!bot || !picker) return
-    void picker.open('model', bot, modelPill, 'models')
-    modelPill.setAttribute('aria-expanded', 'true')
-  })
-  const connectorPill = button('Connectors', () => {
-    if (!bot || !picker) return
-    void picker.open('connectors', bot, connectorPill)
-    connectorPill.setAttribute('aria-expanded', 'true')
-  })
-  const bar = node('div')
-  bar.className = 'chat-capabilities'
-  for (const pill of [modelPill, connectorPill]) {
-    pill.className = 'capability-pill'
-    pill.setAttribute('aria-haspopup', 'menu')
-    pill.setAttribute('aria-expanded', 'false')
-    bar.append(pill)
-  }
+  const settingsRoot = node('div')
+  const settings = capabilities
+    ? createBotSettings(
+        settingsRoot,
+        frame,
+        {
+          notify,
+          hostGeneration: capabilities.hostGeneration,
+          // The pickers open from the gear, so closing one gives the keyboard back to it.
+          openModel: (target) => {
+            if (!picker) return
+            void picker.open('model', target, gearButton, 'models')
+            gearButton.setAttribute('aria-expanded', 'true')
+          },
+          openConnectors: (target) => {
+            if (!picker) return
+            void picker.open('connectors', target, gearButton)
+            gearButton.setAttribute('aria-expanded', 'true')
+          },
+          openBackend: (target) => {
+            if (!picker) return
+            void picker.open('computer', target, gearButton)
+            gearButton.setAttribute('aria-expanded', 'true')
+          }
+        },
+        () => gearButton.setAttribute('aria-expanded', 'false')
+      )
+    : undefined
   const picker = capabilities
     ? createCapabilityPicker(
         capabilityMenu,
@@ -256,33 +282,19 @@ export function createChatView(
         },
         () => {
           computerButton.setAttribute('aria-expanded', 'false')
-          modelPill.setAttribute('aria-expanded', 'false')
-          connectorPill.setAttribute('aria-expanded', 'false')
+          gearButton.setAttribute('aria-expanded', 'false')
           renderCapabilities()
         }
       )
     : undefined
   function renderCapabilities() {
     if (!bot) return
-    const busy = bot.state === 'working' || !!picker?.switching()
-    const why =
-      bot.state === 'working'
-        ? 'Wait until the reply finishes to change models.'
-        : picker?.switching()
-          ? 'Saving capability changes…'
-          : undefined
     const where = computerLabel(bot.computer)
     computerButton.title = `Backend: ${where}`
     computerButton.setAttribute('aria-label', `Backend: ${where}`)
     computerButton.disabled = !!picker?.switching()
-    modelPill.textContent = `${modelText(bot) || 'Model'} ▾`
-    modelPill.setAttribute('aria-label', `Model: ${modelText(bot) || 'not selected'}`)
-    modelPill.disabled = busy
-    modelPill.title = why ?? 'Choose a model'
-    const count = bot.connectorCount ?? 0
-    connectorPill.title = 'Choose connectors for this bot'
-    connectorPill.textContent = `${count ? `Connectors · ${count}` : 'Connectors'} ▾`
-    connectorPill.setAttribute('aria-label', count ? `Connectors: ${count} allowed` : 'Connectors')
+    gearButton.disabled = !!picker?.switching()
+    settings?.update(bot)
   }
   const list = node('div')
   list.className = 'messages'
@@ -335,7 +347,7 @@ export function createChatView(
   const letters = node('span')
   sheen.append(letters)
   workingText.append(workingLabel, sheen)
-  root.append(header, ...(capabilities ? [bar] : []), list, note, working, composer, capabilityMenu)
+  root.append(header, list, note, working, composer, capabilityMenu, ...(settings ? [settingsRoot] : []))
   const atBottom = () => list.scrollHeight - list.scrollTop - list.clientHeight < 40
   function linkedText(parent: HTMLElement, text: string): void {
     const pattern = /https?:\/\/[^\s<>]+/g
@@ -366,7 +378,7 @@ export function createChatView(
     const nextIdentityKey = JSON.stringify([
       bot.id,
       bot.name,
-      capabilities ? '' : modelText(bot),
+      modelText(bot),
       bot.avatar
     ])
     if (identityKey !== nextIdentityKey) {
@@ -374,7 +386,7 @@ export function createChatView(
       identity.replaceChildren(avatar(bot))
       const names = node('div')
       names.append(node('strong', bot.name))
-      if (!capabilities) names.append(node('small', modelText(bot)))
+      if (modelText(bot)) names.append(node('small', modelText(bot)))
       identity.append(names)
     }
     renderCapabilities()
@@ -575,6 +587,7 @@ export function createChatView(
   function close(): void {
     generation++
     picker?.close(false)
+    settings?.close()
     bot = undefined
     reading = false
     clearTimeout(timer)
@@ -599,7 +612,10 @@ export function createChatView(
   })
   return {
     close,
-    dismissCapabilities: () => picker?.close(false),
+    dismissCapabilities: () => {
+      picker?.close(false)
+      settings?.close()
+    },
     open(next: Bot) {
       close()
       syncHost()

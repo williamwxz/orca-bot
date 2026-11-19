@@ -180,12 +180,25 @@ function showSettings(show: boolean): void {
   element('main-view').hidden = show
   element('settings-view').hidden = !show
   element('mcp-view').hidden = true
+  element('desktops-view').hidden = true
   if (show) { void settings.open(); void mcp.refresh(); void desktops.refresh() }
   // Leaving Settings stops its polling; reopening reads the desktop again.
   else desktops.clear()
 }
 element('open-settings').addEventListener('click', () => showSettings(true))
 element('settings-back').addEventListener('click', () => showSettings(false))
+// Private desktops has a page of its own, as Connectors does; the section itself is filled by desktops.
+element('desktops-manage').addEventListener('click', () => {
+  element('settings-view').hidden = true
+  element('desktops-view').hidden = false
+  void desktops.refresh()
+  element('desktops-back').focus()
+})
+element('desktops-back').addEventListener('click', () => {
+  element('desktops-view').hidden = true
+  element('settings-view').hidden = false
+  element('desktops-manage').focus()
+})
 // With servers paired and none chosen, the choice comes first, before anything starts.
 let askedHost = false
 function askForHost(): void {

@@ -183,3 +183,53 @@ test('switching hosts updates all permission copy immediately before any prefere
   settings.beginHostChange()
   assert.equal(element('pref-agent-host').textContent, ' on this computer')
 })
+
+test('Export follows the background job on the bot host until it ends, and reports a failure in plain words', async () => {
+  const saved = Object.getOwnPropertyDescriptor(globalThis, 'setTimeout')
+  // Each wait between checks passes at once.
+  Object.defineProperty(globalThis, 'setTimeout', { configurable: true, value: (fn: () => void) => (setImmediate(fn), 0) })
+  try {
+    const elements = new Map<string, Element>()
+    const element = (id: string) => {
+      if (!elements.has(id)) elements.set(id, new Element())
+      return elements.get(id)!
+    }
+    const statuses: any[] = []
+    let started: any = { id: 1, running: true }
+    const frame = {
+      plugin: {
+        request: async (name: string) => {
+          if (name === 'team.export') return started
+          if (name === 'team.export.status') {
+            const next = statuses.shift()
+            if (next instanceof Error) throw next
+            return next ?? {}
+          }
+          throw new Error('Unexpected request')
+        }
+      }
+    } as FrameApi
+    createSettings(frame, element as any, async () => {}, () => {})
+    const flushAll = async () => {
+      for (let i = 0; i < 20; i++) await new Promise<void>((r) => setImmediate(r))
+    }
+    // A failed check and a still-running answer are waited out; the finished job is reported.
+    statuses.push(new Error('relay timeout'), { job: { id: 1, running: true } }, {
+      job: { id: 1, running: false, result: { folder: '~/Downloads/bot-team-export-1', bots: 2, skills: 3, memoryFiles: 1, skipped: ['Work: memory'] } }
+    })
+    await element('export-team').click()
+    await flushAll()
+    assert.equal(
+      element('export-note').textContent,
+      'Saved 2 bots, 3 skills, 1 memory file to ~/Downloads/bot-team-export-1. Its README says how to use them elsewhere. Not exported: Work: memory.'
+    )
+    assert.equal(element('export-team').disabled, false)
+    started = { id: 2, running: true }
+    statuses.push({ job: { id: 2, running: false, error: 'Could not finish the export. Try again.' } })
+    await element('export-team').click()
+    await flushAll()
+    assert.equal(element('export-note').textContent, 'Could not finish the export. Try again.')
+  } finally {
+    if (saved) Object.defineProperty(globalThis, 'setTimeout', saved)
+  }
+})

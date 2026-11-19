@@ -1,4 +1,4 @@
-export const TESTED_OPENMAUSBOT_VERSION = '0.1.169'
+export const TESTED_OPENMAUSBOT_VERSION = '0.1.171'
 
 export function compareVersions(a: string, b: string): number | undefined {
   const leftPrefix = a.match(/^\d+(?:\.\d+)*/)?.[0]

@@ -28,7 +28,7 @@ Grok signed in on this computer.
 
 1. Install Bot Team for Orca in Orca and open the **Bot Team for Orca** panel in the right
    sidebar. Click **Install OpenMausBot** to approve downloading
-   `openmausbot@0.1.169` from npm (about 75 MB) into `~/.orca-bot`.
+   `openmausbot@0.1.171` from npm (about 75 MB) into `~/.orca-bot`.
    Opening the panel alone does not install it. Until Bot Team for Orca is in
    Orca's plugin catalog, load it from a copy of
    this repository with `orca plugin dev load .`.
@@ -47,12 +47,13 @@ fills the right, as in OpenMausBot.
 
 Good to know:
 
-- Open **Settings → MCP Connectors → Manage** to discover connectors from Claude Code,
+- Open **Settings → Connectors → Manage** to discover connectors from Claude Code,
   Claude Desktop, Cursor, Codex, Gemini CLI, opencode and Antigravity on the chosen host.
   Connectors that enabled Claude Code plugins bring are listed under **Claude plugins**;
   OpenMausBot signs in to those services itself.
+  Each provider's list folds; a list of more than five starts folded.
   Use **Providers** to turn connectors on and **By Bot** to audit and toggle each bot’s
-  access. In a bot’s chat, the **Model** and **Connectors** pills let you switch ready AI
+  access. In a bot’s chat, the gear's **Model** and **Connectors** rows let you switch ready AI
   models and assign enabled connectors without leaving the conversation; both pickers
   are also available in the bot context menu. Model changes wait until the bot is idle
   and update its active thread. Provider and approval restrictions still apply.
@@ -61,16 +62,33 @@ Good to know:
   desktop, This computer, Browser or Off), with what OpenMausBot reports about each.
   With **Private desktop** chosen, the panel shows OpenMausBot's setup steps and the
   next action (prepare, create, start, stop, or delete and recreate); **Browser** offers
-  **Turn on the browser**. **Settings → Private desktops** holds the same setup plus
+  **Turn on the browser**. **Settings → Private desktops → Set up** holds the same setup plus
   Isolation (Shared or Per bot) and the idle stop time. Cloud desktops, and putting a
   full-access bot on This computer, stay in native OpenMausBot.
   Newly enabled connectors start with no bots assigned. Existing custom servers appear
   under **OpenMausBot**. Disable keeps credentials there; Remove deletes the server and
   its stored credentials and clears its bot assignments. First-run setup never imports tools.
   Codex-backed bots still load `~/.codex/config.toml` directly, independently of these mappings.
+- The gear at the top right of a bot's chat opens that bot's settings, from the right:
+  - **Model**, **Connectors** and **Computer**, each opening its picker. The chat
+    header shows the model under the bot's name.
+  - **Skills**, with a switch for each and a tag for where it comes from (**Learned**
+    by the bot, **Claude Code**, **Codex** or **Agents folder** for skills its engine
+    loads from your own folders, **Project**, **Library**, **Team package** or **Added**;
+    Project and Library skills are switched where they come from). Writing
+    skills stays in the full chat; type `/learn` there to save what a bot just did.
+  - **Memory** (`MEMORY.md`), with how many of its lines load each turn, and **Edit
+    memory**. A save is refused if the bot changed its memory while you were editing,
+    so its newer note is never overwritten. Topic notes and daily logs stay in the
+    full chat.
+  - **Schedules**: the bot's OpenMausBot routines, each with a switch to pause it,
+    **Run now** and **Delete**. **New schedule** adds one that runs every day or on
+    weekdays at a time, every 5 to 1,440 minutes, or once. Schedules made in the
+    full chat with custom timing show here and keep their timing.
 
 - The panel shows the last 20 messages as plain text and sends messages of up to
-  16,000 characters. Anything richer says "This needs the full chat."
+  16,000 characters. A settled card, such as "Skill … enabled" after a bot learns a
+  skill, shows as one line; anything richer says "This needs the full chat."
 - **Add MausBot** brings back the main bot if you hid it.
 - The **Set up Bot Team for Orca** card asks before sharing Claude tools or linking your
   Claude, Codex, opencode and Antigravity agents to the bots. Change either choice later in Orca's Settings.
@@ -83,19 +101,39 @@ Good to know:
 
 ## Settings
 
-The gear button in the panel header opens Settings:
+The gear button in the panel header opens Settings, in four parts:
 
-- **Bots run on**: this computer or a paired Orca server (see below).
+- **Bot host**: **Bots run on** this computer or a paired Orca server (see below),
+  and whether **OpenMausBot** is running there, with **Stop**.
+- **Bots**:
+  - **Connectors** → **Manage** opens the connector list (see above).
+  - **Private desktops** → **Set up** opens OpenMausBot's setup steps for the
+    bots' own desktops, with **Isolation** (Shared or Per bot), the per-bot
+    maximum and the idle stop time.
+  - **Learn skills on their own** (off by default in OpenMausBot). After a task
+    with many tool steps, a bot looks back over it and may save or improve a
+    skill. The review uses the bot's own AI and counts toward its usage. It
+    applies to every bot on the selected host.
 - **Permissions**: the choices from the setup card, which you can change at any
-  time: whether bots can use your Claude tools, whether your Orca agents can
-  talk to the bots, and bringing in tools from your other AI apps. They apply to
-  the selected bot host. Remote changes also sync with Orca on that host.
-- **Updates**: the version you have and whether a newer one is out. By default
-  the panel shows a banner and asks before updating; **Install updates
-  automatically** updates by itself, once per new version. An update that asks
-  for new access always waits for your approval in Orca. A development folder
-  updates with git instead.
-- **OpenMausBot**: whether it is running, and a button to stop it.
+  time: whether bots can use your Claude tools and whether your Orca agents can
+  talk to the bots. They apply to the selected bot host. Remote changes also
+  sync with Orca on that host.
+- **Updates and export**:
+  - **Updates**: the version you have and whether a newer one is out. By
+    default the panel shows a banner and asks before updating; **Install
+    updates automatically** updates by itself, once per new version. An update
+    that asks for new access always waits for your approval in Orca. A
+    development folder updates with git instead.
+  - **Export bots** writes each bot's persona (`SOUL.md`), memory
+    (`memories/`) and own skills (`skills/`) as plain files to a new folder in
+    Downloads on the bot host, with `team.json` and a README. Each bot folder is
+    laid out like a Hermes Agent profile, and the skills use the `SKILL.md`
+    format Claude Code and Codex read. Each skill is the `SKILL.md` OpenMausBot
+    serves; any other files a skill has are named as not exported. Chats,
+    files, credentials, connector settings and library skills are not included, and anything that could not be read is
+    listed when the export ends and in `team.json`. The export runs in the
+    background on the bot host. For a full backup use OpenMausBot's own **Export
+    full backup**.
 
 ## Use bots on a paired Orca server
 
@@ -122,7 +160,7 @@ connections, expose a bot port or ask for a second pairing
 code. An unavailable server never falls back to a different bot team on this
 computer.
 
-From a paired client you can manage bots, change permissions, manage MCP connectors from
+From a paired client you can manage bots, change permissions, manage connectors from
 apps on the server, and install or stop OpenMausBot. The panel does not open
 native OpenMausBot or send files for bots on a paired server.
 Permissions and installation consent persist in `~/.orca-bot/preferences.json`
@@ -165,7 +203,7 @@ of that `orca` command on this computer.
 
 - **Asks first.** Nothing is shared with bots, linked to your agents or
   imported automatically. Sharing and agent linking require setup consent; connector
-  imports require enabling selected connectors in Settings → MCP Connectors.
+  imports require enabling selected connectors in Settings → Connectors.
 - **Imported tools stay on the selected host.** Imported tool definitions, including
   any tokens in them, are copied into OpenMausBot's settings in `~/.orca-bot/data`;
   sources include Claude Code, Claude Desktop, Cursor, Gemini CLI, Codex,
@@ -235,6 +273,15 @@ of that `orca` command on this computer.
    model list and announcements, `models.dev` for provider models, and npm for
    the latest Codex version. These requests reveal your IP address to those
    services; we found nothing else in them.
+
+9. **Learned skills are instructions the bot wrote for itself.** With
+   **Learn skills on their own** on, a bot can save or change a skill
+   without asking; each change shows in its chat with **Undo** in the full chat.
+   A skill can be wrong like any other instruction. Switch it off under
+   **Skills** in the bot's settings (the gear in its chat), or delete it in the full chat.
+
+10. **An export holds what your bots remember.** The files are readable only by
+    you, but anything you copy or share from the folder carries that memory with it.
 
 To remove everything: turn off **Let my Orca agents talk to the bots**, stop
 the server from the command palette, uninstall the

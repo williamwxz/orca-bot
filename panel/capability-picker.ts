@@ -463,7 +463,7 @@ export function createCapabilityPicker(
         if (!connectors && !problem)
           children.push(node('p', 'Loading connectors…', 'bot-menu-note'))
         else if (connectors && !rows.length)
-          children.push(node('p', 'No MCP connectors are turned on yet.', 'bot-menu-note'))
+          children.push(node('p', 'No connectors are turned on yet.', 'bot-menu-note'))
         for (const row of rows) {
           const allowed = row.bots.includes(bot.id)
           const choice = item(

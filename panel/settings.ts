@@ -19,6 +19,7 @@ export function createSettings(frame: FrameApi, element: Elements, changed: () =
   let status: Status | undefined
   let updates: Updates | undefined
   let preferencesGeneration = 0
+  let learningGeneration = 0
   let updateGeneration = 0
   let installing = false
   let bannerFeedback = ''
@@ -118,6 +119,38 @@ export function createSettings(frame: FrameApi, element: Elements, changed: () =
     renderUpdates()
   }
 
+  function renderLearning(autoLearn: boolean | undefined, problem = ''): void {
+    element('learning-note').textContent = problem
+    input('learning-auto').disabled = autoLearn === undefined
+    input('learning-auto').checked = !!autoLearn
+  }
+
+  async function loadLearning(): Promise<void> {
+    const generation = ++learningGeneration
+    try {
+      const { autoLearn } = await frame.plugin.request('learning.settings', {})
+      if (generation === learningGeneration) renderLearning(autoLearn)
+    } catch (error) {
+      if (generation === learningGeneration)
+        renderLearning(undefined, failure(error, 'Could not read the learning setting.'))
+    }
+  }
+
+  async function setLearning(autoLearn: boolean): Promise<void> {
+    const generation = ++learningGeneration
+    input('learning-auto').disabled = true
+    try {
+      const saved = await frame.plugin.request('learning.settings', { autoLearn })
+      if (generation !== learningGeneration) return
+      renderLearning(saved.autoLearn)
+      note(saved.autoLearn ? 'Saved. Bots now learn skills on their own.' : 'Saved.')
+    } catch (error) {
+      if (generation !== learningGeneration) return
+      note(failure(error, 'Could not save.'))
+      await loadLearning()
+    }
+  }
+
   async function setPreference(key: 'shareTools' | 'linkAgents', value: boolean): Promise<void> {
     const generation = preferencesGeneration
     input(key === 'shareTools' ? 'pref-share-tools' : 'pref-link-agents').disabled = true
@@ -179,6 +212,7 @@ export function createSettings(frame: FrameApi, element: Elements, changed: () =
     'change',
     () => void setPreference('linkAgents', input('pref-link-agents').checked)
   )
+  input('learning-auto').addEventListener('change', () => void setLearning(input('learning-auto').checked))
   button('update-check').addEventListener('click', async () => {
     button('update-check').disabled = true
     element('update-status').textContent = 'Checking for updates\u2026'
@@ -196,6 +230,45 @@ export function createSettings(frame: FrameApi, element: Elements, changed: () =
       note(failure(error, 'Could not save.'))
     }
   })
+  let exportGeneration = 0
+  let exportPoll: ReturnType<typeof setTimeout> | undefined
+  const wait = (ms: number) => new Promise<void>((resolve) => (exportPoll = setTimeout(resolve, ms)))
+  /** Follows the export on the bot host until it ends; a failed check is retried, never read as done. */
+  async function followExport(id: number, generation: number) {
+    for (let misses = 0; misses < 40; ) {
+      await wait(1500)
+      if (generation !== exportGeneration) return undefined
+      const job = await frame.plugin.request('team.export.status', {}).then((r) => r.job, () => undefined)
+      if (generation !== exportGeneration) return undefined
+      if (!job || job.id !== id) {
+        misses++
+        continue
+      }
+      if (!job.running) return job
+      misses = 0
+    }
+    throw new Error('Could not confirm how the export ended. Look in Downloads on the bot host.')
+  }
+  button('export-team').addEventListener('click', async () => {
+    const generation = ++exportGeneration
+    button('export-team').disabled = true
+    element('export-note').textContent = 'Exporting\u2026'
+    try {
+      const started = await frame.plugin.request('team.export', {})
+      const job = started.running ? await followExport(started.id, generation) : started
+      if (!job || generation !== exportGeneration) return
+      if (job.error || !job.result) throw new Error(job.error ?? 'Could not finish the export. Try again.')
+      const done = job.result
+      const where = remote ? ` on ${remote}` : ''
+      const counts = `${done.bots} bot${done.bots === 1 ? '' : 's'}, ${done.skills} skill${done.skills === 1 ? '' : 's'}, ${done.memoryFiles} memory file${done.memoryFiles === 1 ? '' : 's'}`
+      const missed = done.skipped.length ? ` Not exported: ${done.skipped.slice(0, 5).join('; ')}${done.skipped.length > 5 ? '\u2026' : ''}.` : ''
+      element('export-note').textContent = `Saved ${counts} to ${done.folder}${where}. Its README says how to use them elsewhere.${missed}`
+    } catch (error) {
+      if (generation === exportGeneration) element('export-note').textContent = failure(error, 'Could not finish the export. Try again.')
+    } finally {
+      if (generation === exportGeneration) button('export-team').disabled = false
+    }
+  })
   button('stop-server').addEventListener('click', async () => {
     button('stop-server').disabled = true
     try {
@@ -211,17 +284,23 @@ export function createSettings(frame: FrameApi, element: Elements, changed: () =
       remote = nextRemote
       ++preferencesGeneration
       renderPreferences(undefined, 'Changing where bots run\u2026')
+      ++learningGeneration
+      renderLearning(undefined)
+      ++exportGeneration
+      clearTimeout(exportPoll)
+      element('export-note').textContent = ''
+      button('export-team').disabled = false
     },
     async hostChanged(problem = ''): Promise<void> {
       const generation = preferencesGeneration + 1
-      await loadPreferences()
+      await Promise.all([loadPreferences(), loadLearning()])
       if (generation === preferencesGeneration) note(problem)
     },
     /** Fills the screen each time it opens: permissions and updates can change elsewhere. */
     async open(): Promise<void> {
       note('')
       renderServer()
-      await Promise.all([loadPreferences(), loadUpdates()])
+      await Promise.all([loadPreferences(), loadLearning(), loadUpdates()])
     },
     /** Checks for a new version; successful results are cached for six hours. */
     checkUpdates: () => loadUpdates(),

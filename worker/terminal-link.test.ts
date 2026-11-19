@@ -603,3 +603,29 @@ test('models and thread-aware model actions traverse the paired relay with valid
     await assert.rejects(link.request(host, 'bots.act', { ...input, model: 'busy' }), /busy/)
   } finally { await link.disconnect() }
 })
+
+test('switching hosts keeps the first host’s terminal open while its export runs, then closes it', async () => {
+  const hostB = { id: 'mini-2', name: 'Mac Studio' }
+  let release!: () => void
+  let exporting = true
+  const server = fakeServer(
+    {
+      status: () => ({ state: 'running', message: '' }),
+      // No desktop step, only an export: the terminal must still wait for it.
+      'desktop.step': () => (exporting ? { exporting: true } : {})
+    },
+    { hosts: [host.id, hostB.id] }
+  )
+  const timers: (() => void)[] = []
+  const deps = linkDeps(server, {}, timers)
+  deps.sleep = () => new Promise<void>((resolve) => { release = () => { exporting = false; resolve() } })
+  const link = createTerminalLink(deps)
+  await link.request(host, 'status', {})
+  assert.deepEqual(await link.request(hostB, 'status', {}), { state: 'running', message: '' })
+  for (let i = 0; i < 10; i++) await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(server.terminals.get('term_1')!.status, 'running', 'host A is still exporting')
+  release()
+  for (let i = 0; i < 20 && server.terminals.get('term_1')!.status !== 'exited'; i++)
+    await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(server.terminals.get('term_1')!.status, 'exited')
+})

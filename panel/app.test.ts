@@ -259,9 +259,10 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
     win.emit('pageshow')
     await flush()
     assert.equal(get('setup').hidden, true)
-    // The chat header has only the back button and the bot; the Dashboard opens from the bot's menu.
-    assert.equal(get('bot-view').children[0].children.length, 3)
+    // The chat header: back, the bot, its computer and its settings; the Dashboard opens from the bot's menu.
+    assert.equal(get('bot-view').children[0].children.length, 4)
     assert.equal(get('bot-view').children[0].children[2].attributes.get('aria-label'), 'Backend: Auto')
+    assert.equal(get('bot-view').children[0].children[3].attributes.get('aria-label'), 'Bot settings')
     get('bot-view').children[0].children[0].emit('click')
     assert.equal(get('list-header').hidden, false)
     assert.equal(get('setup').hidden, false)
@@ -367,8 +368,14 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
     assert.match(get('update-banner-text').textContent, /^Updated/)
     assert.equal(get('update-banner-install').hidden, true)
     assert.match(get('toast').children[0].textContent, /^Updated/)
+    // Private desktops is a page of its own: Set up opens it, its back button returns to Settings.
+    get('desktops-manage').emit('click')
+    assert.deepEqual([get('settings-view').hidden, get('desktops-view').hidden], [true, false])
+    get('desktops-back').emit('click')
+    assert.deepEqual([get('settings-view').hidden, get('desktops-view').hidden], [false, true])
+    get('desktops-manage').emit('click')
     get('settings-back').emit('click')
-    assert.deepEqual([get('main-view').hidden, get('settings-view').hidden], [false, true])
+    assert.deepEqual([get('main-view').hidden, get('settings-view').hidden, get('desktops-view').hidden], [false, true, true])
     const listed = calls.filter((call) => call.name === 'bots.list').length
     get('host').value = 'mini-1'
     get('host').emit('change')
@@ -453,7 +460,7 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
     openMenu()
     clickLabel(menu, 'Connectors')
     await flush()
-    assert.ok(menu.children.some(child => child.textContent === 'No MCP connectors are turned on yet.'))
+    assert.ok(menu.children.some(child => child.textContent === 'No connectors are turned on yet.'))
     clickLabel(menu, 'Manage connectors')
     await flush()
     assert.equal(menu.hidden, true)
@@ -715,7 +722,9 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
     get('roster').children.find(c => c.className.startsWith('bot-row'))!.children[0].emit('click')
     await flush()
     const descendants = (node: Element): Element[] => [node, ...node.children.flatMap(descendants)]
-    descendants(get('bot-view')).find(c => c.className === 'capability-pill' && c.textContent.startsWith('Connectors'))!.emit('click')
+    descendants(get('bot-view')).find(c => c.attributes?.get?.('aria-label') === 'Bot settings')!.emit('click')
+    await flush()
+    descendants(get('bot-view')).find(c => c.dataset?.key === 'open:connectors')!.emit('click')
     await flush()
     descendants(get('bot-view')).find(c => c.textContent === 'Manage connectors…')!.emit('click')
     await flush()

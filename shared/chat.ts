@@ -6,7 +6,7 @@ export type ChatMessage = {
   id: string
   at: number
   role: 'user' | 'bot'
-  kind: 'text' | 'activity' | 'unsupported'
+  kind: 'text' | 'activity' | 'notice' | 'unsupported'
   text: string
   /** Files sent with the message, by name. Their server paths are removed before this leaves the worker. */
   attachments?: SentFile[]
@@ -44,9 +44,30 @@ export function parseThread(value: unknown): Thread {
               .slice(0, 60)
           : ''
       messages.push({ ...base, kind: 'activity', text: short ? `Used a tool: ${short}` : 'Used a tool' })
-    } else messages.push({ ...base, kind: 'unsupported', text: 'This needs the full chat.' })
+    } else {
+      const notice = settledNotice(entry)
+      messages.push(
+        notice
+          ? { ...base, kind: 'notice', text: notice }
+          : { ...base, kind: 'unsupported', text: 'This needs the full chat.' }
+      )
+    }
   }
   return { messages, hasMore: raw.hasMore === true }
+}
+
+/**
+ * A card that asks nothing and is already settled, such as "Skill … enabled" after a bot
+ * learns a skill, reads as one line. A card that still needs an answer stays in the full chat.
+ */
+function settledNotice(entry: { kind?: unknown; card?: unknown }): string | undefined {
+  if (entry?.kind !== 'options') return undefined
+  const card = entry.card as { title?: unknown; subtitle?: unknown; options?: unknown; answered?: unknown }
+  if (!card || typeof card !== 'object') return undefined
+  if (!Array.isArray(card.options) || card.options.length || typeof card.answered !== 'string') return undefined
+  if (typeof card.title !== 'string' || !card.title.trim()) return undefined
+  const detail = typeof card.subtitle === 'string' ? card.subtitle.split('\n')[0].trim() : ''
+  return [card.title.trim(), detail].filter(Boolean).join(' \u2014 ').slice(0, 300)
 }
 
 export function collapseActivities(messages: ChatMessage[]): ChatMessage[] {

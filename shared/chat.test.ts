@@ -52,6 +52,32 @@ test('text is cut only above 4000 characters and unknown kinds stay plain', () =
     true
   )
 })
+test('a settled card with nothing to answer reads as one line; an open one stays in the full chat', () => {
+  const card = {
+    title: 'Skill "weekly-sales-report" enabled',
+    subtitle: 'New skill for the weekly report.\n\nAdds one line to the prompt index.',
+    options: [],
+    answered: 'allow'
+  }
+  const thread = parseThread({
+    messages: [
+      { id: '1', at: 1, role: 'bot', kind: 'options', card },
+      { id: '2', at: 2, role: 'bot', kind: 'options', card: { ...card, answered: undefined } },
+      { id: '3', at: 3, role: 'bot', kind: 'options', card: { ...card, options: [{ label: 'Allow' }] } },
+      { id: '4', at: 4, role: 'bot', kind: 'options', card: { ...card, title: 'x'.repeat(500), subtitle: 7 } },
+      { id: '5', at: 5, role: 'bot', kind: 'options' }
+    ]
+  })
+  assert.deepEqual(
+    thread.messages.map((m) => m.kind),
+    ['notice', 'unsupported', 'unsupported', 'notice', 'unsupported']
+  )
+  assert.equal(
+    thread.messages[0].text,
+    'Skill "weekly-sales-report" enabled \u2014 New skill for the weekly report.'
+  )
+  assert.equal(thread.messages[3].text.length, 300)
+})
 test('refresh uses two seconds when working or sending, otherwise six', () => {
   for (const state of ['working', 'idle', 'waiting'] as const) {
     assert.equal(refreshInterval(state, true), 2000)
