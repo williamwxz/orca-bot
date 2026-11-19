@@ -16,6 +16,7 @@ import { uploadAttachment } from './omb-attachments.ts'
 import { computerStatus } from './omb-computer.ts'
 import { desktopAct, desktopStatus, installBrowser, updateDesktopSettings } from './omb-desktops.ts'
 import { readLearning, readLearningSettings, setSkill, updateLearningSettings } from './omb-learning.ts'
+import { exportTeam } from './omb-export.ts'
 import type { DesktopAction } from '../shared/roster.ts'
 const DESKTOP_ACTIONS: DesktopAction[] = ['prepare', 'create', 'start', 'stop', 'recreate']
 import { MAX_ATTACHMENTS, composeMessage } from '../shared/attachments.ts'
@@ -86,6 +87,7 @@ export type WorkerDeps = {
   setSkill?: (input: Parameters<typeof setSkill>[0]) => ReturnType<typeof setSkill>
   readLearningSettings?: (input: { port: number }) => ReturnType<typeof readLearningSettings>
   updateLearningSettings?: (input: Parameters<typeof updateLearningSettings>[0]) => ReturnType<typeof updateLearningSettings>
+  exportTeam?: (input: Parameters<typeof exportTeam>[0]) => ReturnType<typeof exportTeam>
   uploadAttachment?: (input: { port: number; name: string; mime: string; data: string }) => ReturnType<typeof uploadAttachment>
   listBots: (input: { port: number }) => Promise<Bot[]>
 }
@@ -148,6 +150,7 @@ export function defaultWorkerDeps(): WorkerDeps {
     setSkill: (input) => setSkill(input, http),
     readLearningSettings: (input) => readLearningSettings(input, http),
     updateLearningSettings: (input) => updateLearningSettings(input, http),
+    exportTeam: (input) => exportTeam(input, http),
     listBots: (input) => listBots(input, http)
   }
 }
@@ -735,6 +738,22 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
     return input?.autoLearn === undefined
       ? deps.readLearningSettings({ port })
       : deps.updateLearningSettings({ port, autoLearn: input.autoLearn })
+  })
+  let exporting = false
+  orca.panels.handle('team.export', async () => {
+    const port = runningPort()
+    if (!deps.exportTeam) throw new Error('Export is unavailable.')
+    if (exporting) throw new Error('An export is already running.')
+    exporting = true
+    try {
+      const bots = (await deps.listBots({ port })).filter((bot) => !bot.addable)
+      return await deps.exportTeam({ port, bots: bots.map(({ id, name }) => ({ id, name })) })
+    } catch (error) {
+      // Fixed wording only: a file system error would name local paths.
+      throw new Error(error instanceof Error && /^(There are no bots|An export is)/.test(error.message) ? error.message : 'Could not finish the export. Try again.')
+    } finally {
+      exporting = false
+    }
   })
   // Not relayed: on a paired server the bytes would crawl through the terminal link.
   orca.panels.handle('attachment.upload', async (input: { name: string; mime: string; data: string }) => {

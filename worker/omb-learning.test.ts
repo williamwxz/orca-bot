@@ -1,5 +1,5 @@
 import { assert, test } from 'orca/testing'
-import { learningSettings, memoryView, readLearning, setSkill, skillsView, updateLearningSettings } from './omb-learning.ts'
+import { learningSettings, memoryView, skillFrom, readLearning, setSkill, skillsView, updateLearningSettings } from './omb-learning.ts'
 import { HttpStatusError } from './omb-http.ts'
 import type { HttpDeps } from './omb-http.ts'
 
@@ -8,6 +8,9 @@ const skillsReply = {
   skills: [
     { name: 'release-notes', description: 'Write release notes.', enabled: false, source: 'https://github.com/x/y', sha256: 'SECRET', warnings: ['SECRET'] },
     { name: 'weekly-sales-report', description: 'Builds the weekly report.', enabled: true, source: 'learn:automatic review of this conversation' },
+    { name: 'orca-cli', description: 'Drive Orca.', enabled: true, origin: 'native', source: '/Users/SECRET/.agents/skills/orca-cli' },
+    { name: 'code-quality', description: 'Review code.', enabled: false, origin: 'native', source: '/Users/SECRET/.claude/skills/code-quality' },
+    { name: 'house-style', description: 'Repo style.', enabled: true, origin: 'project', source: '/Users/SECRET/repo/.claude/skills/house-style' },
     { name: 'Bad Name', description: 'dropped', enabled: true },
     { name: 'weekly-sales-report', description: 'duplicate', enabled: false }
   ],
@@ -44,12 +47,19 @@ test('skills list keeps only names, descriptions and switches, learned ones firs
   const view = skillsView(skillsReply)
   assert.deepEqual(view, {
     skills: [
-      { name: 'weekly-sales-report', description: 'Builds the weekly report.', enabled: true, learned: true },
-      { name: 'release-notes', description: 'Write release notes.', enabled: false, learned: false }
+      { name: 'weekly-sales-report', description: 'Builds the weekly report.', enabled: true, from: 'learned', switchable: true },
+      { name: 'release-notes', description: 'Write release notes.', enabled: false, from: 'added', switchable: true },
+      { name: 'code-quality', description: 'Review code.', enabled: false, from: 'claude', switchable: true },
+      { name: 'orca-cli', description: 'Drive Orca.', enabled: true, from: 'agents', switchable: true },
+      { name: 'house-style', description: 'Repo style.', enabled: true, from: 'project', switchable: false }
     ],
     waiting: 1
   })
-  assert.doesNotMatch(JSON.stringify(view), /SECRET|github/)
+  assert.doesNotMatch(JSON.stringify(view), /SECRET|github|Users/)
+  assert.equal(skillFrom({ origin: 'native', source: '/home/x/.codex/skills/a' }), 'codex')
+  assert.equal(skillFrom({ origin: 'native', source: 'C:\\Users\\x\\.claude\\skills\\a' }), 'claude')
+  assert.equal(skillFrom({ origin: 'imported', source: '/x' }), 'computer')
+  assert.equal(skillFrom({ source: 'package:grok-bot-1e1dee' }), 'package')
   assert.deepEqual(skillsView(undefined), { skills: [], waiting: 0 })
   const many = skillsView({ skills: Array.from({ length: 150 }, (_, i) => ({ name: `s-${i}`, description: 'd'.repeat(500) })) })
   assert.equal(many.skills.length, 100)
@@ -74,7 +84,7 @@ test('reading a bot without memory yet still lists its skills; a failed skill re
   const { deps, calls } = fake({}, (path) => (path.includes('/memory') ? new HttpStatusError(404, {}) : undefined))
   const learning = await readLearning({ port: 9, botId: id }, deps)
   assert.equal(learning.memory, undefined)
-  assert.equal(learning.skills.length, 2)
+  assert.equal(learning.skills.length, 5)
   assert.deepEqual(calls.map((c) => c.path).sort(), [`/api/bots/${id}/memory`, `/api/bots/${id}/memory/file?path=MEMORY.md`, `/api/bots/${id}/memory/upkeep`, `/api/bots/${id}/skills`])
   const full = await readLearning({ port: 9, botId: id }, fake().deps)
   assert.equal(full.memory?.text, '- 2026-11-19 · likes short replies')
@@ -87,7 +97,7 @@ test('a skill switch patches only that skill and returns the fresh list', async 
   const { deps, calls } = fake()
   const learning = await setSkill({ port: 9, botId: id, name: 'release-notes', enabled: true }, deps)
   assert.deepEqual(calls[0], { path: `/api/bots/${id}/skills/release-notes`, body: { enabled: true }, method: 'PATCH' })
-  assert.equal(learning.skills.length, 2)
+  assert.equal(learning.skills.length, 5)
   for (const name of ['../etc', 'Bad', '', 'a'.repeat(65), 7])
     await assert.rejects(setSkill({ port: 9, botId: id, name: name as any, enabled: true }, deps), /Unknown skill/)
   await assert.rejects(setSkill({ port: 9, botId: id, name: 'x', enabled: 'yes' as any }, deps), /Choose on or off/)

@@ -230,6 +230,24 @@ export function createSettings(frame: FrameApi, element: Elements, changed: () =
       note(failure(error, 'Could not save.'))
     }
   })
+  let exportGeneration = 0
+  button('export-team').addEventListener('click', async () => {
+    const generation = ++exportGeneration
+    button('export-team').disabled = true
+    element('export-note').textContent = 'Exporting\u2026'
+    try {
+      const done = await frame.plugin.request('team.export', {})
+      if (generation !== exportGeneration) return
+      const where = remote ? ` on ${remote}` : ''
+      const counts = `${done.bots} bot${done.bots === 1 ? '' : 's'}, ${done.skills} skill${done.skills === 1 ? '' : 's'}, ${done.memoryFiles} memory file${done.memoryFiles === 1 ? '' : 's'}`
+      const missed = done.skipped.length ? ` Not exported: ${done.skipped.slice(0, 5).join('; ')}${done.skipped.length > 5 ? '\u2026' : ''}.` : ''
+      element('export-note').textContent = `Saved ${counts} to ${done.folder}${where}. Its README says how to use them elsewhere.${missed}`
+    } catch (error) {
+      if (generation === exportGeneration) element('export-note').textContent = failure(error, 'Could not finish the export. Try again.')
+    } finally {
+      if (generation === exportGeneration) button('export-team').disabled = false
+    }
+  })
   button('stop-server').addEventListener('click', async () => {
     button('stop-server').disabled = true
     try {
@@ -247,6 +265,9 @@ export function createSettings(frame: FrameApi, element: Elements, changed: () =
       renderPreferences(undefined, 'Changing where bots run\u2026')
       ++learningGeneration
       renderLearning(undefined)
+      ++exportGeneration
+      element('export-note').textContent = ''
+      button('export-team').disabled = false
     },
     async hostChanged(problem = ''): Promise<void> {
       const generation = preferencesGeneration + 1

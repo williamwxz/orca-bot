@@ -47,10 +47,11 @@ fills the right, as in OpenMausBot.
 
 Good to know:
 
-- Open **Settings → MCP Connectors → Manage** to discover connectors from Claude Code,
+- Open **Settings → Connectors → Manage** to discover connectors from Claude Code,
   Claude Desktop, Cursor, Codex, Gemini CLI, opencode and Antigravity on the chosen host.
   Connectors that enabled Claude Code plugins bring are listed under **Claude plugins**;
   OpenMausBot signs in to those services itself.
+  Each provider's list folds; a list of more than five starts folded.
   Use **Providers** to turn connectors on and **By Bot** to audit and toggle each bot’s
   access. In a bot’s chat, the **Model** and **Connectors** pills let you switch ready AI
   models and assign enabled connectors without leaving the conversation; both pickers
@@ -69,7 +70,9 @@ Good to know:
   its stored credentials and clears its bot assignments. First-run setup never imports tools.
   Codex-backed bots still load `~/.codex/config.toml` directly, independently of these mappings.
 - The **Skills** pill in a bot's chat opens what the bot has learned: its skills, with
-  a switch for each and a **Learned** tag on those it wrote itself, and its memory
+  a switch for each and a tag for where it comes from (**Learned** by the bot, **Claude
+  Code**, **Codex** or **Agents folder** for skills its engine loads from your own
+  folders, **Project**, **Team package** or **Added**), and its memory
   (`MEMORY.md`) with how many of its lines load each turn. Writing and editing skills
   and memory stay in the full chat; type `/learn` there to save what a bot just did.
 
@@ -99,6 +102,12 @@ The gear button in the panel header opens Settings:
   OpenMausBot). After a task with many tool steps, a bot looks back over it and
   may save or improve a skill. The review uses the bot's own AI and counts toward
   its usage. It applies to every bot on the selected host.
+- **Export**: **Export bots** writes each bot's persona (`SOUL.md`), memory
+  (`memories/`) and own skills (`skills/`) as plain files to a new folder in
+  Downloads on the bot host, with `team.json` and a README. Each bot folder is
+  laid out like a Hermes Agent profile, and the skills use the `SKILL.md` format
+  Claude Code and Codex read. Chats, files, credentials and connector settings are
+  not included; for a full backup use OpenMausBot's own **Export full backup**.
 - **Updates**: the version you have and whether a newer one is out. By default
   the panel shows a banner and asks before updating; **Install updates
   automatically** updates by itself, once per new version. An update that asks
@@ -131,7 +140,7 @@ connections, expose a bot port or ask for a second pairing
 code. An unavailable server never falls back to a different bot team on this
 computer.
 
-From a paired client you can manage bots, change permissions, manage MCP connectors from
+From a paired client you can manage bots, change permissions, manage connectors from
 apps on the server, and install or stop OpenMausBot. The panel does not open
 native OpenMausBot or send files for bots on a paired server.
 Permissions and installation consent persist in `~/.orca-bot/preferences.json`
@@ -174,7 +183,7 @@ of that `orca` command on this computer.
 
 - **Asks first.** Nothing is shared with bots, linked to your agents or
   imported automatically. Sharing and agent linking require setup consent; connector
-  imports require enabling selected connectors in Settings → MCP Connectors.
+  imports require enabling selected connectors in Settings → Connectors.
 - **Imported tools stay on the selected host.** Imported tool definitions, including
   any tokens in them, are copied into OpenMausBot's settings in `~/.orca-bot/data`;
   sources include Claude Code, Claude Desktop, Cursor, Gemini CLI, Codex,
@@ -250,6 +259,9 @@ of that `orca` command on this computer.
    without asking; each change shows in its chat with **Undo** in the full chat.
    A skill can be wrong like any other instruction. Switch it off under
    **Skills** in the chat, or delete it in the full chat.
+
+10. **An export holds what your bots remember.** The files are readable only by
+    you, but anything you copy or share from the folder carries that memory with it.
 
 To remove everything: turn off **Let my Orca agents talk to the bots**, stop
 the server from the command palette, uninstall the

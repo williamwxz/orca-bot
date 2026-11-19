@@ -60,6 +60,7 @@ export const RELAYED = [
   'learning.read',
   'learning.skill',
   'learning.settings',
+  'team.export',
   'message.send',
   'bots.addMausBot',
   'chat.open',

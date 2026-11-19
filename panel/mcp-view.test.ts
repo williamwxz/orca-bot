@@ -303,14 +303,14 @@ test('same-host resumes retain menu and in-flight state, true host changes resto
     await flush()
     assert.ok(
       all(get('mcp-groups')).some(
-        (n) => n.textContent === 'No MCP connectors found on Remote host.'
+        (n) => n.textContent === 'No connectors found on Remote host.'
       )
     )
     view.hostChanged('local')
     await view.refresh()
     assert.ok(
       all(get('mcp-groups')).some(
-        (n) => n.textContent === 'No MCP connectors found on this computer.'
+        (n) => n.textContent === 'No connectors found on this computer.'
       )
     )
   } finally {
@@ -463,10 +463,56 @@ test('two-way access preserves other bots, clean catalog jumps to auditing witho
     await view.refresh()
     find('tab-bot').emit()
     assert.ok(
-      all(get('mcp-groups')).some((n) => n.textContent === 'No MCP connectors are enabled yet.')
+      all(get('mcp-groups')).some((n) => n.textContent === 'No connectors are enabled yet.')
     )
     find('more-connectors').emit()
     assert.equal(find('tab-provider').attrs.get('aria-selected'), 'true')
+  } finally {
+    if (original) Object.defineProperty(globalThis, 'document', original)
+    else delete (globalThis as any).document
+  }
+})
+
+test('a long provider group starts folded and every group folds and unfolds, keeping its All on and All off', async () => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'document')
+  const elements = new Map<string, Element>()
+  const get = (id: string) => {
+    if (!elements.has(id)) elements.set(id, new Element())
+    return elements.get(id)!
+  }
+  Object.defineProperty(globalThis, 'document', { configurable: true, value: { createElement: () => new Element() } })
+  const row = (provider: string, i: number) => ({
+    name: `${provider.toLowerCase().replace(/\W/g, '')}-${i}`,
+    fingerprint: String(i).padStart(64, '0'),
+    rawName: `${provider} ${i}`,
+    provider,
+    enabled: i === 0,
+    present: true,
+    bots: []
+  })
+  const data: Connectors = {
+    connectors: [...Array.from({ length: 7 }, (_, i) => row('Claude plugins', i)), ...Array.from({ length: 2 }, (_, i) => row('Cursor', i))],
+    bots: [{ id: 'a', name: 'Work' }]
+  }
+  const view = createMcpView({ plugin: { request: async () => structuredClone(data) } } as any, get as any, () => {})
+  try {
+    view.hostChanged('local', undefined)
+    get('mcp-manage').emit()
+    await flush()
+    const texts = () => all(get('mcp-groups')).map((n) => n.textContent)
+    const fold = (provider: string) => all(get('mcp-groups')).find((n) => n.dataset.focus === `fold-${provider}`)!
+    assert.equal(fold('Claude plugins').attrs.get('aria-expanded'), 'false')
+    assert.equal(fold('Cursor').attrs.get('aria-expanded'), 'true')
+    assert.ok(texts().includes('1/7 on'))
+    assert.ok(!texts().includes('Claude plugins 3'))
+    assert.ok(texts().includes('Cursor 1'))
+    assert.ok(all(get('mcp-groups')).some((n) => n.dataset.focus === 'Claude plugins-true'))
+    fold('Claude plugins').emit()
+    assert.equal(fold('Claude plugins').attrs.get('aria-expanded'), 'true')
+    assert.ok(texts().includes('Claude plugins 3'))
+    fold('Cursor').emit()
+    assert.ok(!texts().includes('Cursor 1'))
+    assert.equal(fold('Cursor').attrs.get('aria-label'), 'Show Cursor connectors')
   } finally {
     if (original) Object.defineProperty(globalThis, 'document', original)
     else delete (globalThis as any).document

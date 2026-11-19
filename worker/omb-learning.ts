@@ -2,16 +2,34 @@ import { defaultHttpDeps, HttpStatusError } from './omb-http.ts'
 import type { HttpDeps } from './omb-http.ts'
 import { validBotId } from './omb-open.ts'
 import { MAX_MEMORY_TEXT, MAX_SKILLS, SKILL_NAME } from '../shared/learning.ts'
-import type { Learning, LearningSettings, Memory, Skill } from '../shared/learning.ts'
+import type { Learning, LearningSettings, Memory, Skill, SkillFrom } from '../shared/learning.ts'
 
 const object = (v: unknown): Record<string, any> =>
   v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, any>) : {}
 const count = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.floor(v) : 0)
 const text = (v: unknown, max: number): string => (typeof v === 'string' ? v.slice(0, max) : '')
 
+/** Where a skill comes from, as a label. The source path itself never leaves the worker. */
+export function skillFrom(s: Record<string, any>): SkillFrom {
+  const source = typeof s.source === 'string' ? s.source : ''
+  if (source.startsWith('learn:')) return 'learned'
+  if (source.startsWith('package:')) return 'package'
+  if (s.origin === 'project') return 'project'
+  if (s.origin === 'imported') return 'computer'
+  if (s.origin === 'native') {
+    const path = source.replace(/\\/g, '/')
+    if (/\/\.claude(\/|$)/.test(path)) return 'claude'
+    if (/\/\.codex(\/|$)/.test(path) || path.startsWith('/etc/codex')) return 'codex'
+    return 'agents'
+  }
+  return 'added'
+}
+
+const FROM_ORDER: SkillFrom[] = ['learned', 'added', 'package', 'computer', 'claude', 'codex', 'agents', 'project']
+
 /**
- * The skills a bot can use, by name, description and switch. Only these cross: the reply also
- * holds file hashes, scan warnings and where each skill came from on disk.
+ * The skills a bot can use, by name, description, switch and where each comes from. Only these
+ * cross: the reply also holds file hashes, scan warnings and the folders skills come from.
  */
 export function skillsView(raw: unknown): Pick<Learning, 'skills' | 'waiting'> {
   const reply = object(raw)
@@ -21,15 +39,17 @@ export function skillsView(raw: unknown): Pick<Learning, 'skills' | 'waiting'> {
     const s = object(entry)
     if (typeof s.name !== 'string' || !SKILL_NAME.test(s.name) || s.name.length > 64 || seen.has(s.name)) continue
     seen.add(s.name)
+    const from = skillFrom(s)
     skills.push({
       name: s.name,
       description: text(s.description, 300),
       enabled: s.enabled === true,
-      learned: typeof s.source === 'string' && s.source.startsWith('learn:')
+      from,
+      switchable: from !== 'project'
     })
     if (skills.length >= MAX_SKILLS) break
   }
-  skills.sort((a, b) => Number(b.learned) - Number(a.learned) || a.name.localeCompare(b.name))
+  skills.sort((a, b) => FROM_ORDER.indexOf(a.from) - FROM_ORDER.indexOf(b.from) || a.name.localeCompare(b.name))
   return { skills, waiting: Array.isArray(reply.staged) ? reply.staged.length : 0 }
 }
 

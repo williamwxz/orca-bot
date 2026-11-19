@@ -1,4 +1,5 @@
 import type { Bot } from '../shared/roster.ts'
+import { SKILL_FROM_LABEL } from '../shared/learning.ts'
 import type { Learning } from '../shared/learning.ts'
 import type { FrameApi } from './chat-view.ts'
 
@@ -79,14 +80,15 @@ export function createLearningSheet(root: HTMLElement, frame: FrameApi, hooks: L
         const row = node('label', '', 'learning-skill')
         const copy = node('span', '', 'setup-copy')
         const name = node('strong', skill.name)
-        if (skill.learned) name.append(node('span', 'Learned', 'learning-tag'))
+        name.append(node('span', SKILL_FROM_LABEL[skill.from] ?? 'Added', `learning-tag from-${skill.from}`))
         copy.append(name, node('small', skill.description))
         const toggle = node('input', '', 'switch')
         toggle.type = 'checkbox'
         toggle.setAttribute('role', 'switch')
         toggle.setAttribute('aria-label', `Use ${skill.name}`)
         toggle.checked = skill.enabled
-        toggle.disabled = saving !== undefined
+        toggle.disabled = saving !== undefined || !skill.switchable
+        if (!skill.switchable) toggle.title = 'On while the bot works in this project; change it there.'
         toggle.dataset.key = skill.name
         toggle.addEventListener('change', () => void flip(skill.name, toggle.checked))
         row.append(copy, toggle)

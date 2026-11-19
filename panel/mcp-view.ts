@@ -23,6 +23,9 @@ export function createMcpView(frame: FrameApi, element: (id: string) => HTMLElem
     return el
   }
   let tab: 'provider' | 'bot' = 'provider'
+  /** Folded provider groups. A long group (more than five connectors) starts folded. */
+  const folded = new Map<string, boolean>()
+  const FOLD_AFTER = 5
   let selectedBot: string | undefined
   let returnTo: (() => void) | undefined
   const actionButton = (text: string, focus: string, click: () => void, className = 'mcp-pill') => {
@@ -91,10 +94,24 @@ export function createMcpView(frame: FrameApi, element: (id: string) => HTMLElem
       group.className = 'settings-group mcp-provider'
       const head = node('div')
       head.className = 'mcp-provider-head'
-      const title = node('h3', provider)
+      const isFolded = folded.get(provider) ?? rows.length > FOLD_AFTER
+      const title = node('h3')
+      const fold = key(node('button'), `fold-${provider}`)
+      fold.type = 'button'
+      fold.className = 'mcp-fold'
+      fold.setAttribute('aria-expanded', String(!isFolded))
+      fold.setAttribute('aria-label', `${isFolded ? 'Show' : 'Hide'} ${provider} connectors`)
+      const chevron = node('span', isFolded ? '▸' : '▾')
+      chevron.className = 'mcp-chevron'
+      chevron.setAttribute('aria-hidden', 'true')
       const count = node('span', `${rows.filter((c) => c.enabled).length}/${rows.length} on`)
       count.className = 'mcp-count'
-      title.append(count)
+      fold.append(chevron, node('span', provider), count)
+      fold.addEventListener('click', () => {
+        folded.set(provider, !isFolded)
+        render(`fold-${provider}`)
+      })
+      title.append(fold)
       const controls = node('div')
       controls.className = 'mcp-actions'
       for (const enabled of [true, false]) {
@@ -122,6 +139,10 @@ export function createMcpView(frame: FrameApi, element: (id: string) => HTMLElem
       }
       head.append(title, controls)
       group.append(head)
+      if (isFolded) {
+        root.append(group)
+        continue
+      }
       if (provider === 'Codex') {
         const note = node(
           'p',
@@ -229,7 +250,7 @@ export function createMcpView(frame: FrameApi, element: (id: string) => HTMLElem
     group.className = 'settings-group'
     group.append(node('h3', bot?.name ?? 'Bot access'))
     if (!bot) group.append(node('p', 'No visible bots on this host.'))
-    else if (!enabled.length) group.append(node('p', 'No MCP connectors are enabled yet.'))
+    else if (!enabled.length) group.append(node('p', 'No connectors are enabled yet.'))
     else
       for (const row of enabled) {
         const line = node('div')
@@ -268,7 +289,7 @@ export function createMcpView(frame: FrameApi, element: (id: string) => HTMLElem
     refreshButton.setAttribute('aria-busy', String(refreshButton.disabled))
     element('mcp-summary').textContent = data
       ? `${data.connectors.filter((c) => c.enabled).length} enabled · ${data.connectors.length} available on ${target}`
-      : `MCP connectors unavailable on ${target}. Start OpenMausBot with this plugin, then refresh.`
+      : `Connectors unavailable on ${target}. Start OpenMausBot with this plugin, then refresh.`
     root.replaceChildren()
     if (!data) {
       if (loadProblem) root.append(node('p', loadProblem))
@@ -312,7 +333,7 @@ export function createMcpView(frame: FrameApi, element: (id: string) => HTMLElem
     content.setAttribute('role', 'tabpanel')
     content.setAttribute('aria-labelledby', `mcp-tab-${tab}`)
     if (!data.connectors.length && tab === 'provider')
-      content.append(node('p', `No MCP connectors found on ${target}.`))
+      content.append(node('p', `No connectors found on ${target}.`))
     if (tab === 'provider') renderProvider(content, target)
     else renderBots(content)
     root.append(content)
@@ -342,7 +363,7 @@ export function createMcpView(frame: FrameApi, element: (id: string) => HTMLElem
     } catch (error) {
       if (current !== generation) return
       data = undefined
-      loadProblem = error instanceof Error ? error.message : 'Could not load MCP connectors.'
+      loadProblem = error instanceof Error ? error.message : 'Could not load connectors.'
       if (explicit) message(loadProblem)
     } finally {
       if (current === generation) {

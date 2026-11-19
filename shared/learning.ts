@@ -1,5 +1,22 @@
-/** A skill a bot can use. `learned` is one the bot wrote itself, with /learn or on its own. */
-export type Skill = { name: string; description: string; enabled: boolean; learned: boolean }
+/**
+ * Where a skill comes from: `learned` the bot wrote itself (with /learn or on its own); `claude`,
+ * `codex` and `agents` are folders its engine loads by itself (~/.claude/skills, ~/.codex/skills,
+ * ~/.agents/skills); `project` a project folder it works in; `computer` copied from this computer;
+ * `package` a team package; `added` anything else added to the bot.
+ */
+export type SkillFrom = 'learned' | 'claude' | 'codex' | 'agents' | 'project' | 'computer' | 'package' | 'added'
+export const SKILL_FROM_LABEL: Record<SkillFrom, string> = {
+  learned: 'Learned',
+  claude: 'Claude Code',
+  codex: 'Codex',
+  agents: 'Agents folder',
+  project: 'Project',
+  computer: 'This computer',
+  package: 'Team package',
+  added: 'Added'
+}
+/** `switchable` is false for a project's skill: it is on while the bot works there and changes only there. */
+export type Skill = { name: string; description: string; enabled: boolean; from: SkillFrom; switchable: boolean }
 
 /** What a bot remembers: its MEMORY.md, the part of it loaded each turn, and how many topic notes it keeps. */
 export type Memory = {
@@ -27,3 +44,6 @@ export type LearningSettings = { autoLearn: boolean }
 export const SKILL_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 export const MAX_SKILLS = 100
 export const MAX_MEMORY_TEXT = 24000
+
+/** A finished export: the folder it was written to, on the bot host, and what went in. */
+export type ExportResult = { folder: string; bots: number; skills: number; memoryFiles: number; skipped: string[] }

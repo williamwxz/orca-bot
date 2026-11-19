@@ -103,7 +103,7 @@ export function createBotMenu(
       note.setAttribute('role', 'status')
       note.textContent =
         problem ||
-        (!data ? 'Loading connectors…' : !rows.length ? 'No MCP connectors are turned on yet.' : '')
+        (!data ? 'Loading connectors…' : !rows.length ? 'No connectors are turned on yet.' : '')
       if (note.textContent) children.push(note)
       let focus: HTMLButtonElement | undefined
       for (const row of rows) {

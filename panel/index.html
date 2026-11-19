@@ -86,7 +86,7 @@
         </label>
       </div>
       <div class="settings-group">
-        <h3>MCP Connectors</h3>
+        <h3>Connectors</h3>
         <p id="mcp-summary" class="settings-note" role="status"></p>
         <button id="mcp-manage" class="bot-menu-btn" type="button">Manage</button>
       </div>
@@ -118,6 +118,12 @@
         </label>
       </div>
       <div class="settings-group">
+        <h3>Export</h3>
+        <p class="settings-note">Saves each bot's persona, memory and own skills as plain files in a new folder in Downloads on the bot host, ready for Hermes Agent, Claude Code or Codex. Chats and credentials are not included.</p>
+        <p id="export-note" class="settings-note" role="status"></p>
+        <button id="export-team" type="button">Export bots</button>
+      </div>
+      <div class="settings-group">
         <h3>OpenMausBot</h3>
         <p id="omb-status" class="settings-note"></p>
         <div id="settings-install-card" hidden>
@@ -130,7 +136,7 @@
     <section id="mcp-view" aria-labelledby="mcp-title" hidden>
       <div class="settings-header">
         <button id="mcp-back" type="button" aria-label="Back to Settings">←</button>
-        <h2 id="mcp-title">MCP Connectors</h2>
+        <h2 id="mcp-title">Connectors</h2>
         <button id="mcp-refresh" type="button" aria-label="Refresh" title="Refresh">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M13 6a5.25 5.25 0 1 0 .15 3.65M13 2.5V6H9.5" />

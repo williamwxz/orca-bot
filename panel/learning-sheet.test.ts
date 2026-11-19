@@ -51,8 +51,8 @@ test('skills sheet lists skills and memory, switches a skill, and ignores replie
   try {
     const learning = {
       skills: [
-        { name: 'weekly-sales-report', description: 'Builds the weekly report.', enabled: true, learned: true },
-        { name: 'release-notes', description: 'Write release notes.', enabled: false, learned: false }
+        { name: 'weekly-sales-report', description: 'Builds the weekly report.', enabled: true, from: 'learned', switchable: true },
+        { name: 'release-notes', description: 'Write release notes.', enabled: false, from: 'claude', switchable: true }
       ],
       waiting: 1,
       memory: { text: '- likes short replies', lines: 47, maxLines: 200, overflow: false, topics: 2, upkeep: false }
@@ -94,6 +94,7 @@ test('skills sheet lists skills and memory, switches a skill, and ignores replie
     const text = root.text()
     assert.match(text, /Skills and memory for Work/)
     assert.match(text, /weekly-sales-report Learned Builds the weekly report\./)
+    assert.match(text, /release-notes Claude Code Write release notes\./)
     assert.match(text, /1 skill change is waiting for your answer in the full chat\./)
     assert.match(text, /47 of 200 lines load each turn\. 2 topic notes read when needed\./)
     assert.match(text, /- likes short replies/)

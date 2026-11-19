@@ -453,7 +453,7 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
     openMenu()
     clickLabel(menu, 'Connectors')
     await flush()
-    assert.ok(menu.children.some(child => child.textContent === 'No MCP connectors are turned on yet.'))
+    assert.ok(menu.children.some(child => child.textContent === 'No connectors are turned on yet.'))
     clickLabel(menu, 'Manage connectors')
     await flush()
     assert.equal(menu.hidden, true)

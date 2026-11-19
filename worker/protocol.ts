@@ -5,7 +5,7 @@ import type { Thread } from '../shared/chat.ts'
 import type { Upload, Uploaded } from '../shared/attachments.ts'
 import type { BotCreate, BotCreated, Bot, BotAction, ComputerStatus, DesktopAction, DesktopSettings, DesktopStatus, GroupRename } from '../shared/roster.ts'
 import type { Hosts } from './paired-host.ts'
-import type { Learning, LearningSettings } from '../shared/learning.ts'
+import type { ExportResult, Learning, LearningSettings } from '../shared/learning.ts'
 import type { Updates } from './updates.ts'
 
 export type Status = {
@@ -38,6 +38,7 @@ export type Requests = {
   'learning.read': { input: { botId: string }; output: Learning }
   'learning.skill': { input: { botId: string; name: string; enabled: boolean }; output: Learning }
   'learning.settings': { input: { autoLearn?: boolean }; output: LearningSettings }
+  'team.export': { input: Record<string, never>; output: ExportResult }
   'attachment.upload': { input: Upload; output: Uploaded }
   'chat.open': { input: { botId?: string }; output: { message: string } }
   'bots.addMausBot': { input: { botId: string }; output: { message: string } }

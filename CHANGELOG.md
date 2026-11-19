@@ -5,10 +5,17 @@
 - **Skills and memory in the chat**: a **Skills** pill in each bot's chat opens
   a panel from the right with the bot's skills, a switch for each, and a
   **Learned** tag on those the bot wrote itself, plus its memory (`MEMORY.md`)
-  and how much of it loads each turn.
+  and how much of it loads each turn. Each skill is tagged with where it
+  comes from: learned by the bot, Claude Code, Codex, the agents folder, a
+  project, a team package or added.
 - **Settings → Learning**: **Bots learn skills on their own** turns on
   OpenMausBot's automatic skill review. After a task with many tool steps, a bot
   looks back over it and may save or improve a skill.
+- **Export bots** (Settings → Export): each bot's persona, memory and own
+  skills as plain files in Downloads, laid out like Hermes Agent profiles, so
+  the team can move to another agent without OpenMausBot.
+- **MCP Connectors is now Connectors**, and each provider's list folds; long
+  lists start folded.
 - **Settled cards read as one line**: a card that asks nothing, such as
   "Skill … enabled", no longer says "This needs the full chat."
 - **OpenMausBot 0.1.171**: faster replies (Codex turns stay warm, Claude starts

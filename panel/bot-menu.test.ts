@@ -185,7 +185,7 @@ test('bot menu connector checklist loads, toggles repeatedly, handles errors and
     menu.open(bot, [])
     click('Connectors')
     await flush()
-    assert.ok(root.children.some((c) => c.textContent === 'No MCP connectors are turned on yet.'))
+    assert.ok(root.children.some((c) => c.textContent === 'No connectors are turned on yet.'))
     click('Manage connectors')
     assert.deepEqual(managed.at(-1), ['work', false])
     pending = Promise.reject(new Error('Server offline'))
