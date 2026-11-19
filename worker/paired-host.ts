@@ -124,11 +124,15 @@ export function registerPairedHost(
   local(proxy)
   // Where the bots run is this computer's own choice; these two never reach a server.
   orca.panels.handle('hosts.get', () => (cached = read()))
+  let choosing = 0
   orca.panels.handle('hosts.select', async (input) => {
+    // The last choice wins: a slower check for an earlier one never writes after it.
+    const mine = ++choosing
     const id = (input as { id?: unknown } | undefined)?.id
     if (typeof id !== 'string' || !id) throw new Error('Choose where your bots run.')
     if (id !== LOCAL && !(await listHosts(deps)).some((host) => host.id === id))
       throw new Error('That Orca server is not paired with this computer.')
+    if (mine !== choosing) return read()
     await orca.storage.set('botHost', id)
     // Leave no terminal open on a server the person moved away from.
     if (id === LOCAL) void link.disconnect().catch(() => {})

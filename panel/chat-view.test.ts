@@ -189,7 +189,11 @@ test('a sent message shows at once and gives way to its stored row; a failed sen
     assert.equal(t.input().value, '')
     await flush()
     assert.deepEqual(t.calls.find(([name]) => name === 'message.send'), ['message.send', { botId: 'honex', text: 'hello there' }])
-    page = { messages: [m('r1', 'user', 'hello there', Date.now())] }
+    // The first send creates the Bot Chat before its message is stored: the message stays meanwhile.
+    page = { chat: 'c1', messages: [] }
+    await t.poll()
+    assert.deepEqual(t.shown(), ['hello there'])
+    page = { chat: 'c1', messages: [m('r1', 'user', 'hello there', Date.now())] }
     await t.poll()
     assert.deepEqual(t.shown(), ['hello there'])
     t.failSend('Hermes did not take this message. Check the bot in Hermes, then try again.')

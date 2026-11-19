@@ -261,3 +261,19 @@ test('a big roster asks a few bots at a time', async () => {
   assert.equal(most, 4)
   void hermes
 })
+
+test('a turn that starts and ends before the send is answered is not left working', async () => {
+  let emitNow: (type: string) => void = () => {}
+  const quick = fake((call) => {
+    if (call.method === 'prompt.submit') {
+      emitNow('message.start')
+      emitNow('message.complete')
+    }
+    return standard(call)
+  })
+  emitNow = (type) => quick.emit('honex', type, 'live-chat-honex')
+  await quick.hermes.send({ botId: 'honex', text: 'quick' })
+  assert.equal((await quick.hermes.readThread({ botId: 'honex' })).live, undefined)
+  assert.equal((await quick.hermes.listBots()).find((b) => b.id === 'honex')!.working, false)
+  assert.deepEqual(quick.held, [])
+})

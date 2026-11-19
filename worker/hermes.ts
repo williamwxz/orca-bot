@@ -38,6 +38,8 @@ export function createHermes(deps: HermesDeps = defaultHermesDeps()) {
   const { gateway } = deps
   const chats = new Map<string, Chat>()
   const lives = new Map<string, Live>()
+  /** Counts each bot's reply starts and ends, so a send can tell a turn that already ran. */
+  const turns = new Map<string, number>()
   const details = new Map<string, { row: any; at: number }>()
   const refreshing = new Map<string, Promise<void>>()
   const creating = new Map<string, Promise<Chat>>()
@@ -58,6 +60,7 @@ export function createHermes(deps: HermesDeps = defaultHermesDeps()) {
     const chat = chats.get(profile)
     // Only the attached Bot Chat's own events count; another session on the profile is not this chat.
     if (!chat?.live || event.sessionId !== chat.live) return
+    if (event.type === 'message.start' || event.type === 'message.complete' || event.type === 'error') turns.set(profile, (turns.get(profile) ?? 0) + 1)
     if (event.type === 'message.start') begin(profile, { text: '', startedAt: deps.now() })
     else if (event.type === 'message.complete' || event.type === 'error') end(profile)
     else {
@@ -259,13 +262,16 @@ export function createHermes(deps: HermesDeps = defaultHermesDeps()) {
       if (text.length > MAX_MESSAGE) throw new Error(`Keep a message under ${MAX_MESSAGE.toLocaleString('en-US')} characters.`)
       const chat = (await findChat(bot)) ?? (await create(bot))
       const live = await attach(bot, chat)
+      const seen = turns.get(bot) ?? 0
       try {
         await gateway.request(bot, 'prompt.submit', { session_id: live, profile: bot, text, input_id: deps.id() }, 30000)
       } catch (error) {
         if (error instanceof HermesError && error.code === 'refused') throw new Error('Hermes did not take this message. Check the bot in Hermes, then try again.')
         throw error
       }
-      if (chats.get(bot) === chat && !lives.has(bot)) begin(bot, { text: '', startedAt: deps.now() })
+      // Until Hermes says the reply started, show it as working. A fast turn may have started, or
+      // even finished, before the submit's answer arrived: its own events already said so.
+      if (chats.get(bot) === chat && !lives.has(bot) && (turns.get(bot) ?? 0) === seen) begin(bot, { text: '', startedAt: deps.now() })
       return { ok: true }
     },
 

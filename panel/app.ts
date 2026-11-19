@@ -168,7 +168,7 @@ async function refresh(retrying = false): Promise<void> {
 hostSelect.addEventListener('change', async () => {
   const id = hostSelect.value
   if (!id) return
-  hostGeneration++
+  const mine = ++hostGeneration
   bots = []
   chatting = undefined
   chatView.close()
@@ -176,12 +176,15 @@ hostSelect.addEventListener('change', async () => {
   running.hidden = true
   message.hidden = false
   message.textContent = 'Connecting to Hermes…'
+  let chosen: typeof hosts
   try {
-    hosts = await frame.plugin.request('hosts.select', { id })
+    chosen = await frame.plugin.request('hosts.select', { id })
   } catch (error) {
-    toast.show(error instanceof Error ? error.message : 'Could not change where bots run.')
-    hosts = undefined
+    if (mine === hostGeneration) toast.show(error instanceof Error ? error.message : 'Could not change where bots run.')
   }
+  // Another choice was made meanwhile: its own reply decides.
+  if (mine !== hostGeneration) return
+  hosts = chosen
   refreshing = false
   void refresh(true)
 })

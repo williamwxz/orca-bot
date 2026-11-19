@@ -228,7 +228,8 @@ export function createChatView(root: HTMLElement, frame: FrameApi, avatar: (bot:
       const thread = await frame.plugin.request('thread.read', { botId: target.id, limit: loaded ? POLL_ROWS : PAGE_ROWS })
       if (current(token, host)) {
         // Archived or replaced in Hermes: the old history and any unacknowledged sends go with it.
-        if (loaded && thread.chat !== chatId) {
+        // A first chat appearing replaces nothing: a first send waiting for it keeps its place.
+        if (loaded && chatId !== undefined && thread.chat !== chatId) {
           forget()
           loaded = false
         }
