@@ -141,12 +141,14 @@ export function createTerminalLink(deps: LinkDeps) {
     const saved = await deps.load()
     if (saved?.hostId !== host.id) return undefined
     const s: Session = { host, handle: saved.handle, cursor: '0' }
+    // The saved terminal stays the one: an unclear answer asks for a retry instead of starting
+    // a second worker beside it, which could not see a desktop step the first one is running.
+    const retry = new Error(`Could not reach Bot Team for Orca on ${host.name} just now. Try again in a moment.`)
     let terminal: any
     try {
       terminal = (await deps.call(['terminal', 'read', '--limit', '1', ...at(s)]))?.terminal
     } catch {
-      // Unknown: never close a terminal whose worker may be mid-step. Start a fresh one beside it.
-      return undefined
+      throw retry
     }
     if (terminal?.status !== 'running') {
       await close(s)
@@ -157,15 +159,15 @@ export function createTerminalLink(deps: LinkDeps) {
     try {
       hash = (await exchange(s, PING, {}, 10000))?.hash
     } catch {
-      // No answer from a running terminal: leave it be.
-      return undefined
+      throw retry
     }
     if (hash === bundle.hash) return s
-    // Another version of the worker: close it only once it says no desktop step is running.
+    // Another version of the worker: replace it only once it says no desktop step is running.
     try {
-      if ((await exchange(s, 'desktop.step', {}, 10000))?.step?.running === true) return undefined
+      if ((await exchange(s, 'desktop.step', {}, 10000))?.step?.running === true)
+        throw new Error(`${host.name} is still finishing a private desktop step. Try again when it is done.`)
     } catch (error) {
-      if (!(error instanceof HostAnswer)) return undefined
+      if (!(error instanceof HostAnswer)) throw error instanceof Error && error.message.includes('still finishing') ? error : retry
     }
     await close(s)
     return undefined

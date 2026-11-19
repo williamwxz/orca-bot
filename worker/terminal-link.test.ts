@@ -354,10 +354,13 @@ test('a terminal whose worker stops answering mid-step is left running, never cl
   // Asking the same host again while reads still fail does not close it either.
   await assert.rejects(link.request(host, 'status', {}))
   assert.equal(server.terminals.get('term_1')!.status, 'running')
-  // Nor does a restarted plugin that finds it as the saved terminal and gets no answer.
+  // Nor does a restarted plugin that finds it as the saved terminal and gets no answer: it asks
+  // for a retry and starts no second worker.
   const restarted = createTerminalLink({ ...deps, load: async () => ({ hostId: host.id, handle: 'term_1' }) })
-  await assert.rejects(restarted.request(host, 'status', {}))
+  const terminalsBefore = server.terminals.size
+  await assert.rejects(restarted.request(host, 'status', {}), /Try again in a moment/)
   assert.equal(server.terminals.get('term_1')!.status, 'running')
+  assert.equal(server.terminals.size, terminalsBefore)
   const closed = server.calls.filter((args) => args[0] === 'terminal' && args[1] === 'close').map((args) => args[args.indexOf('--terminal') + 1])
   assert.equal(closed.includes('term_1'), false)
 })
@@ -416,6 +419,39 @@ test('returning to a host before its desktop step ends takes back the same termi
   await flushAll()
   for (const wake of parked.splice(0)) wake()
   await flushAll()
+  assert.equal(server.terminals.get('term_1')!.status, 'exited')
+})
+
+test('after a restart, one unanswered check of the saved terminal asks for a retry, and the retry takes it back', async () => {
+  let running = true
+  const server = fakeServer({
+    status: () => ({ state: 'running', message: '' }),
+    'desktop.step': () => ({ step: { id: 1, action: 'prepare', running } })
+  })
+  const store: { saved?: Saved } = {}
+  const first = createTerminalLink(linkDeps(server, store))
+  await first.request(host, 'status', {})
+  assert.equal(store.saved?.handle, 'term_1')
+  // The plugin restarts. Its first check of term_1 goes unanswered once.
+  const deps = linkDeps(server, store)
+  let drop = true
+  deps.call = async (args) => {
+    if (drop && args[0] === 'terminal' && args[1] === 'read' && args.includes('--cursor')) { drop = false; throw new Error('timed out') }
+    return server.call(args)
+  }
+  const restarted = createTerminalLink(deps)
+  await assert.rejects(restarted.request(host, 'status', {}), /Try again in a moment/)
+  assert.equal(store.saved?.handle, 'term_1')
+  assert.deepEqual(await restarted.request(host, 'status', {}), { state: 'running', message: '' })
+  assert.equal(server.terminals.size, 1, 'no second worker')
+  // A saved terminal running another plugin version is not replaced while it runs a step.
+  const old = linkDeps(server, store)
+  old.bundle = async () => ({ ...bundle, hash: 'fedcba9876543210' })
+  await assert.rejects(createTerminalLink(old).request(host, 'status', {}), /still finishing a private desktop step/)
+  assert.equal(server.terminals.size, 1)
+  running = false
+  // Once its step is done, a new version replaces it.
+  await assert.rejects(createTerminalLink(old).request(host, 'status', {}))
   assert.equal(server.terminals.get('term_1')!.status, 'exited')
 })
 
