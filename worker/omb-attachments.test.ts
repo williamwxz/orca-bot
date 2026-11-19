@@ -44,9 +44,15 @@ test('upload failures name the file and never pass server text through', async (
     uploadAttachment({ port: 9, name: 'a.txt', mime: 'text/plain', data: 'aGk=' }, fake(201, {}).fetcher, id),
     /Could not upload a\.txt/
   )
-  const offline = (async () => { throw new Error('ECONNREFUSED /secret') }) as unknown as typeof fetch
+  // A reply that is not JSON, even one echoing the file name, gives the fixed message.
+  const garbled = (async () => new Response('a.txt storage <html>/secret/path', { status: 201 })) as unknown as typeof fetch
+  await assert.rejects(
+    uploadAttachment({ port: 9, name: 'a', mime: 'text/plain', data: 'aGk=' }, garbled, id),
+    /^Error: Could not upload a\.$/
+  )
+  const offline = (async () => { throw new Error('ECONNREFUSED /secret a.txt storage') }) as unknown as typeof fetch
   await assert.rejects(
     uploadAttachment({ port: 9, name: 'a.txt', mime: 'text/plain', data: 'aGk=' }, offline, id),
-    /Could not upload a\.txt\. Check that OpenMausBot is running\./
+    /^Error: Could not upload a\.txt\. Check that OpenMausBot is running\.$/
   )
 })

@@ -359,6 +359,33 @@ test('Backend is a panel from the right with the bot\'s screen, a Works on grid 
   }
 })
 
+test('the late status redraw keeps the keyboard on the tile the person moved to', async () => {
+  const saved = ['document', 'window'].map((k) => Object.getOwnPropertyDescriptor(globalThis, k))
+  const doc = Object.assign(new Element(), { createElement: () => new Element() })
+  Object.defineProperty(globalThis, 'document', { configurable: true, value: doc })
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: Object.assign(new Element(), { innerWidth: 380, innerHeight: 600 }) })
+  const all = (n: Element): Element[] => [n, ...n.children.flatMap(all)]
+  try {
+    const root = new Element()
+    let arrive!: (value: unknown) => void
+    const frame = { plugin: { request: async () => new Promise((resolve) => { arrive = resolve }) } }
+    const picker = createCapabilityPicker(root as any, frame as any, { changed: async () => {}, manage: () => {} })
+    const opening = picker.open('computer', { id: 'a', name: 'Scout', state: 'idle' } as any, new Element() as any)
+    await flush()
+    all(root).find((n) => n.dataset.key === 'cloud')!.focus()
+    arrive({ cloud: 'setup' })
+    await opening
+    assert.equal((document as any).activeElement.dataset.key, 'cloud')
+    assert.equal((document as any).activeElement.attrs.get('aria-label'), 'Cloud desktop: Not set up yet')
+    picker.close()
+  } finally {
+    for (const [i, k] of ['document', 'window'].entries()) {
+      if (saved[i]) Object.defineProperty(globalThis, k, saved[i]!)
+      else delete (globalThis as any)[k]
+    }
+  }
+})
+
 test('in a narrow panel the model picker is also a sheet; in a wide one it is a dropdown', async () => {
   const saved = ['document', 'window'].map((k) => Object.getOwnPropertyDescriptor(globalThis, k))
   const doc = Object.assign(new Element(), { createElement: () => new Element() })

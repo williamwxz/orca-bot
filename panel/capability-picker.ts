@@ -121,6 +121,8 @@ export function createCapabilityPicker(
     const draw = () => {
       if (!current()) return
       const wasInside = root.contains(document.activeElement)
+      // A redraw replaces every control: remember which one had the keyboard.
+      const activeKey = wasInside ? (document.activeElement as HTMLElement | null)?.dataset?.key : undefined
       if (connectors)
         hooks.connectorCountChanged?.(
           bot.id,
@@ -364,13 +366,17 @@ export function createCapabilityPicker(
       root.replaceChildren(...children)
       position()
       if (wasInside) {
-        const focus = controls.find((c) => c.dataset.key === focusKey && !c.disabled)
+        const enabled = (key: string | undefined) =>
+          key === undefined ? undefined : controls.find((c) => c.dataset.key === key && !c.disabled)
+        const focus = enabled(focusKey) ?? enabled(activeKey)
         if (focus) focus.focus()
         else {
           root.tabIndex = -1
           root.focus()
         }
       }
+      // A requested focus applies to this draw only; later redraws follow the keyboard.
+      focusKey = undefined
     }
     async function mutate(key: string, operation: () => Promise<void>) {
       if (!current() || busy) return
@@ -400,6 +406,7 @@ export function createCapabilityPicker(
       } finally {
         if (current()) {
           busy = false
+          focusKey = key
           draw()
         }
       }

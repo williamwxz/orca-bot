@@ -148,18 +148,30 @@ test('elapsed working time counts whole seconds and minutes', () => {
     assert.equal(elapsedTime(1000, 1000 + ms), label)
 })
 
-test('a message can be only attachments, and a failed send restores the typed text without tags', async () => {
-  const file = { kind: 'image' as const, path: '/data/attachments/a.png', name: 'a.png' }
-  const sent: string[] = []
+test('a message can be only attachments; files go by ID and history never carries their paths', async () => {
+  const file = { id: 'upload-1', kind: 'image' as const, name: 'a.png' }
+  const sent: [string, string[]][] = []
   const state = { draft: '', attempts: [], sending: false } as any
-  await sendDraft(state, [], async (text) => { sent.push(text) }, () => {}, () => 10, [file])
-  assert.deepEqual(sent, ['<attached-image path="/data/attachments/a.png" name="a.png" />'])
-  assert.equal(state.attempts[0].text, sent[0])
-  state.draft = 'Look'
+  await sendDraft(state, [], async (text, ids) => { sent.push([text, ids]) }, () => {}, () => 10, [file])
+  assert.deepEqual(sent, [['', ['upload-1']]])
+  assert.deepEqual(state.attempts[0].attachments, [file])
+  state.draft = ' Look '
   await sendDraft(state, [], async () => { throw new Error('offline') }, () => {}, () => 20, [file])
   assert.equal(state.attempts[1].state, 'failed')
   assert.equal(state.draft, 'Look')
   state.draft = ''
-  await sendDraft(state, [], async () => { sent.push('nothing') }, () => {})
+  await sendDraft(state, [], async () => { sent.push(['nothing', []]) }, () => {})
   assert.equal(sent.length, 1)
+  // The server's copy of a message holds file paths in tags: parsing keeps names only.
+  const thread = parseThread({ messages: [
+    { id: 'm1', at: 10, role: 'user', kind: 'text', text: '<attached-image path="/server/secret/a.png" name="a.png" />' },
+    { id: 'm2', at: 11, role: 'user', kind: 'text', text: 'Look\n\n<attached-file path="/server/secret/b.pdf" name="b.pdf" />' }
+  ] })
+  assert.equal(JSON.stringify(thread).includes('/server/secret'), false)
+  assert.deepEqual(thread.messages[0], { id: 'm1', at: 10, role: 'user', kind: 'text', text: '', attachments: [{ kind: 'image', name: 'a.png' }] })
+  assert.equal(thread.messages[1].text, 'Look')
+  // The pending bubble matches its echo by text and attachment count.
+  const pending = [{ text: '', state: 'sent' as const, sentAt: 10, attachments: [file] }]
+  assert.equal(reconcileAttempts(pending, [thread.messages[1]]).attempts.length, 1)
+  assert.equal(reconcileAttempts(pending, [thread.messages[0]]).attempts.length, 0)
 })

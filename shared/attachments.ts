@@ -1,7 +1,12 @@
 // Files and photos sent with a chat message. OpenMausBot stores each upload and reads it back from a
 // standalone <attached-image|attached-file path="…" name="…" /> line in the message text.
 
+/** Worker-only: where OpenMausBot stored an upload. The path never crosses to the panel. */
 export type Attachment = { kind: 'image' | 'file'; path: string; name: string }
+/** What the panel knows about an upload: an opaque ID the worker resolves when the message is sent. */
+export type Uploaded = { id: string; kind: Attachment['kind']; name: string }
+/** An attachment as shown in a message: no path. */
+export type SentFile = { kind: Attachment['kind']; name: string }
 export type Upload = { name: string; mime: string; data: string }
 
 /** OpenMausBot reads these image types natively; anything else is sent as a file. */
@@ -29,8 +34,11 @@ export function validateUpload(value: unknown): Upload {
   const data = typeof input?.data === 'string' ? input.data : ''
   if (!name || name.length > 255 || /[\u0000-\u001f\u007f]/.test(name)) throw new Error('Invalid file name.')
   if (!/^[a-z0-9.+-]+\/[a-z0-9.+-]+$/.test(mime) && mime !== '') throw new Error('Invalid file type.')
-  if (!data || !/^[A-Za-z0-9+/]*={0,2}$/.test(data)) throw new Error('Invalid file data.')
-  const problem = uploadProblem(name, mime, Math.floor((data.length * 3) / 4))
+  if (!data || data.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(data))
+    throw new Error('Invalid file data.')
+  // Padding is not data: an exact-limit file ends in "=" or "==".
+  const padding = data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0
+  const problem = uploadProblem(name, mime, (data.length / 4) * 3 - padding)
   if (problem) throw new Error(problem)
   return { name, mime: mime || 'application/octet-stream', data }
 }
@@ -60,8 +68,8 @@ export function composeMessage(text: string, attachments: Attachment[]): string 
 const TAG = /^<attached-(image|file)[\t ]+path="([^"\r\n]*)"(?:[\t ]+name="([^"\r\n]*)")?[\t ]*\/>$/
 
 /** Splits attachment tag lines out of a message, so chat shows a file's name instead of raw markup. */
-export function splitAttachments(text: string): { text: string; attachments: Omit<Attachment, 'path'>[] } {
-  const attachments: Omit<Attachment, 'path'>[] = []
+export function splitAttachments(text: string): { text: string; attachments: SentFile[] } {
+  const attachments: SentFile[] = []
   const lines = text.split('\n').filter((line) => {
     const match = TAG.exec(line.trim())
     if (!match) return true

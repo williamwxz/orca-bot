@@ -459,7 +459,7 @@ test('chat capability pills count allowed connectors, gate working models and di
   }
 })
 
-test('files upload when picked, wait before sending, and go out as attachment tags', async () => {
+test('files upload when picked, wait before sending, go out by ID, and never cross a host change', async () => {
   const saved = ['document', 'window'].map((k) => Object.getOwnPropertyDescriptor(globalThis, k))
   const documentFake = new Element('document') as any
   documentFake.createElement = (tag: string) => new Element(tag)
@@ -474,10 +474,12 @@ test('files upload when picked, wait before sending, and go out as attachment ta
   const root = new Element('section')
   const bot: Bot = { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', name: 'Helper', modelLabel: 'm', main: false, unread: false, state: 'idle', title: '' }
   const uploads: any[] = []
-  const sends: string[] = []
+  const sends: any[] = []
   const notes: string[] = []
   let finishUpload!: () => void
   let remote = false
+  let host = 0
+  let history: any[] = []
   const file = (name: string, type: string, size = 3) => ({ name, type, size, arrayBuffer: async () => new TextEncoder().encode('hi!').buffer })
   try {
     const view = createChatView(
@@ -488,13 +490,13 @@ test('files upload when picked, wait before sending, and go out as attachment ta
             if (name === 'attachment.upload') {
               uploads.push(input)
               await new Promise<void>((resolve) => { finishUpload = resolve })
-              return { kind: input.mime === 'image/png' ? 'image' : 'file', path: `/data/attachments/${uploads.length}`, name: input.name }
+              return { id: `upload-${uploads.length}`, kind: input.mime === 'image/png' ? 'image' : 'file', name: input.name }
             }
             if (name === 'message.send') {
-              sends.push(input.text)
+              sends.push(input)
               return { sendId: 'x' }
             }
-            return { hasMore: false, messages: [] }
+            return { hasMore: false, messages: history }
           }) as any
         }
       },
@@ -502,7 +504,7 @@ test('files upload when picked, wait before sending, and go out as attachment ta
       () => {},
       () => {},
       undefined,
-      { changed: async () => {}, manage: () => {}, notify: (text: string) => notes.push(text) },
+      { changed: async () => {}, manage: () => {}, notify: (text: string) => notes.push(text), hostGeneration: () => host },
       () => (remote ? 'remote' : undefined)
     )
     view.open(bot)
@@ -512,30 +514,62 @@ test('files upload when picked, wait before sending, and go out as attachment ta
     const fileInput = nodes().find((n) => n.tag === 'input')! as any
     const send = nodes().find((n) => n.attributes.get('aria-label') === 'Send')!
     const form = nodes().find((n) => n.tag === 'form')!
+    const textarea = nodes().find((n) => n.tag === 'textarea')!
+    const tray = () => nodes().find((n) => n.className === 'composer-files')!
     assert.equal(attach.hidden, false)
     fileInput.files = [new File(['hi!'], 'shot.png', { type: 'image/png' }), file('huge.mov', 'video/quicktime', 30 * 1024 * 1024)]
     fileInput.emit('change')
     assert.match(notes[0], /huge\.mov is larger than 25 MB/)
-    assert.match(nodes().find((n) => n.className === 'composer-files')!.textContent, /shot\.png.*Uploading…/)
+    assert.match(tray().textContent, /shot\.png.*Uploading…/)
     assert.equal(send.disabled, true, 'nothing sends while a file is uploading')
     await flush()
     assert.deepEqual(uploads[0], { name: 'shot.png', mime: 'image/png', data: 'aGkh' })
     finishUpload()
     await flush()
     assert.equal(send.disabled, false, 'a photo alone can be sent')
+    // Enter submits even with Send disabled: an over-long draft must not eat the attachment.
+    textarea.value = 'x'.repeat(16001)
+    textarea.emit('input')
+    assert.equal(send.disabled, true)
+    form.emit('submit')
+    await flush()
+    assert.equal(sends.length, 0)
+    assert.match(tray().textContent, /shot\.png/)
+    textarea.value = ''
+    textarea.emit('input')
     form.emit('submit')
     await flush()
     await flush()
-    assert.deepEqual(sends, ['<attached-image path="/data/attachments/1" name="shot.png" />'])
-    assert.equal(nodes().find((n) => n.className === 'composer-files')!.hidden, true)
+    assert.deepEqual(sends, [{ botId: bot.id, text: '', attachments: ['upload-1'] }])
+    assert.equal(tray().hidden, true)
     assert.ok(nodes().some((n) => n.className === 'chat-files' && n.textContent === '🖼 shot.png'))
+    // History arrives from the worker with names only.
+    history = [{ id: 'm1', at: Date.now(), role: 'user', kind: 'text', text: 'See', attachments: [{ kind: 'file', name: 'plan.pdf' }] }]
+    view.open(bot)
+    await flush()
+    assert.ok(nodes().some((n) => n.className === 'chat-files' && n.textContent === '📎 plan.pdf'))
+    // A file attached on one host is gone after switching hosts, even for the same bot ID,
+    // and an upload that finishes after the switch is dropped.
+    fileInput.files = [new File(['hi!'], 'local-only.png', { type: 'image/png' })]
+    fileInput.emit('change')
+    await flush()
+    assert.match(tray().textContent, /local-only\.png/)
+    host++
+    finishUpload()
+    await flush()
+    view.open(bot)
+    await flush()
+    assert.equal(tray().hidden, true)
+    form.emit('submit')
+    await flush()
+    assert.equal(sends.length, 1)
     remote = true
     view.open(bot)
     assert.equal(attach.hidden, true)
     fileInput.files = [file('a.txt', 'text/plain')]
     fileInput.emit('change')
     assert.match(notes.at(-1)!, /only when bots run on this computer/)
-    assert.equal(uploads.length, 1)
+    assert.equal(uploads.length, 2)
     view.close()
   } finally {
     for (const [i, k] of ['document', 'window'].entries()) {

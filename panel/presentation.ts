@@ -1,13 +1,11 @@
 import type { ChatMessage } from '../shared/chat.ts'
-import { splitAttachments } from '../shared/attachments.ts'
 
 export function threadPreview(messages: ChatMessage[]): string | undefined {
   const last = messages.findLast((message) => message.kind === 'text')
   if (!last) return undefined
-  const { text, attachments } = splitAttachments(last.text)
-  if (!attachments.length) return last.text.split(/\r?\n/, 1)[0].trim() || undefined
-  const first = text.split(/\r?\n/, 1)[0].trim()
-  if (first) return first
+  const first = last.text.split(/\r?\n/, 1)[0].trim()
+  const attachments = last.attachments ?? []
+  if (first || !attachments.length) return first || undefined
   return attachments.length === 1 ? `Sent ${attachments[0].name}` : `Sent ${attachments.length} files`
 }
 

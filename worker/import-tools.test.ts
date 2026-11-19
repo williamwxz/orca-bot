@@ -228,4 +228,10 @@ test('Claude plugins contribute MCP servers from the live synced generation and 
     (await findTools(deps)).map((t) => t.name),
     ['inline']
   )
+  // A plugin file that is a link to somewhere outside its folder is not read.
+  deps.realpath = (path) =>
+    path === '/home/.claude/plugins/cache/on/.claude-plugin/plugin.json' ? '/etc/elsewhere/plugin.json' : path
+  assert.deepEqual(await findTools(deps), [])
+  deps.realpath = (path) => path.replace('/home/.claude/plugins/cache/on', '/real/on')
+  assert.deepEqual((await findTools(deps)).map((t) => t.name), ['inline'])
 })

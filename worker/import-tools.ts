@@ -2,7 +2,7 @@ import { agents, agentKeys, MCP_ENTRY_NAME } from '../shared/agents.ts'
 import { opencodeEntries } from './agent-config.ts'
 import { execFile } from 'node:child_process'
 import * as fs from 'node:fs'
-import { join, basename } from 'node:path'
+import { join, basename, relative, isAbsolute } from 'node:path'
 import { childEnvironment } from './child-environment.ts'
 import type { EnvironmentDeps } from './child-environment.ts'
 import { defaultCliDeps } from './omb-cli.ts'
@@ -14,6 +14,8 @@ export type ImportDeps = EnvironmentDeps & {
   exists: (path: string) => boolean
   /** Folder names in a directory; used to find Claude's synced plugins. */
   list?: (dir: string) => string[]
+  /** Resolves symbolic links, so a plugin file that points outside its folder is not read. */
+  realpath?: (path: string) => string
   claudeEnv: () => NodeJS.ProcessEnv
   listCodex: (file: string, env: NodeJS.ProcessEnv) => Promise<unknown>
   owned: (port: number) => Promise<boolean>
@@ -116,6 +118,7 @@ export function defaultImportDeps(): ImportDeps {
     ...cli,
     read: (path) => fs.readFileSync(path, 'utf8'),
     list: (dir) => fs.readdirSync(dir),
+    realpath: (path) => fs.realpathSync(path),
     claudeEnv: () => claudeEnvironment(server, false).env,
     owned: (port) => isPluginServer(port, server),
     listCodex: (file, env) =>
@@ -178,22 +181,28 @@ function claudePluginDirs(deps: ImportDeps, configDir: string): string[] {
   } catch {}
   return dirs
 }
+/** Reads a plugin file only when it really lives inside the plugin folder, symbolic links resolved. */
+function readInside(deps: ImportDeps, dir: string, file: string): unknown {
+  const real = deps.realpath ?? ((path: string) => path)
+  const inside = relative(real(dir), real(file))
+  if (!inside || inside.startsWith('..') || isAbsolute(inside)) throw new Error('Outside the plugin.')
+  return JSON.parse(deps.read(file))
+}
 function pluginServers(deps: ImportDeps, dir: string): Record<string, unknown> | undefined {
   let source: unknown
   try {
-    source = JSON.parse(deps.read(join(dir, '.claude-plugin/plugin.json')))?.mcpServers
+    const manifest = readInside(deps, dir, join(dir, '.claude-plugin/plugin.json'))
+    source = object(manifest) ? manifest.mcpServers : undefined
   } catch {}
   if (typeof source === 'string') {
-    const path = join(dir, source)
-    if (!path.startsWith(dir + '/')) return
     try {
-      source = JSON.parse(deps.read(path))
+      source = readInside(deps, dir, join(dir, source))
     } catch {
       return
     }
   } else if (source === undefined) {
     try {
-      source = JSON.parse(deps.read(join(dir, '.mcp.json')))
+      source = readInside(deps, dir, join(dir, '.mcp.json'))
     } catch {
       return
     }

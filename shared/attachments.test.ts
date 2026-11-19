@@ -35,6 +35,13 @@ test('uploads are checked for name, type, data and size before any request', () 
     { name: 'a', mime: 'image/png', data: '!!!!' }
   ])
     assert.throws(() => validateUpload(bad))
+  assert.throws(() => validateUpload({ name: 'a', mime: 'image/png', data: 'AAA' }), /Invalid file data/)
+  // Exactly 10 MiB of image passes although its base64 ends in padding; one byte more does not.
+  const b64 = (bytes: number) => Buffer.alloc(bytes).toString('base64')
+  const limit = 10 * 1024 * 1024
+  assert.ok(b64(limit).endsWith('='))
+  assert.equal(validateUpload({ name: 'a.png', mime: 'image/png', data: b64(limit) }).name, 'a.png')
+  assert.throws(() => validateUpload({ name: 'a.png', mime: 'image/png', data: b64(limit + 1) }), /larger than 10 MB/)
   assert.match(uploadProblem('big.png', 'image/png', 11 * 1024 * 1024)!, /larger than 10 MB/)
   assert.equal(uploadProblem('big.pdf', 'application/pdf', 11 * 1024 * 1024), undefined)
   assert.match(uploadProblem('huge.mov', 'video/quicktime', 26 * 1024 * 1024)!, /larger than 25 MB/)

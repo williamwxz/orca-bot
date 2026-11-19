@@ -2,7 +2,7 @@ import type { Models } from '../shared/models.ts'
 import type { Connectors, ConnectorAction } from './mcp-connectors.ts'
 import type { FoundAgents } from '../shared/agents.ts'
 import type { Thread } from '../shared/chat.ts'
-import type { Attachment, Upload } from '../shared/attachments.ts'
+import type { Upload, Uploaded } from '../shared/attachments.ts'
 import type { BotCreate, BotCreated, Bot, BotAction, ComputerStatus, GroupRename } from '../shared/roster.ts'
 import type { Hosts } from './paired-host.ts'
 import type { Updates } from './updates.ts'
@@ -27,9 +27,9 @@ export type Requests = {
   'setup.get': { input: Record<string, never>; output: Setup }
   'setup.answer': { input: SetupAnswer; output: { answered: true } }
   'thread.read': { input: { botId: string; limit?: number }; output: Thread }
-  'message.send': { input: { botId: string; text: string }; output: { sendId: string } }
+  'message.send': { input: { botId: string; text: string; attachments?: string[] }; output: { sendId: string } }
   'computer.status': { input: { botId: string }; output: ComputerStatus }
-  'attachment.upload': { input: Upload; output: Attachment }
+  'attachment.upload': { input: Upload; output: Uploaded }
   'chat.open': { input: { botId?: string }; output: { message: string } }
   'bots.addMausBot': { input: { botId: string }; output: { message: string } }
   'groups.rename': { input: GroupRename; output: { ok: true } }

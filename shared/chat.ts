@@ -1,6 +1,6 @@
 import type { Bot } from './roster.ts'
-import { composeMessage } from './attachments.ts'
-import type { Attachment } from './attachments.ts'
+import { splitAttachments } from './attachments.ts'
+import type { SentFile, Uploaded } from './attachments.ts'
 
 export type ChatMessage = {
   id: string
@@ -8,6 +8,8 @@ export type ChatMessage = {
   role: 'user' | 'bot'
   kind: 'text' | 'activity' | 'unsupported'
   text: string
+  /** Files sent with the message, by name. Their server paths are removed before this leaves the worker. */
+  attachments?: SentFile[]
 }
 export type Thread = { messages: ChatMessage[]; hasMore: boolean }
 export const refreshInterval = (state: Bot['state'], sending: boolean): number =>
@@ -25,7 +27,13 @@ export function parseThread(value: unknown): Thread {
       role: entry?.role === 'user' ? ('user' as const) : ('bot' as const)
     }
     if (entry?.kind === 'text' && typeof entry.text === 'string') {
-      messages.push({ ...base, kind: 'text', text: entry.text })
+      // Attachment tags hold the server's file paths: keep the names, drop the tags.
+      const { text, attachments } = splitAttachments(entry.text)
+      messages.push(
+        attachments.length
+          ? { ...base, kind: 'text', text, attachments }
+          : { ...base, kind: 'text', text: entry.text }
+      )
     } else if (entry?.kind === 'activity') {
       const short =
         typeof entry.tool?.name === 'string'
@@ -57,14 +65,12 @@ export function collapseActivities(messages: ChatMessage[]): ChatMessage[] {
   return result
 }
 
-/** text is what was sent, attachment tags included; draft is what the person typed. */
 export type Attempt = {
   text: string
   state: 'pending' | 'sent' | 'failed'
   error?: string
   sentAt: number
-  draft?: string
-  attachments?: Attachment[]
+  attachments?: Uploaded[]
 }
 export type Composer = {
   draft: string
@@ -77,26 +83,22 @@ export type Composer = {
 export async function sendDraft(
   state: Composer,
   baseline: string[],
-  send: (text: string) => Promise<unknown>,
+  send: (text: string, attachments: string[]) => Promise<unknown>,
   changed: () => void,
   now: () => number = Date.now,
-  attachments: Attachment[] = []
+  attachments: Uploaded[] = []
 ): Promise<void> {
-  if (state.sending || (!state.draft.trim() && !attachments.length)) return
-  const text = composeMessage(state.draft, attachments)
-  if (text.length > 16000) return
-  const attempt: Attempt = {
-    text,
-    state: 'pending',
-    sentAt: now(),
-    ...(attachments.length ? { draft: state.draft, attachments } : {})
-  }
+  if (state.sending || (!state.draft.trim() && !attachments.length) || state.draft.length > 16000) return
+  // With files the server stores the trimmed text, so the pending copy matches its echo.
+  const attempt: Attempt = attachments.length
+    ? { text: state.draft.trim(), state: 'pending', sentAt: now(), attachments }
+    : { text: state.draft, state: 'pending', sentAt: now() }
   state.attempts.push(attempt)
   state.draft = ''
   state.sending = true
   changed()
   try {
-    await send(attempt.text)
+    await send(attempt.text, attachments.map((file) => file.id))
     attempt.state = 'sent'
     state.sendFailed = false
     state.wait = { since: state.wait?.since ?? now(), sentAt: attempt.sentAt, baseline: new Set(baseline) }
@@ -106,8 +108,7 @@ export async function sendDraft(
     state.wait = undefined
     attempt.error =
       error instanceof Error ? error.message : 'Could not send. Check the full chat before trying again.'
-    const typed = attempt.draft ?? attempt.text
-    state.draft = typed + (state.draft && typed ? '\n' : '') + state.draft
+    state.draft = attempt.text + (state.draft && attempt.text ? '\n' : '') + state.draft
   } finally {
     state.sending = false
     changed()
@@ -128,6 +129,7 @@ export function reconcileAttempts(
         entry.role === 'user' &&
         entry.kind === 'text' &&
         entry.text === attempt.text &&
+        (entry.attachments?.length ?? 0) === (attempt.attachments?.length ?? 0) &&
         entry.at >= attempt.sentAt - 5000 &&
         !matchedIds.has(entry.id)
     )

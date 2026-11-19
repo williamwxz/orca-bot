@@ -13,16 +13,16 @@ import {
   displayText
 } from '../shared/chat.ts'
 import type { Thread, Composer } from '../shared/chat.ts'
-import { MAX_ATTACHMENTS, composeMessage, splitAttachments, uploadProblem } from '../shared/attachments.ts'
-import type { Attachment } from '../shared/attachments.ts'
+import { MAX_ATTACHMENTS, uploadProblem } from '../shared/attachments.ts'
+import type { SentFile, Uploaded } from '../shared/attachments.ts'
 
 /** A file picked for the next message: uploaded at once, sent with the message. */
 type Pending = {
   id: number
   name: string
-  kind: Attachment['kind']
+  kind: Uploaded['kind']
   state: 'uploading' | 'ready' | 'failed'
-  attachment?: Attachment
+  attachment?: Uploaded
   preview?: string
 }
 function base64(bytes: Uint8Array): string {
@@ -82,13 +82,25 @@ export function createChatView(
   const pending = () => (bot ? (pendingByBot.get(bot.id) ?? []) : [])
   const ready = () => pending().filter((p) => p.state === 'ready').map((p) => p.attachment!)
   const notify = (text: string) => (capabilities?.notify ? capabilities.notify(text) : (note.textContent = text))
+  // Uploads belong to the host they were made on: a host change drops them, even for a bot with the same ID.
+  let uploadHost = capabilities?.hostGeneration?.()
+  function syncHost(): void {
+    const host = capabilities?.hostGeneration?.()
+    if (host === uploadHost) return
+    uploadHost = host
+    for (const list of pendingByBot.values())
+      for (const entry of list) if (entry.preview) URL.revokeObjectURL?.(entry.preview)
+    pendingByBot.clear()
+  }
   function addFiles(files: File[]): void {
+    syncHost()
     if (!bot || !files.length) return
     if (dashboardNote()) {
       notify('Files and photos can be sent only when bots run on this computer.')
       return
     }
     const id = bot.id
+    const host = uploadHost
     const list = pendingByBot.get(id) ?? []
     pendingByBot.set(id, list)
     for (const file of files) {
@@ -115,10 +127,14 @@ export function createChatView(
       void (async () => {
         try {
           const data = base64(new Uint8Array(await file.arrayBuffer()))
-          entry.attachment = await frame.plugin.request('attachment.upload', { name: entry.name, mime, data })
-          entry.kind = entry.attachment.kind
+          const uploaded = await frame.plugin.request('attachment.upload', { name: entry.name, mime, data })
+          // The host changed while this was uploading: the file is not for the new host.
+          if (host !== capabilities?.hostGeneration?.()) return
+          entry.attachment = uploaded
+          entry.kind = uploaded.kind
           entry.state = 'ready'
         } catch (error) {
+          if (host !== capabilities?.hostGeneration?.()) return
           entry.state = 'failed'
           notify(error instanceof Error ? error.message : `Could not upload ${entry.name}.`)
         }
@@ -168,15 +184,14 @@ export function createChatView(
       state.sending ||
       pending().some((p) => p.state === 'uploading') ||
       (!state.draft.trim() && !files.length) ||
-      composeMessage(state.draft, files).length > 16000
+      state.draft.length > 16000
   }
-  function messageBody(parent: HTMLElement, text: string): void {
-    const split = splitAttachments(text)
-    if (split.text) linkedText(parent, displayText(split.text))
-    if (!split.attachments.length) return
+  function messageBody(parent: HTMLElement, text: string, attachments: SentFile[] = []): void {
+    if (text) linkedText(parent, displayText(text))
+    if (!attachments.length) return
     const files = node('div')
     files.className = 'chat-files'
-    for (const file of split.attachments)
+    for (const file of attachments)
       files.append(node('span', `${file.kind === 'image' ? '🖼' : '📎'} ${file.name}`))
     parent.append(files)
   }
@@ -379,7 +394,7 @@ export function createChatView(
       previousAt = message.at
       const item = node('div')
       item.className = `chat-message ${message.kind} ${message.role}`
-      if (message.kind === 'text') messageBody(item, message.text)
+      if (message.kind === 'text') messageBody(item, message.text, message.attachments)
       else item.append(document.createTextNode(message.text))
       if (message.kind === 'unsupported')
         item.append(
@@ -392,7 +407,7 @@ export function createChatView(
     for (const attempt of state.attempts) {
       const item = node('div')
       item.className = `chat-message text user ${attempt.state}`
-      messageBody(item, attempt.text)
+      messageBody(item, attempt.text, attempt.attachments)
       if (attempt.error || attempt.state === 'pending')
         item.append(node('small', attempt.error ?? 'Sending…'))
       list.append(item)
@@ -480,6 +495,7 @@ export function createChatView(
   }
   composer.addEventListener('submit', (event) => {
     event.preventDefault()
+    syncHost()
     if (!bot) return
     const id = bot.id,
       current = state
@@ -487,12 +503,19 @@ export function createChatView(
     if (all.some((p) => p.state === 'uploading')) return
     const sending = all.filter((p) => p.state === 'ready')
     const files = sending.map((p) => p.attachment!)
-    if (current.sending || (!current.draft.trim() && !files.length)) return
+    // Enter submits even while Send is disabled: refuse here, before any file leaves the tray.
+    if (current.sending || (!current.draft.trim() && !files.length) || current.draft.length > 16000)
+      return
     pendingByBot.set(id, all.filter((p) => p.state !== 'ready'))
     void sendDraft(
       current,
       thread.messages.map((message) => message.id),
-      (text) => frame.plugin.request('message.send', { botId: id, text }),
+      (text, attachments) =>
+        frame.plugin.request('message.send', {
+          botId: id,
+          text,
+          ...(attachments.length ? { attachments } : {})
+        }),
       () => {
         if (state === current && bot?.id === id) {
           render()
@@ -571,6 +594,7 @@ export function createChatView(
     dismissCapabilities: () => picker?.close(false),
     open(next: Bot) {
       close()
+      syncHost()
       bot = next
       loaded = false
       thread = { messages: [], hasMore: false }
