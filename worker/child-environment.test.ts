@@ -1,7 +1,7 @@
 import { assert, test } from 'orca/testing'
 import { childEnvironment } from './child-environment.ts'
-import { cliOptions } from './omb-cli.ts'
-import type { CliDeps } from './omb-cli.ts'
+import { cliOptions } from './cli.ts'
+import type { CliDeps } from './cli.ts'
 
 function fake(env: NodeJS.ProcessEnv = {}): CliDeps {
   return {

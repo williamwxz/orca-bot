@@ -1,8 +1,0 @@
-{
-  "name": "orca-bot-openmausbot-runtime",
-  "version": "1.0.0",
-  "private": true,
-  "dependencies": {
-    "openmausbot": "0.1.171"
-  }
-}

@@ -1,5 +1,3 @@
-import { renameGroup } from './omb-roster.ts'
-import { HttpStatusError } from './omb-http.ts'
 import { assert, test } from 'orca/testing'
 import { gunzipSync } from 'node:zlib'
 import { createRelay } from './relay-host.ts'
@@ -68,7 +66,7 @@ function fakeServer(
         const received = JSON.parse(gunzipSync(Buffer.from(text.trim(), 'base64')).toString())
         assert.ok((options.bundles ?? [bundle]).some((b) => JSON.stringify(b) === JSON.stringify(received)))
         terminal.feed = createRelay(
-          { hash: received.hash, write, load: () => undefined, save: () => {} },
+          { hash: received.hash, write },
           (api) => {
             for (const [name, handler] of Object.entries(handlers))
               api.panels.handle(name as never, handler as never)
@@ -142,10 +140,10 @@ test('requests reach the host worker through one terminal, with long messages an
   const sent: unknown[] = []
   const big = 'é'.repeat(16000)
   const server = fakeServer({
-    status: () => ({ state: 'running', message: '', port: 8799 }),
+    status: () => ({ state: 'running', message: '' }),
     'message.send': (input) => {
       sent.push(input)
-      return { sendId: 'remote-1' }
+      return { ok: true }
     },
     // Random-looking text gzip cannot shrink, so the reply spans several 400-line windows.
     'thread.read': () => ({
@@ -153,22 +151,16 @@ test('requests reach the host worker through one terminal, with long messages an
         id: `m${i}`,
         text: `${(i * 7919) % 104729} ${Math.sin(i).toString(36)}`
       })),
-      hasMore: false
+      older: 'cursor'
     }),
     'bots.list': () => {
-      throw new Error('OpenMausBot is not running yet.')
+      throw new Error('Hermes is not running yet.')
     }
   })
   const store: { saved?: Saved } = {}
   const link = createTerminalLink(linkDeps(server, store))
-  assert.deepEqual(await link.request(host, 'status', {}), {
-    state: 'running',
-    message: '',
-    port: 8799
-  })
-  assert.deepEqual(await link.request(host, 'message.send', { botId: 'b', text: big }), {
-    sendId: 'remote-1'
-  })
+  assert.deepEqual(await link.request(host, 'status', {}), { state: 'running', message: '' })
+  assert.deepEqual(await link.request(host, 'message.send', { botId: 'b', text: big }), { ok: true })
   assert.deepEqual(sent, [{ botId: 'b', text: big }])
   const thread = await link.request(host, 'thread.read', { botId: 'b' })
   assert.equal(thread.messages.length, 2500)
@@ -232,10 +224,10 @@ test('a server without a project or without Node explains what to do and leaves 
 
 test('the host refuses requests a paired client may not make', async () => {
   const server = fakeServer({
-    'updates.install': () => ({ state: 'updated' }),
+    'bots.delete': () => ({ ok: true }),
     'hosts.select': () => ({ selected: 'local' })
   })
-  for (const forbidden of ['updates.install', 'hosts.select']) {
+  for (const forbidden of ['bots.delete', 'hosts.select']) {
     await assert.rejects(
       createTerminalLink(linkDeps(server)).request(host, forbidden, {}),
       /Unsupported bot request/
@@ -249,7 +241,8 @@ test('the bundle is the worker and shared source without tests, and the loader i
   assert.ok(
     real.files['worker/relay-host.ts'] &&
       real.files['worker/worker.ts'] &&
-      real.files['shared/roster.ts']
+      real.files['worker/hermes.ts'] &&
+      real.files['shared/bots.ts']
   )
   assert.ok(
     Object.keys(real.files).every(
@@ -280,194 +273,6 @@ test('the server terminal closes after the link sits idle, and the next request 
   assert.equal(server.terminals.size, 2)
 })
 
-test('the link stays open until a running private desktop step ends, and keeps waiting through unanswered checks', async () => {
-  // A replace is "remove" then "run" inside the host's worker: closing between them would
-  // leave the desktop removed. The step finishes on the fourth check; one check goes unanswered.
-  let checks = 0
-  const server = fakeServer({
-    status: () => ({ state: 'running', message: '' }),
-    'desktop.step': () => {
-      checks++
-      return { step: { id: 1, action: 'recreate', running: checks < 4 } }
-    }
-  })
-  // After the first check, one read of the terminal fails: that check goes unanswered.
-  const deps = linkDeps(server)
-  let dropped = false
-  deps.call = async (args) => {
-    if (checks === 1 && !dropped && args[0] === 'terminal' && args[1] === 'read' && args.includes('--cursor')) {
-      dropped = true
-      throw new Error('connection reset')
-    }
-    return server.call(args)
-  }
-  const link = createTerminalLink(deps)
-  await link.request(host, 'status', {})
-  await link.disconnect()
-  assert.ok(dropped)
-  assert.equal(checks, 4)
-  assert.equal(server.terminals.get('term_1')!.status, 'exited')
-  // A host whose worker has no job request (an older version) closes without waiting.
-  const plain = fakeServer({ status: () => ({ state: 'running', message: '' }) })
-  const other = createTerminalLink(linkDeps(plain))
-  await other.request(host, 'status', {})
-  await other.disconnect()
-  assert.equal(plain.terminals.get('term_1')!.status, 'exited')
-})
-
-test('switching to another paired host answers at once while the first host finishes its desktop step', async () => {
-  const hostB = { id: 'mini-2', name: 'Mac Studio' }
-  let release!: () => void
-  let running = true
-  const server = fakeServer(
-    {
-      status: () => ({ state: 'running', message: '' }),
-      'desktop.step': () => ({ step: { id: 1, action: 'prepare', running } })
-    },
-    { hosts: [host.id, hostB.id] }
-  )
-  const timers: (() => void)[] = []
-  const deps = linkDeps(server, {}, timers)
-  // Waiting between job checks parks until the test releases it.
-  deps.sleep = () => new Promise<void>((resolve) => { release = () => { running = false; resolve() } })
-  const link = createTerminalLink(deps)
-  await link.request(host, 'status', {})
-  assert.deepEqual(await link.request(hostB, 'status', {}), { state: 'running', message: '' })
-  assert.equal(server.terminals.get('term_1')!.status, 'running', 'host A is still finishing')
-  assert.equal(server.terminals.get('term_2')!.status, 'running')
-  release()
-  for (let i = 0; i < 20 && server.terminals.get('term_1')!.status !== 'exited'; i++)
-    await new Promise((resolve) => setImmediate(resolve))
-  assert.equal(server.terminals.get('term_1')!.status, 'exited')
-})
-
-test('a terminal whose worker stops answering mid-step is left running, never closed on a guess', async () => {
-  const server = fakeServer({
-    status: () => ({ state: 'running', message: '' }),
-    'desktop.step': () => ({ step: { id: 1, action: 'recreate', running: true } })
-  })
-  const deps = linkDeps(server)
-  let failing = false
-  deps.call = async (args) => {
-    // Every read of the answer fails, but the terminal itself is still running.
-    if (failing && args[0] === 'terminal' && args[1] === 'read' && args.includes('--cursor')) throw new Error('read failed')
-    return server.call(args)
-  }
-  const link = createTerminalLink(deps)
-  await link.request(host, 'status', {})
-  failing = true
-  await link.disconnect()
-  assert.equal(server.terminals.get('term_1')!.status, 'running')
-  // Asking the same host again while reads still fail does not close it either.
-  await assert.rejects(link.request(host, 'status', {}))
-  assert.equal(server.terminals.get('term_1')!.status, 'running')
-  // Nor does a restarted plugin that finds it as the saved terminal and gets no answer: it asks
-  // for a retry and starts no second worker.
-  const restarted = createTerminalLink({ ...deps, load: async () => ({ hostId: host.id, handle: 'term_1' }) })
-  const terminalsBefore = server.terminals.size
-  await assert.rejects(restarted.request(host, 'status', {}), /Try again in a moment/)
-  assert.equal(server.terminals.get('term_1')!.status, 'running')
-  assert.equal(server.terminals.size, terminalsBefore)
-  const closed = server.calls.filter((args) => args[0] === 'terminal' && args[1] === 'close').map((args) => args[args.indexOf('--terminal') + 1])
-  assert.equal(closed.includes('term_1'), false)
-})
-
-test('a return to the host while its last check is in flight keeps the terminal, even if that check says idle', async () => {
-  const server = fakeServer({
-    status: () => ({ state: 'running', message: '' }),
-    'desktop.step': () => ({ step: { id: 1, action: 'recreate', running: false } })
-  })
-  const link = createTerminalLink(linkDeps(server))
-  await link.request(host, 'status', {})
-  const leaving = link.disconnect()
-  await link.request(host, 'status', {})
-  await leaving
-  for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r))
-  assert.equal(server.terminals.get('term_1')!.status, 'running')
-  assert.equal(server.terminals.size, 1)
-})
-
-test('returning to a host before its desktop step ends takes back the same terminal and job', async () => {
-  const hostB = { id: 'mini-2', name: 'Mac Studio' }
-  let running = true
-  const server = fakeServer(
-    {
-      status: () => ({ state: 'running', message: '' }),
-      'desktop.step': () => ({ step: { id: 1, action: 'prepare', running } })
-    },
-    { hosts: [host.id, hostB.id] }
-  )
-  const store: { saved?: Saved } = {}
-  const deps = linkDeps(server, store)
-  let parked: (() => void)[] = []
-  deps.sleep = () => new Promise<void>((resolve) => parked.push(resolve))
-  const flushAll = async () => { for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r)) }
-  const link = createTerminalLink(deps)
-  // A → This computer → A.
-  await link.request(host, 'status', {})
-  void link.disconnect()
-  await flushAll()
-  await link.request(host, 'status', {})
-  assert.equal(server.terminals.size, 1, 'no second terminal on A')
-  for (const wake of parked.splice(0)) wake()
-  await flushAll()
-  assert.equal(server.terminals.get('term_1')!.status, 'running', 'the old retirement does not close the reclaimed terminal')
-  // A → B → A: B gets its own terminal; A is taken back, and saved as the current one again.
-  await link.request(hostB, 'status', {})
-  await flushAll()
-  assert.equal(server.terminals.get('term_2')!.status, 'running')
-  assert.equal(store.saved?.hostId, hostB.id)
-  await link.request(host, 'status', {})
-  assert.equal(store.saved?.handle, 'term_1')
-  assert.equal(server.terminals.get('term_1')!.status, 'running')
-  // When A's step ends and the link lets A go, it closes.
-  running = false
-  void link.disconnect()
-  await flushAll()
-  for (const wake of parked.splice(0)) wake()
-  await flushAll()
-  assert.equal(server.terminals.get('term_1')!.status, 'exited')
-})
-
-test('after a restart, one unanswered check of the saved terminal asks for a retry, and the retry takes it back', async () => {
-  let running = true
-  const newer: Bundle = { ...bundle, hash: 'fedcba9876543210' }
-  const server = fakeServer(
-    {
-      status: () => ({ state: 'running', message: '' }),
-      'desktop.step': () => ({ step: { id: 1, action: 'prepare', running } })
-    },
-    { bundles: [bundle, newer] }
-  )
-  const store: { saved?: Saved } = {}
-  const first = createTerminalLink(linkDeps(server, store))
-  await first.request(host, 'status', {})
-  assert.equal(store.saved?.handle, 'term_1')
-  // The plugin restarts. Its first check of term_1 goes unanswered once.
-  const deps = linkDeps(server, store)
-  let drop = true
-  deps.call = async (args) => {
-    if (drop && args[0] === 'terminal' && args[1] === 'read' && args.includes('--cursor')) { drop = false; throw new Error('timed out') }
-    return server.call(args)
-  }
-  const restarted = createTerminalLink(deps)
-  await assert.rejects(restarted.request(host, 'status', {}), /Try again in a moment/)
-  assert.equal(store.saved?.handle, 'term_1')
-  assert.deepEqual(await restarted.request(host, 'status', {}), { state: 'running', message: '' })
-  assert.equal(server.terminals.size, 1, 'no second worker')
-  // A saved terminal running another plugin version is not replaced while it runs a step.
-  const upgraded = linkDeps(server, store)
-  upgraded.bundle = async () => newer
-  await assert.rejects(createTerminalLink(upgraded).request(host, 'status', {}), /still finishing a private desktop step/)
-  assert.equal(server.terminals.size, 1)
-  running = false
-  // Once its step is done, the new version replaces it and serves the host.
-  assert.deepEqual(await createTerminalLink(upgraded).request(host, 'status', {}), { state: 'running', message: '' })
-  assert.equal(server.terminals.get('term_1')!.status, 'exited')
-  assert.equal(server.terminals.get('term_2')!.status, 'running')
-  assert.equal(store.saved?.handle, 'term_2')
-})
-
 test('a saved terminal that no longer exists is replaced; one that cannot be checked asks for a retry', async () => {
   let listFails = true
   const server = fakeServer({ status: () => ({ state: 'running', message: '' }) }, { listFails: () => listFails })
@@ -483,149 +288,15 @@ test('a saved terminal that no longer exists is replaced; one that cannot be che
   assert.equal(store.saved?.handle, 'term_1')
 })
 
-test('paired launcher detaches with fake process dependencies and validates the returned pid', async () => {
-  const { EventEmitter } = await import('node:events')
-  const { orphanSpawn } = await import('./relay-host.ts')
-  for (const output of ['42', 'invalid']) {
-    const calls: unknown[][] = []
-    const launch = (...args: unknown[]) => {
-      calls.push(args)
-      const shell = new EventEmitter()
-      const stdout = Object.assign(new EventEmitter(), {
-        setEncoding() {
-          return this
-        }
-      })
-      queueMicrotask(() => {
-        stdout.emit('data', output)
-        shell.emit('close', 0)
-      })
-      return Object.assign(shell, { stdout })
-    }
-    const result = orphanSpawn(
-      '/fake/openmausbot',
-      ['serve'],
-      {
-        env: { PATH: '/fake/bin' },
-        stdio: ['ignore', 7, 7]
-      },
-      launch as any
-    )
-    if (output === '42') assert.equal((await result).pid, 42)
-    else await assert.rejects(result, /Could not start/)
-    assert.equal(calls[0][0], '/bin/sh')
-    assert.match((calls[0][1] as string[])[1], /& echo \$!$/)
-    assert.deepEqual(calls[0][2], {
-      env: { PATH: '/fake/bin' },
-      detached: true,
-      stdio: ['ignore', 'pipe', 'ignore', 7]
-    })
-  }
-})
 
-test('MCP menu requests and busy failures traverse paired terminal relay unchanged', async () => {
-  const rows = { connectors: [{ name: 'mail', rawName: 'mail', provider: 'Cursor', enabled: true, present: true, bots: [] }], bots: [{ id: 'a', name: 'Work' }] }
-  const actions: unknown[] = []
-  const server = fakeServer({
-    'mcp.list': () => rows,
-    'mcp.act': input => {
-      actions.push(input)
-      if (input.action === 'assign') throw new Error('A bot is currently working. Retry once all bots are idle.')
-      return rows
-    }
-  })
-  const link = createTerminalLink(linkDeps(server))
-  assert.deepEqual(await link.request(host, 'mcp.list', {}), rows)
-  const action = { action: 'group', provider: 'Cursor', enabled: true }
-  assert.deepEqual(await link.request(host, 'mcp.act', action), rows)
-  assert.deepEqual(actions, [action])
-  await assert.rejects(link.request(host, 'mcp.act', { action: 'assign', name: 'mail', bots: ['a'] }), /currently working/)
-})
-
-test('MCP actions have headroom beyond the ordinary 30 second relay timeout', async () => {
-  let finish: ((value: unknown) => void) | undefined
-  const server = fakeServer({ 'mcp.act': () => new Promise(resolve => { finish = resolve }) })
-  const deps = linkDeps(server)
-  let clock = 0
-  deps.now = () => clock
-  deps.sleep = async ms => {
-    clock += ms
-    if (clock > 35000 && finish) { finish({ connectors: [], bots: [] }); finish = undefined }
-  }
-  const link = createTerminalLink(deps)
-  assert.deepEqual(await link.request(host, 'mcp.act', { action: 'group', provider: 'Cursor', targets: [], enabled: true }), { connectors: [], bots: [] })
-  assert.ok(clock > 30000)
-})
-
-test('group rename crosses terminal relay and preserves server refusal messages', async () => {
-  const calls: unknown[] = []
-  let status = 200
-  const server = fakeServer({
-    'groups.rename': async (input) => {
-      await renameGroup({ ...input, port: 18799 }, {
-        avatar: async () => undefined,
-        request: async (...args) => {
-          calls.push(args)
-          if (status !== 200) throw new HttpStatusError(status)
-          return { sections: ['New'] }
-        }
-      })
-      return { ok: true }
-    }
-  })
-  const link = createTerminalLink(linkDeps(server))
-  try {
-    assert.deepEqual(await link.request(host, 'groups.rename', { section: 'R&D', name: 'New' }), { ok: true })
-    assert.deepEqual(calls[0], [18799, '/api/sidebar-sections?section=R%26D', { name: 'New' }, 'PATCH'])
-    status = 404
-    await assert.rejects(link.request(host, 'groups.rename', { section: 'Ops', name: 'New' }), /no longer exists/)
-    status = 409
-    await assert.rejects(link.request(host, 'groups.rename', { section: 'Ops', name: 'New' }), /refused.*busy/)
-  } finally { await link.disconnect() }
-})
-
-test('models and thread-aware model actions traverse the paired relay with validation and safe refusals', async () => {
-  const groups = { groups: [{ instanceId: 'claude.work', label: 'Claude Work', models: [{ id: 'anthropic/sonnet', label: 'Sonnet' }] }] }
-  const actions: unknown[] = []
-  const server = fakeServer({ 'models.list': () => groups, 'bots.act': input => {
-    actions.push(input)
-    if (input.model === 'busy') throw new Error('This bot is busy. Wait until it finishes.')
-    return { ok: true }
-  } })
-  const link = createTerminalLink(linkDeps(server))
-  try {
-    assert.deepEqual(await link.request(host, 'models.list', {}), groups)
-    const input = { botId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', action: 'model', instanceId: 'claude.work', model: 'anthropic/sonnet' }
-    assert.deepEqual(await link.request(host, 'bots.act', input), { ok: true })
-    assert.deepEqual(actions, [input])
-    await assert.rejects(link.request(host, 'bots.act', { ...input, instanceId: '../bad' }), /valid provider/)
-    assert.equal(actions.length, 1)
-    await assert.rejects(link.request(host, 'bots.act', { ...input, model: 'busy' }), /busy/)
-  } finally { await link.disconnect() }
-})
-
-test('switching hosts keeps the first host’s terminal open while its export runs, then closes it', async () => {
+test('switching to another paired host closes the first host\u2019s terminal', async () => {
   const hostB = { id: 'mini-2', name: 'Mac Studio' }
-  let release!: () => void
-  let exporting = true
-  const server = fakeServer(
-    {
-      status: () => ({ state: 'running', message: '' }),
-      // No desktop step, only an export: the terminal must still wait for it.
-      'desktop.step': () => (exporting ? { exporting: true } : {})
-    },
-    { hosts: [host.id, hostB.id] }
-  )
-  const timers: (() => void)[] = []
-  const deps = linkDeps(server, {}, timers)
-  deps.sleep = () => new Promise<void>((resolve) => { release = () => { exporting = false; resolve() } })
-  const link = createTerminalLink(deps)
+  const server = fakeServer({ status: () => ({ state: 'running', message: '' }) }, { hosts: [host.id, hostB.id] })
+  const link = createTerminalLink(linkDeps(server))
   await link.request(host, 'status', {})
   assert.deepEqual(await link.request(hostB, 'status', {}), { state: 'running', message: '' })
-  for (let i = 0; i < 10; i++) await new Promise((resolve) => setImmediate(resolve))
-  assert.equal(server.terminals.get('term_1')!.status, 'running', 'host A is still exporting')
-  release()
   for (let i = 0; i < 20 && server.terminals.get('term_1')!.status !== 'exited'; i++)
     await new Promise((resolve) => setImmediate(resolve))
   assert.equal(server.terminals.get('term_1')!.status, 'exited')
+  assert.equal(server.terminals.get('term_2')!.status, 'running')
 })

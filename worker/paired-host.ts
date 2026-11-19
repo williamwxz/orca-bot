@@ -1,7 +1,6 @@
 import type { OrcaWorkerApi } from 'orca/worker'
-import type { CliDeps } from './omb-cli.ts'
-import { defaultCliDeps } from './omb-cli.ts'
-import { TESTED_OPENMAUSBOT_VERSION } from '../shared/omb-version.ts'
+import type { CliDeps } from './cli.ts'
+import { defaultCliDeps } from './cli.ts'
 import { callOrca } from './orca-cli.ts'
 import { RELAYED, validateRelayInput } from './relay-frames.ts'
 import { createTerminalLink, defaultLinkDeps } from './terminal-link.ts'
@@ -59,7 +58,7 @@ export async function readHosts(saved: unknown, deps: BridgeDeps): Promise<Hosts
       hosts,
       message: 'Could not read Orca\u2019s paired servers. Choose This computer, or press Retry.'
     }
-  // Ask once instead of guessing: starting bots here downloads OpenMausBot.
+  // Ask once instead of guessing which machine's bots the person means.
   return hosts.length
     ? { selected: '', hosts, message: 'Choose where your bots run.' }
     : { selected: LOCAL, hosts, message: '' }
@@ -107,9 +106,7 @@ export function registerPairedHost(
             if (name !== 'status') throw error
             return {
               state: 'start_failed',
-              message:
-                error instanceof Error ? error.message : 'Could not connect to the bot host.',
-              testedVersion: TESTED_OPENMAUSBOT_VERSION
+              message: error instanceof Error ? error.message : 'Could not connect to the bot host.'
             }
           }
         })
@@ -120,8 +117,6 @@ export function registerPairedHost(
       register: (id: string, handler: any) =>
         orca.commands.register(id, async (args, context) => {
           if ((await current()).selected === LOCAL) return handler(args, context)
-          if (id === 'orcabot.open') return request('chat.open', {}, context)
-          if (id === 'orcabot.stopServer') return request('server.stop', {}, context)
           throw new Error('Unsupported command on the bot host.')
         })
     }
@@ -135,8 +130,7 @@ export function registerPairedHost(
     if (id !== LOCAL && !(await listHosts(deps)).some((host) => host.id === id))
       throw new Error('That Orca server is not paired with this computer.')
     await orca.storage.set('botHost', id)
-    // Leave nothing running on a server the person moved away from.
-    // Not awaited: the link waits in the background for a running desktop step before closing.
+    // Leave no terminal open on a server the person moved away from.
     if (id === LOCAL) void link.disconnect().catch(() => {})
     return (cached = read())
   })
