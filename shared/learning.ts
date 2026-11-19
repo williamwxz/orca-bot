@@ -28,6 +28,8 @@ export type Memory = {
   topics: number
   /** OpenMausBot tidies this bot's memory each night. */
   upkeep: boolean
+  /** The version of MEMORY.md this text is, so a save never overwrites a newer one. Absent: read-only. */
+  hash?: string
 }
 
 export type Learning = {

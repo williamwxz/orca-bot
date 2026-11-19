@@ -15,7 +15,9 @@ import { readThread, sendMessage, newSendId } from './omb-chat.ts'
 import { uploadAttachment } from './omb-attachments.ts'
 import { computerStatus } from './omb-computer.ts'
 import { desktopAct, desktopStatus, installBrowser, updateDesktopSettings } from './omb-desktops.ts'
-import { readLearning, readLearningSettings, setSkill, updateLearningSettings } from './omb-learning.ts'
+import { readLearning, readLearningSettings, saveMemory, setSkill, updateLearningSettings } from './omb-learning.ts'
+import type { ScheduleAction } from '../shared/schedules.ts'
+import { actOnSchedule, listSchedules } from './omb-schedules.ts'
 import { exportTeam } from './omb-export.ts'
 import type { DesktopAction } from '../shared/roster.ts'
 const DESKTOP_ACTIONS: DesktopAction[] = ['prepare', 'create', 'start', 'stop', 'recreate']
@@ -88,6 +90,9 @@ export type WorkerDeps = {
   readLearningSettings?: (input: { port: number }) => ReturnType<typeof readLearningSettings>
   updateLearningSettings?: (input: Parameters<typeof updateLearningSettings>[0]) => ReturnType<typeof updateLearningSettings>
   exportTeam?: (input: Parameters<typeof exportTeam>[0]) => ReturnType<typeof exportTeam>
+  saveMemory?: (input: Parameters<typeof saveMemory>[0]) => ReturnType<typeof saveMemory>
+  listSchedules?: (input: Parameters<typeof listSchedules>[0]) => ReturnType<typeof listSchedules>
+  actOnSchedule?: (input: Parameters<typeof actOnSchedule>[0]) => ReturnType<typeof actOnSchedule>
   uploadAttachment?: (input: { port: number; name: string; mime: string; data: string }) => ReturnType<typeof uploadAttachment>
   listBots: (input: { port: number }) => Promise<Bot[]>
 }
@@ -151,6 +156,9 @@ export function defaultWorkerDeps(): WorkerDeps {
     readLearningSettings: (input) => readLearningSettings(input, http),
     updateLearningSettings: (input) => updateLearningSettings(input, http),
     exportTeam: (input) => exportTeam(input, http),
+    saveMemory: (input) => saveMemory(input, http),
+    listSchedules: (input) => listSchedules(input, http),
+    actOnSchedule: (input) => actOnSchedule(input, http),
     listBots: (input) => listBots(input, http)
   }
 }
@@ -732,6 +740,21 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
     const port = knownBot(input)
     if (!deps.setSkill) throw new Error('Skills and memory are unavailable.')
     return deps.setSkill({ port, botId: input.botId, name: input.name, enabled: input.enabled, engine: botEngine(input.botId) })
+  })
+  orca.panels.handle('memory.save', (input: { botId: string; text: string; hash: string }) => {
+    const port = knownBot(input)
+    if (!deps.saveMemory) throw new Error('Memory editing is unavailable.')
+    return deps.saveMemory({ port, botId: input.botId, text: input.text, hash: input.hash, engine: botEngine(input.botId) })
+  })
+  orca.panels.handle('schedules.list', (input: { botId: string }) => {
+    const port = knownBot(input)
+    if (!deps.listSchedules) throw new Error('Schedules are unavailable.')
+    return deps.listSchedules({ port, botId: input.botId })
+  })
+  orca.panels.handle('schedules.act', (input: { botId: string } & ScheduleAction) => {
+    const port = knownBot(input)
+    if (!deps.actOnSchedule) throw new Error('Schedules are unavailable.')
+    return deps.actOnSchedule({ ...input, port })
   })
   orca.panels.handle('learning.settings', (input: { autoLearn?: boolean }) => {
     const port = runningPort()

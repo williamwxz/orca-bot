@@ -70,7 +70,11 @@ export function memoryView(raw: unknown, file: unknown, upkeep: unknown): Memory
   const doc = object(file)
   const body = typeof doc.text === 'string' ? doc.text : reply.text
   if (!reply.index || typeof body !== 'string') return undefined
+  // Only a whole file can be saved back: a text cut to the panel's size never carries its version.
+  const whole = typeof doc.text === 'string' && doc.text.length <= MAX_MEMORY_TEXT
+  const hash = whole && typeof doc.hash === 'string' && /^[a-f0-9]{16,128}$/.test(doc.hash) ? doc.hash : undefined
   return {
+    ...(hash ? { hash } : {}),
     text: text(body, MAX_MEMORY_TEXT),
     lines: count(index.lines),
     maxLines: count(index.maxLines) || 200,
@@ -119,6 +123,33 @@ export async function setSkill(
     if (error instanceof HttpStatusError && error.status === 404)
       throw new Error('This skill is gone. Reopen the list.')
     throw new Error('Could not change this skill. Try again.')
+  }
+  return readLearning(input, deps)
+}
+
+/**
+ * Saves MEMORY.md as the person edited it. OpenMausBot refuses with 409 when the bot changed the
+ * file since it was read, so the bot's newer note is never overwritten.
+ */
+export async function saveMemory(
+  input: { port: number; botId: string; text: string; hash: string; engine?: string },
+  deps: HttpDeps = defaultHttpDeps()
+): Promise<Learning> {
+  if (!validBotId(input.botId)) throw new Error('Invalid bot ID.')
+  if (typeof input.text !== 'string' || input.text.length > MAX_MEMORY_TEXT)
+    throw new Error(`Keep memory under ${MAX_MEMORY_TEXT.toLocaleString('en-US')} characters.`)
+  if (typeof input.hash !== 'string' || !/^[a-f0-9]{16,128}$/.test(input.hash)) throw new Error('Reopen memory, then edit it again.')
+  try {
+    await deps.request(
+      input.port,
+      `/api/bots/${input.botId}/memory/file`,
+      { path: 'MEMORY.md', text: input.text, expectedHash: input.hash },
+      'PUT'
+    )
+  } catch (error) {
+    if (error instanceof HttpStatusError && error.status === 409)
+      throw new Error('The bot changed its memory while you were editing. Copy your text, reopen memory and edit again.')
+    throw new Error('Could not save memory. Try again.')
   }
   return readLearning(input, deps)
 }

@@ -297,7 +297,7 @@ test('accepted sends render once, clock ticks independently, replies stop it, an
   }
 })
 
-test('chat capability pills count allowed connectors, gate working models and dismiss on bot switch or close', async () => {
+test('the gear opens bot settings, whose rows open the model and connector pickers, gated while working and dismissed on bot switch or close', async () => {
   const keys = ['document', 'window', 'setTimeout', 'clearTimeout'] as const
   const originals = keys.map((k) => Object.getOwnPropertyDescriptor(globalThis, k))
   const doc = Object.assign(new Element('document'), {
@@ -357,6 +357,8 @@ test('chat capability pills count allowed connectors, gate working models and di
         request: async (name: string, input: any) => {
           calls.push({ name, input })
           if (name === 'thread.read') return { messages: [], hasMore: false }
+          if (name === 'learning.read') return { skills: [], waiting: 0 }
+          if (name === 'schedules.list') return []
           if (name === 'models.list')
             return (
               delayed ?? {
@@ -390,50 +392,60 @@ test('chat capability pills count allowed connectors, gate working models and di
       manage: (...args) => managed.push(args)
     }
   )
-  const pill = (prefix: string) =>
-    all(root).find((n) => n.className === 'capability-pill' && n.textContent.startsWith(prefix))!
+  const gear = () => all(root).find((n) => n.attributes.get('aria-label') === 'Bot settings')!
+  const key = (k: string) => all(root).find((n) => n.dataset.key === k)!
+  const sheet = () => all(root).find((n) => n.className.includes('bot-settings') && n.tag === 'div')!
   try {
     view.open(current)
     await flush()
-    assert.equal(pill('Connectors').textContent, 'Connectors · 2 ▾')
+    // The pills are gone; the model shows under the name and everything else is behind the gear.
+    assert.equal(all(root).some((n) => n.className === 'capability-pill'), false)
+    assert.ok(all(root).some((n) => n.tag === 'small' && n.textContent === 'GPT-6'))
+    gear().emit('click')
+    await flush()
+    assert.equal(gear().attributes.get('aria-expanded'), 'true')
+    assert.match(sheet().textContent, /Work settings/)
+    assert.match(sheet().textContent, /Connectors2 allowed/)
+    assert.deepEqual(calls.filter((c) => ['learning.read', 'schedules.list'].includes(c.name)).map((c) => c.input), [{ botId: 'a' }, { botId: 'a' }])
     assert.equal(
       calls.some((c) => c.name === 'mcp.list'),
       false
     )
-    pill('GPT-6').emit('click')
+    key('open:model').emit('click')
     await flush()
-    assert.equal(pill('GPT-6').attributes.get('aria-expanded'), 'true')
+    assert.equal(sheet().hidden, true)
+    assert.equal(gear().attributes.get('aria-expanded'), 'true')
     all(root)
       .find((n) => n.dataset.key === 'claude/sonnet')!
       .emit('click')
     await flush()
-    assert.ok(pill('Sonnet'))
+    assert.ok(all(root).some((n) => n.tag === 'small' && n.textContent === 'Sonnet'))
     assert.equal(
       calls.some((c) => c.name === 'mcp.list'),
       false
     )
     assert.equal(calls.filter((c) => c.name === 'bots.act').length, 1)
     doc.emit('keydown', { key: 'Escape' })
-    assert.equal((document as any).activeElement, pill('Sonnet'))
+    assert.equal((document as any).activeElement, gear())
     view.update([{ ...current, state: 'working' }])
-    assert.equal(pill('Sonnet').disabled, true)
-    view.update([current])
-    view.update([{ ...current, connectorCount: 1 }])
-    assert.equal(pill('Connectors').textContent, 'Connectors · 1 ▾')
-    pill('Connectors').emit('click')
+    gear().emit('click')
     await flush()
-    assert.equal(pill('Connectors').textContent, 'Connectors · 2 ▾')
+    assert.equal(key('open:model').disabled, true)
+    view.update([current])
+    assert.equal(key('open:model').disabled, false)
+    view.update([{ ...current, connectorCount: 1 }])
+    assert.match(sheet().textContent, /Connectors1 allowed/)
+    key('open:connectors').emit('click')
+    await flush()
     all(root)
       .find((n) => n.dataset.key === 'mail')!
       .emit('click')
     await flush()
-    assert.equal(pill('Connectors').textContent, 'Connectors · 1 ▾')
     assert.equal(calls.filter((c) => c.name === 'mcp.list').length, 1)
     all(root)
       .find((n) => n.dataset.key === 'mail')!
       .emit('click')
     await flush()
-    assert.equal(pill('Connectors').textContent, 'Connectors · 2 ▾')
     assert.equal(calls.filter((c) => c.name === 'mcp.list').length, 1)
     all(root)
       .find((n) => n.textContent === 'Manage connectors…')!
@@ -443,7 +455,9 @@ test('chat capability pills count allowed connectors, gate working models and di
     delayed = new Promise((resolve) => {
       finish = resolve
     })
-    pill('Sonnet').emit('click')
+    gear().emit('click')
+    await flush()
+    key('open:model').emit('click')
     view.open({ ...current, id: 'b', name: 'Personal' })
     finish({ groups: [{ instanceId: 'late', label: 'STALE', models: [] }] })
     await flush()

@@ -53,7 +53,7 @@ Good to know:
   OpenMausBot signs in to those services itself.
   Each provider's list folds; a list of more than five starts folded.
   Use **Providers** to turn connectors on and **By Bot** to audit and toggle each bot’s
-  access. In a bot’s chat, the **Model** and **Connectors** pills let you switch ready AI
+  access. In a bot’s chat, the gear's **Model** and **Connectors** rows let you switch ready AI
   models and assign enabled connectors without leaving the conversation; both pickers
   are also available in the bot context menu. Model changes wait until the bot is idle
   and update its active thread. Provider and approval restrictions still apply.
@@ -69,12 +69,21 @@ Good to know:
   under **OpenMausBot**. Disable keeps credentials there; Remove deletes the server and
   its stored credentials and clears its bot assignments. First-run setup never imports tools.
   Codex-backed bots still load `~/.codex/config.toml` directly, independently of these mappings.
-- The **Skills** pill in a bot's chat opens what the bot has learned: its skills, with
-  a switch for each and a tag for where it comes from (**Learned** by the bot, **Claude
-  Code**, **Codex** or **Agents folder** for skills its engine loads from your own
-  folders, **Project**, **Team package** or **Added**), and its memory
-  (`MEMORY.md`) with how many of its lines load each turn. Writing and editing skills
-  and memory stay in the full chat; type `/learn` there to save what a bot just did.
+- The gear at the top right of a bot's chat opens that bot's settings, from the right:
+  - **Model**, **Connectors** and **Computer**, each opening its picker. The chat
+    header shows the model under the bot's name.
+  - **Skills**, with a switch for each and a tag for where it comes from (**Learned**
+    by the bot, **Claude Code**, **Codex** or **Agents folder** for skills its engine
+    loads from your own folders, **Project**, **Team package** or **Added**). Writing
+    skills stays in the full chat; type `/learn` there to save what a bot just did.
+  - **Memory** (`MEMORY.md`), with how many of its lines load each turn, and **Edit
+    memory**. A save is refused if the bot changed its memory while you were editing,
+    so its newer note is never overwritten. Topic notes and daily logs stay in the
+    full chat.
+  - **Schedules**: the bot's OpenMausBot routines, each with a switch to pause it,
+    **Run now** and **Delete**. **New schedule** adds one that runs every day or on
+    weekdays at a time, every 5 to 1,440 minutes, or once. Schedules made in the
+    full chat with custom timing show here and keep their timing.
 
 - The panel shows the last 20 messages as plain text and sends messages of up to
   16,000 characters. A settled card, such as "Skill … enabled" after a bot learns a
@@ -265,7 +274,7 @@ of that `orca` command on this computer.
    **Learn skills on their own** on, a bot can save or change a skill
    without asking; each change shows in its chat with **Undo** in the full chat.
    A skill can be wrong like any other instruction. Switch it off under
-   **Skills** in the chat, or delete it in the full chat.
+   **Skills** in the bot's settings (the gear in its chat), or delete it in the full chat.
 
 10. **An export holds what your bots remember.** The files are readable only by
     you, but anything you copy or share from the folder carries that memory with it.

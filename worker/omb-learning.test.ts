@@ -1,5 +1,5 @@
 import { assert, test } from 'orca/testing'
-import { learningSettings, memoryView, skillFrom, readLearning, setSkill, skillsView, updateLearningSettings } from './omb-learning.ts'
+import { learningSettings, memoryView, saveMemory, skillFrom, readLearning, setSkill, skillsView, updateLearningSettings } from './omb-learning.ts'
 import { HttpStatusError } from './omb-http.ts'
 import type { HttpDeps } from './omb-http.ts'
 
@@ -36,7 +36,7 @@ function fake(replies: Record<string, unknown> = {}, fail?: (path: string, metho
       if (path.endsWith('/skills')) return skillsReply
       if (path.endsWith('/memory')) return memoryReply
       if (path.endsWith('/memory/upkeep')) return { enabled: true, lastTidy: { at: 1 } }
-      if (path.endsWith('/memory/file?path=MEMORY.md')) return { path: 'MEMORY.md', text: '- 2026-11-19 · likes short replies', hash: 'SECRET', exists: true }
+      if (path.endsWith('/memory/file?path=MEMORY.md')) return { path: 'MEMORY.md', text: '- 2026-11-19 · likes short replies', hash: 'ab'.repeat(32), exists: true }
       return {}
     }
   }
@@ -73,8 +73,8 @@ test('skills list keeps only names, descriptions and switches, learned ones firs
 })
 
 test('memory shows the text and its gauge, never the folder or file names', () => {
-  const view = memoryView(memoryReply, { text: '- 2026-11-19 · likes short replies', hash: 'SECRET' }, { enabled: true })
-  assert.deepEqual(view, { text: '- 2026-11-19 · likes short replies', lines: 47, maxLines: 200, overflow: false, topics: 2, upkeep: true })
+  const view = memoryView(memoryReply, { text: '- 2026-11-19 · likes short replies', hash: 'ab'.repeat(32) }, { enabled: true })
+  assert.deepEqual(view, { hash: 'ab'.repeat(32), text: '- 2026-11-19 · likes short replies', lines: 47, maxLines: 200, overflow: false, topics: 2, upkeep: true })
   assert.doesNotMatch(JSON.stringify(view), /SECRET|workspaces/)
   assert.equal(memoryView({ index: {} }, undefined, undefined), undefined)
   assert.equal(memoryView(undefined, { text: 'x' }, undefined), undefined)
@@ -84,6 +84,9 @@ test('memory shows the text and its gauge, never the folder or file names', () =
   assert.equal(big?.text.length, 24000)
   assert.equal(big?.overflow, true)
   assert.equal(big?.upkeep, false)
+  // A text cut to fit, or a malformed version, cannot be saved back.
+  assert.equal(big?.hash, undefined)
+  assert.equal(memoryView(memoryReply, { text: 'x', hash: 'SECRET' }, undefined)?.hash, undefined)
 })
 
 test('reading a bot without memory yet still lists its skills; a failed skill read says so', async () => {
@@ -126,4 +129,18 @@ test('automatic learning needs skill writing on, and saving touches only those t
   await assert.rejects(updateLearningSettings({ port: 9, autoLearn: 1 as any }, off.deps), /Choose on or off/)
   const refused = fake({}, (_p, method) => (method === 'PATCH' ? new Error('SECRET') : undefined))
   await assert.rejects(updateLearningSettings({ port: 9, autoLearn: true }, refused.deps), /^Error: Could not save the learning setting/)
+})
+
+test('memory saves only with the version it was read at; a newer note from the bot is never overwritten', async () => {
+  const { deps, calls } = fake()
+  const hash = 'cd'.repeat(32)
+  const learning = await saveMemory({ port: 9, botId: id, text: '- new note', hash }, deps)
+  assert.deepEqual(calls[0], { path: `/api/bots/${id}/memory/file`, body: { path: 'MEMORY.md', text: '- new note', expectedHash: hash }, method: 'PUT' })
+  assert.equal(learning.memory?.text, '- 2026-11-19 · likes short replies')
+  await assert.rejects(saveMemory({ port: 9, botId: id, text: 'x'.repeat(24001), hash }, deps), /Keep memory under 24,000/)
+  await assert.rejects(saveMemory({ port: 9, botId: id, text: 'x', hash: 'nope' }, deps), /Reopen memory/)
+  const stale = fake({}, (_p, method) => (method === 'PUT' ? new HttpStatusError(409, { error: 'SECRET', text: 'SECRET' }) : undefined))
+  await assert.rejects(saveMemory({ port: 9, botId: id, text: 'x', hash }, stale.deps), /^Error: The bot changed its memory while you were editing/)
+  const broken = fake({}, (_p, method) => (method === 'PUT' ? new Error('SECRET') : undefined))
+  await assert.rejects(saveMemory({ port: 9, botId: id, text: 'x', hash }, broken.deps), /^Error: Could not save memory/)
 })

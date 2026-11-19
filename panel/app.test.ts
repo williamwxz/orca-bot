@@ -259,9 +259,10 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
     win.emit('pageshow')
     await flush()
     assert.equal(get('setup').hidden, true)
-    // The chat header has only the back button and the bot; the Dashboard opens from the bot's menu.
-    assert.equal(get('bot-view').children[0].children.length, 3)
+    // The chat header: back, the bot, its computer and its settings; the Dashboard opens from the bot's menu.
+    assert.equal(get('bot-view').children[0].children.length, 4)
     assert.equal(get('bot-view').children[0].children[2].attributes.get('aria-label'), 'Backend: Auto')
+    assert.equal(get('bot-view').children[0].children[3].attributes.get('aria-label'), 'Bot settings')
     get('bot-view').children[0].children[0].emit('click')
     assert.equal(get('list-header').hidden, false)
     assert.equal(get('setup').hidden, false)
@@ -721,7 +722,9 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
     get('roster').children.find(c => c.className.startsWith('bot-row'))!.children[0].emit('click')
     await flush()
     const descendants = (node: Element): Element[] => [node, ...node.children.flatMap(descendants)]
-    descendants(get('bot-view')).find(c => c.className === 'capability-pill' && c.textContent.startsWith('Connectors'))!.emit('click')
+    descendants(get('bot-view')).find(c => c.attributes?.get?.('aria-label') === 'Bot settings')!.emit('click')
+    await flush()
+    descendants(get('bot-view')).find(c => c.dataset?.key === 'open:connectors')!.emit('click')
     await flush()
     descendants(get('bot-view')).find(c => c.textContent === 'Manage connectors…')!.emit('click')
     await flush()

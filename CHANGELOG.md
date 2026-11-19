@@ -2,12 +2,17 @@
 
 ## 0.1.11 (19 November 2026)
 
-- **Skills and memory in the chat**: a **Skills** pill in each bot's chat opens
-  a panel from the right with the bot's skills, a switch for each, and a
-  **Learned** tag on those the bot wrote itself, plus its memory (`MEMORY.md`)
-  and how much of it loads each turn. Each skill is tagged with where it
-  comes from: learned by the bot, Claude Code, Codex, the agents folder, a
-  project, a team package or added.
+- **Bot settings behind a gear**: the gear at the top right of a bot's chat
+  replaces the Model and Connectors pills and opens one panel from the right
+  with the bot's model, connectors, computer, skills, memory and schedules.
+  The chat header shows the model under the bot's name.
+- **Skills**: a switch for each, tagged with where it comes from: learned by
+  the bot, Claude Code, Codex, the agents folder, a project, a team package or
+  added.
+- **Memory editing**: read and edit `MEMORY.md`, with how much of it loads each
+  turn. A save is refused if the bot changed its memory meanwhile.
+- **Schedules**: the bot's OpenMausBot routines, to pause, run now, delete, or
+  add (every day or weekdays at a time, every few minutes, or once).
 - **Settings → Bots → Learn skills on their own** turns on
   OpenMausBot's automatic skill review. After a task with many tool steps, a bot
   looks back over it and may save or improve a skill.
