@@ -4,6 +4,7 @@ import { createSetup, agentNames } from './setup.ts'
 import { createChatView } from './chat-view.ts'
 import { createSettings } from './settings.ts'
 import { createBotMenu } from './bot-menu.ts'
+import { createDesktopSettings } from './desktop-settings.ts'
 import { INSTALL_NOTICE } from '../shared/omb-version.ts'
 import { dropActions, groupRoster, groupTarget, modelText } from '../shared/roster.ts'
 import type { FrameApi } from './chat-view.ts'
@@ -113,6 +114,7 @@ function updateConnectorHost(id: string, name?: string): void {
   }
   connectorHostId = id
   mcp.hostChanged(id, name)
+  desktops.clear()
 }
 async function loadHosts(): Promise<void> {
   try {
@@ -163,10 +165,12 @@ async function chooseHost(id: string): Promise<void> {
   await refreshAfterChange()
   await settings.hostChanged(hostProblem)
   await mcp.refresh()
+  if (settingsShown) await desktops.refresh()
 }
 hostSelect.addEventListener('change', () => void chooseHost(hostSelect.value))
 const mcp = createMcpView(frame, element, toast.show)
 const settings = createSettings(frame, element, () => refreshAfterChange(), toast.show)
+const desktops = createDesktopSettings(frame, element, toast.show, () => hostGeneration)
 let settingsShown = false
 let mcpStatus = ''
 function showSettings(show: boolean): void {
@@ -176,7 +180,9 @@ function showSettings(show: boolean): void {
   element('main-view').hidden = show
   element('settings-view').hidden = !show
   element('mcp-view').hidden = true
-  if (show) { void settings.open(); void mcp.refresh() }
+  if (show) { void settings.open(); void mcp.refresh(); void desktops.refresh() }
+  // Leaving Settings stops its polling; reopening reads the desktop again.
+  else desktops.clear()
 }
 element('open-settings').addEventListener('click', () => showSettings(true))
 element('settings-back').addEventListener('click', () => showSettings(false))

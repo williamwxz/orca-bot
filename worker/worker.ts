@@ -14,6 +14,9 @@ import type { Preferences, SetupAnswer } from './protocol.ts'
 import { readThread, sendMessage, newSendId } from './omb-chat.ts'
 import { uploadAttachment } from './omb-attachments.ts'
 import { computerStatus } from './omb-computer.ts'
+import { desktopAct, desktopStatus, installBrowser, updateDesktopSettings } from './omb-desktops.ts'
+import type { DesktopAction } from '../shared/roster.ts'
+const DESKTOP_ACTIONS: DesktopAction[] = ['prepare', 'create', 'start', 'stop', 'recreate']
 import { MAX_ATTACHMENTS, composeMessage } from '../shared/attachments.ts'
 import type { Attachment } from '../shared/attachments.ts'
 import type { OrcaWorkerApi } from 'orca/worker'
@@ -74,6 +77,10 @@ export type WorkerDeps = {
   readThread: typeof readThread
   sendMessage: typeof sendMessage
   computerStatus?: typeof computerStatus
+  desktopStatus?: (input: { port: number; botId?: string }) => ReturnType<typeof desktopStatus>
+  desktopAct?: (input: Parameters<typeof desktopAct>[0]) => ReturnType<typeof desktopAct>
+  updateDesktopSettings?: (input: Parameters<typeof updateDesktopSettings>[0]) => ReturnType<typeof updateDesktopSettings>
+  installBrowser?: (input: { port: number }) => Promise<void>
   uploadAttachment?: (input: { port: number; name: string; mime: string; data: string }) => ReturnType<typeof uploadAttachment>
   listBots: (input: { port: number }) => Promise<Bot[]>
 }
@@ -128,6 +135,10 @@ export function defaultWorkerDeps(): WorkerDeps {
     sendMessage: (input) => sendMessage(input, cli),
     uploadAttachment: (input) => uploadAttachment(input),
     computerStatus: (input) => computerStatus(input, http),
+    desktopStatus: (input) => desktopStatus(input, http),
+    desktopAct: (input) => desktopAct(input, http),
+    updateDesktopSettings: (input) => updateDesktopSettings(input, http),
+    installBrowser: (input) => installBrowser(input, http),
     listBots: (input) => listBots(input, http)
   }
 }
@@ -642,11 +653,61 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
       }
     }
   )
-  orca.panels.handle('computer.status', (input: { botId: string }) => {
+
+  const desktopBot = (input: { botId?: string } | undefined) =>
+    input?.botId === undefined ? {} : { botId: (knownBot({ botId: input.botId }), input.botId) }
+  // Setup steps can take many minutes (the first one downloads and builds the desktop), longer
+  // than a panel request or the paired-server relay waits. So a step runs here in the
+  // background, one at a time, and the panel follows it through the desktop status.
+  let desktopJob: { id: number; action: DesktopAction; running: boolean; error?: string } | undefined
+  let desktopJobs = 0
+  const withStep = <T extends object>(status: T): T =>
+    desktopJob ? { ...status, step: { ...desktopJob } } : status
+  orca.panels.handle('desktop.status', async (input: { botId?: string }) => {
+    const port = runningPort()
+    if (!deps.desktopStatus) throw new Error('Private desktops are unavailable.')
+    return withStep(await deps.desktopStatus({ port, ...desktopBot(input) }))
+  })
+  orca.panels.handle('computer.status', async (input: { botId: string }) => {
     const port = knownBot(input)
     if (!deps.computerStatus) return {}
     const threadId = lastRoster.find((bot) => bot.id === input.botId)?.activeTaskId
-    return deps.computerStatus({ port, botId: input.botId, threadId })
+    const status = await deps.computerStatus({ port, botId: input.botId, threadId })
+    return status.desktop ? { ...status, desktop: withStep(status.desktop) } : status
+  })
+  // Only the job, without inspecting the desktop: the paired-server link asks this before it
+  // closes, and it must answer even while the server is busy with the step itself.
+  orca.panels.handle('desktop.step', () => ({ ...(desktopJob ? { step: { ...desktopJob } } : {}) }))
+  orca.panels.handle('desktop.act', (input: { action: DesktopAction; botId?: string }) => {
+    const port = runningPort()
+    if (!deps.desktopAct) throw new Error('Private desktops are unavailable.')
+    if (!DESKTOP_ACTIONS.includes(input?.action)) throw new Error('Unknown desktop step.')
+    if (desktopJob?.running) throw new Error('Another private desktop step is still running.')
+    // Check the bot before the job is published: a refusal here must not leave it "running".
+    const target = desktopBot(input)
+    const job = { id: ++desktopJobs, action: input.action, running: true } as NonNullable<typeof desktopJob>
+    desktopJob = job
+    deps.desktopAct({ port, action: input.action, ...target }).then(
+      () => { job.running = false },
+      (error) => {
+        job.running = false
+        // desktopAct only throws fixed wording; anything else gets a fixed line too.
+        job.error = error instanceof Error && error.message.length < 300 ? error.message : 'Could not finish this step.'
+      }
+    )
+    return { step: { ...job } }
+  })
+  orca.panels.handle('desktop.settings', (input: Record<string, unknown>) => {
+    const port = runningPort()
+    if (!deps.updateDesktopSettings) throw new Error('Private desktops are unavailable.')
+    const { mode, maxInstances, idleMinutes } = (input ?? {}) as any
+    return deps.updateDesktopSettings({ port, mode, maxInstances, idleMinutes })
+  })
+  orca.panels.handle('browser.install', async () => {
+    const port = runningPort()
+    if (!deps.installBrowser) throw new Error('The browser is unavailable.')
+    await deps.installBrowser({ port })
+    return { installing: true as const }
   })
   // Not relayed: on a paired server the bytes would crawl through the terminal link.
   orca.panels.handle('attachment.upload', async (input: { name: string; mime: string; data: string }) => {

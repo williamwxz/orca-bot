@@ -1,7 +1,8 @@
 import { connectorIcon } from './connector-icon.ts'
 import type { Bot } from '../shared/roster.ts'
 import { COMPUTER_CHOICES, computerHint, computerLabel, computerNote } from '../shared/roster.ts'
-import type { ComputerStatus } from '../shared/roster.ts'
+import type { ComputerStatus, DesktopAction } from '../shared/roster.ts'
+import { desktopBlock } from './desktop-setup.ts'
 import type { Models } from '../shared/models.ts'
 import type { Connectors } from '../worker/mcp-connectors.ts'
 import type { FrameApi } from './chat-view.ts'
@@ -19,6 +20,8 @@ export type CapabilityHooks = {
   openNative?(botId: string): void
   nativeAvailable?(): boolean
 }
+/** Missed status checks in a row (about a minute) before a step's outcome is called unconfirmed. */
+export const FOLLOW_MISSES = 24
 const stroke = (paths: string) =>
   `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`
 const COMPUTER_ICONS: Record<string, string> = {
@@ -117,6 +120,99 @@ export function createCapabilityPicker(
     let problem = ''
     let focusKey: string | undefined
     let status: ComputerStatus | undefined
+    let setupBusy: DesktopAction | 'check' | undefined
+    let browserBusy = false
+    let unconfirmed = false
+    let browserPoll: ReturnType<typeof setTimeout> | undefined
+    let stepPoll: ReturnType<typeof setTimeout> | undefined
+    /** True when a fresh status arrived; false keeps the last one (a poll can time out). */
+    const refreshStatus = async () => {
+      const next = await frame.plugin.request('computer.status', { botId: bot.id }).catch(() => undefined)
+      if (current() && next) status = next
+      return !!next
+    }
+    // A step runs in the worker; the panel follows it through the status until it ends.
+    // A failed or stale poll (no report of this step yet) is retried, never read as "done".
+    const followStep = (id: number, misses = 0) => {
+      clearTimeout(stepPoll)
+      stepPoll = setTimeout(async () => {
+        const fresh = await refreshStatus()
+        if (!current()) return
+        const step = status?.desktop?.step
+        // Only a fresh report of this step counts; an old snapshot or a failed poll is a miss.
+        if (fresh && step?.id === id && step.running) return followStep(id)
+        if (fresh && step?.id === id) {
+          setupBusy = undefined
+          hooks.notify?.(step.error ?? 'Private desktop updated.')
+          return draw()
+        }
+        if (misses + 1 < FOLLOW_MISSES) return followStep(id, misses + 1)
+        // Give up honestly: drop the stale "running" and offer only a re-check.
+        setupBusy = undefined
+        unconfirmed = true
+        if (status?.desktop?.step?.id === id) status = { ...status, desktop: { ...status.desktop, step: undefined } }
+        hooks.notify?.('Could not confirm how the step ended. Check the private desktop again.')
+        draw()
+      }, 2500)
+    }
+    // A setup step or a re-check, as OpenMausBot's own setup buttons do; the panel stays open.
+    const runDesktop = async (action?: DesktopAction) => {
+      if (setupBusy || !current()) return
+      setupBusy = action ?? 'check'
+      focusKey = `desktop:${action ?? 'check'}`
+      draw()
+      if (!action) {
+        const fresh = await refreshStatus()
+        if (!current()) return
+        if (fresh) unconfirmed = false
+        setupBusy = undefined
+        // The re-check found the step still running: follow it to the end again.
+        const step = status?.desktop?.step
+        if (fresh && step?.running) {
+          setupBusy = step.action
+          followStep(step.id)
+        }
+        return draw()
+      }
+      try {
+        const { step } = await frame.plugin.request('desktop.act', { action, botId: bot.id })
+        if (current()) followStep(step.id)
+      } catch (error) {
+        if (!current()) return
+        hooks.notify?.(error instanceof Error ? error.message : 'Could not start this step.')
+        setupBusy = undefined
+        draw()
+      }
+    }
+    // The browser installs on the server; its status says when it is done.
+    const pollBrowser = (tries: number) => {
+      clearTimeout(browserPoll)
+      browserPoll = setTimeout(async () => {
+        await refreshStatus()
+        if (!current()) return
+        if (status?.browserInstalling && tries > 0) pollBrowser(tries - 1)
+        else {
+          browserBusy = false
+          if (status?.browser === 'ready') hooks.notify?.('The browser is ready.')
+        }
+        draw()
+      }, 3000)
+    }
+    const installBrowser = async () => {
+      if (browserBusy || !current()) return
+      browserBusy = true
+      focusKey = 'browser:install'
+      draw()
+      try {
+        await frame.plugin.request('browser.install', {})
+        if (current()) pollBrowser(60)
+      } catch (error) {
+        if (!current()) return
+        hooks.notify?.(error instanceof Error ? error.message : 'Could not install the browser.')
+        browserBusy = false
+        draw()
+      }
+    }
     let browsing: string | undefined = start === 'models' ? bot.model?.split('/')[0] : undefined
     const draw = () => {
       if (!current()) return
@@ -307,17 +403,59 @@ export function createCapabilityPicker(
         }
         works.append(grid, node('p', computerHint(selected, status), 'computer-hint'))
         children.push(label, screen, works)
-        if (hooks.openNative && hooks.nativeAvailable?.() !== false) {
-          const native = item('Set up computers in native OpenMausBot', () => {
-            close(false)
-            hooks.openNative!(bot.id)
+        // The chosen place's setup, as OpenMausBot shows it under "Works on".
+        const native = hooks.openNative && hooks.nativeAvailable?.() !== false
+        if (selected === 'vm' && status?.desktop) {
+          const card = node('div', '', 'computer-card')
+          card.append(node('div', 'Private desktop', 'computer-card-title'))
+          const block = desktopBlock(status.desktop, {
+            perBot: status.desktop.mode === 'per-bot',
+            busy: setupBusy,
+            unconfirmed,
+            run: (action) => void runDesktop(action)
           })
-          native.className += ' computer-native'
+          for (const control of block.querySelectorAll?.('button') ?? []) controls.push(control as HTMLButtonElement)
+          card.append(block)
+          children.push(card)
+        } else if (selected === 'browser' && (status?.browser === 'setup' || status?.browserInstalling)) {
+          const card = node('div', '', 'computer-card')
+          const installing = browserBusy || !!status?.browserInstalling
+          card.append(
+            node('div', 'Built-in browser', 'computer-card-title'),
+            node(
+              'p',
+              installing
+                ? 'Installing the browser on the bot host. This can take a minute.'
+                : 'The browser this bot uses for websites is not installed yet.',
+              'bot-menu-note'
+            )
+          )
+          const install = node('button', installing ? 'Installing…' : 'Turn on the browser', 'bot-menu-btn primary desktop-action') as HTMLButtonElement
+          install.type = 'button'
+          install.disabled = installing
+          install.dataset.key = 'browser:install'
+          install.addEventListener('click', (event) => {
+            event.stopPropagation()
+            void installBrowser()
+          })
+          controls.push(install)
+          card.append(install)
+          children.push(card)
+        }
+        if (native && (selected === 'cloud' || selected === 'local')) {
+          const link = item(
+            selected === 'cloud' ? 'Connect a cloud desktop in native OpenMausBot' : 'Allow this computer in native OpenMausBot',
+            () => {
+              close(false)
+              hooks.openNative!(bot.id)
+            }
+          )
+          link.className += ' computer-native'
           const chevron = node('span', '›', 'backend-chevron')
           chevron.setAttribute('aria-hidden', 'true')
-          native.append(chevron)
-          native.dataset.key = 'native'
-          children.push(native)
+          link.append(chevron)
+          link.dataset.key = 'native'
+          children.push(link)
         }
       } else {
         const rows =
@@ -421,7 +559,19 @@ export function createCapabilityPicker(
           controls.find((c) => c.dataset.key === (currentBot?.computer ?? 'auto'))?.focus()
         // Status is a bonus: without it the tiles keep their plain descriptions.
         status = await frame.plugin.request('computer.status', { botId: bot.id }).catch(() => undefined)
-        if (current() && status) draw()
+        if (!current() || !status) return
+        // Reopened while a step or the browser install is still going: keep following it.
+        // Both can be under way at once on one host: follow each on its own.
+        const step = status.desktop?.step
+        if (step?.running) {
+          setupBusy = step.action
+          followStep(step.id)
+        }
+        if (status.browserInstalling) {
+          browserBusy = true
+          pollBrowser(60)
+        }
+        draw()
         return
       }
       if (kind === 'model') models = await frame.plugin.request('models.list', {})

@@ -5,6 +5,10 @@ import { NEXT, PING, READY, WINDOW, pack, parseFrame, unpack } from './relay-fra
 export const TERMINAL_TITLE = 'Bot Team for Orca'
 /** The panel polls while it is open, so this long without a request means nobody is using it. */
 export const IDLE_MS = 10 * 60 * 1000
+/** The longest a closing link waits for a desktop step: preparing one can take this long. */
+export const SETTLE_MS = 40 * 60 * 1000
+/** Unanswered job checks in a row after which the terminal is taken to be gone. */
+export const SETTLE_UNANSWERED = 5
 export type Bundle = { hash: string; files: Record<string, string> }
 type Host = { id: string; name: string }
 type Session = { host: Host; handle: string; cursor: string }
@@ -137,12 +141,43 @@ export function createTerminalLink(deps: LinkDeps) {
     const saved = await deps.load()
     if (saved?.hostId !== host.id) return undefined
     const s: Session = { host, handle: saved.handle, cursor: '0' }
+    // The saved terminal stays the one: an unclear answer asks for a retry instead of starting
+    // a second worker beside it, which could not see a desktop step the first one is running.
+    const retry = new Error(`Could not reach Bot Team for Orca on ${host.name} just now. Try again in a moment.`)
+    let terminal: any
     try {
-      const terminal = (await deps.call(['terminal', 'read', '--limit', '1', ...at(s)]))?.terminal
-      if (terminal?.status !== 'running') throw new Error('closed')
-      s.cursor = String(terminal.latestCursor ?? terminal.nextCursor)
-      if ((await exchange(s, PING, {}, 10000))?.hash === bundle.hash) return s
-    } catch { /* Start a fresh connection below. */ }
+      terminal = (await deps.call(['terminal', 'read', '--limit', '1', ...at(s)]))?.terminal
+    } catch {
+      // Gone for sure only when a complete list of the host's live terminals leaves it out.
+      const listed = await deps
+        .call(['terminal', 'list', '--environment', host.id, '--json'])
+        .catch(() => undefined)
+      const handles = Array.isArray(listed?.terminals)
+        ? listed.terminals.map((t: { handle?: unknown }) => t?.handle)
+        : undefined
+      if (!handles || listed.truncated === true || handles.includes(s.handle)) throw retry
+      await deps.save(undefined).catch(() => {})
+      return undefined
+    }
+    if (terminal?.status !== 'running') {
+      await close(s)
+      return undefined
+    }
+    s.cursor = String(terminal.latestCursor ?? terminal.nextCursor)
+    let hash: unknown
+    try {
+      hash = (await exchange(s, PING, {}, 10000))?.hash
+    } catch {
+      throw retry
+    }
+    if (hash === bundle.hash) return s
+    // Another version of the worker: replace it only once it says no desktop step is running.
+    try {
+      if ((await exchange(s, 'desktop.step', {}, 10000))?.step?.running === true)
+        throw new Error(`${host.name} is still finishing a private desktop step. Try again when it is done.`)
+    } catch (error) {
+      if (!(error instanceof HostAnswer)) throw error instanceof Error && error.message.includes('still finishing') ? error : retry
+    }
     await close(s)
     return undefined
   }
@@ -181,23 +216,90 @@ export function createTerminalLink(deps: LinkDeps) {
     if (saved?.handle === s.handle) await deps.save(undefined).catch(() => {})
   }
 
+  /**
+   * Sessions let go while their host's worker may still run a private desktop step. Replacing a
+   * desktop is two server calls inside that worker, so its terminal is closed only once the
+   * worker says no step is running, or the terminal has plainly exited. Returning to the host
+   * takes the same session back, job and all. One per host.
+   */
+  type Retiring = { s: Session; cancelled: boolean; probe: Promise<unknown> }
+  const retiring = new Map<string, Retiring>()
+
+  /** 'idle': safe to close. 'gone': the terminal exited. 'unknown': leave it running. */
+  async function settle(r: Retiring): Promise<'idle' | 'gone' | 'unknown' | 'cancelled'> {
+    const until = deps.now() + SETTLE_MS
+    let unanswered = 0
+    while (deps.now() < until) {
+      if (r.cancelled) return 'cancelled'
+      const probe = exchange(r.s, 'desktop.step', {}, 10000)
+      r.probe = probe.catch(() => {})
+      try {
+        const reply = await probe
+        if (reply?.step?.running !== true) return 'idle'
+        unanswered = 0
+      } catch (error) {
+        // The host's worker refused (an older version with no jobs): nothing to wait for.
+        if (error instanceof HostAnswer) return 'idle'
+        const terminal = await deps.call(['terminal', 'read', '--limit', '1', ...at(r.s)]).catch(() => undefined)
+        if (terminal?.terminal?.status === 'exited') return 'gone'
+        // No answer, terminal not known to be gone: the job may be running. Stop asking after
+        // a while, but never close it on a guess.
+        if (++unanswered >= SETTLE_UNANSWERED) return 'unknown'
+      }
+      if (r.cancelled) return 'cancelled'
+      await deps.sleep(3000)
+    }
+    return 'unknown'
+  }
+
+  /** Lets a session finish its desktop step and close in the background. */
+  function retire(s: Session): Promise<void> {
+    if (session === s) session = undefined
+    const r: Retiring = { s, cancelled: false, probe: Promise.resolve() }
+    retiring.set(s.host.id, r)
+    return (async () => {
+      const verdict = await settle(r).catch(() => 'unknown' as const)
+      // Close only if this retirement still owns the session: a return to the host may have
+      // reclaimed it while the last check was in flight.
+      if (r.cancelled || retiring.get(s.host.id) !== r) return
+      // Unknown: leave the terminal running and keep it reclaimable for a later return.
+      if (verdict !== 'idle' && verdict !== 'gone') return
+      retiring.delete(s.host.id)
+      await close(s)
+    })()
+  }
+
+  /** Takes back a session still settling on this host, so its worker and job stay in charge. */
+  async function reclaim(host: Host): Promise<Session | undefined> {
+    const r = retiring.get(host.id)
+    if (!r) return undefined
+    r.cancelled = true
+    retiring.delete(host.id)
+    await r.probe
+    await deps.save({ hostId: host.id, handle: r.s.handle }).catch(() => {})
+    return r.s
+  }
+
+  /** Lets the session go at once; it closes when its host has no desktop step running. */
   async function disconnect(): Promise<void> {
     cancelIdle()
     await queue
-    if (session) await close(session)
+    if (session) await retire(session)
   }
 
   return {
     /** Sends one panel request to the host's worker. Requests run one at a time. */
     request(host: Host, name: string, input: unknown): Promise<any> {
       const run = async () => {
-        if (session && session.host.id !== host.id) await close(session)
-        session ??= await open(host)
+        // The old host finishes any desktop step on its own; this host does not wait for it.
+        if (session && session.host.id !== host.id) void retire(session)
+        session ??= (await reclaim(host)) ?? (await open(host))
         const s = session
         try { return await exchange(s, name, input, name === 'mcp.act' ? 300000 : 30000) }
         catch (error) {
-          // A broken connection is replaced next time; an answer from the host is not.
-          if (!(error instanceof HostAnswer)) await close(s)
+          // A broken connection is replaced next time; an answer from the host is not. The old
+          // terminal still gets the chance to finish a desktop step before it closes.
+          if (!(error instanceof HostAnswer)) void retire(s)
           throw error
         }
       }

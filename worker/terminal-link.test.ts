@@ -13,7 +13,7 @@ const bundle: Bundle = { hash: '0123456789abcdef', files: { 'worker/relay-host.t
 /** A paired server's Orca as the CLI sees it: terminals keep 2000 lines and lose some spaces. */
 function fakeServer(
   handlers: Record<string, (input: any) => unknown>,
-  options: { worktrees?: unknown[] } = {}
+  options: { worktrees?: unknown[]; hosts?: string[]; bundles?: Bundle[]; listFails?: () => boolean } = {}
 ) {
   const terminals = new Map<
     string,
@@ -30,10 +30,17 @@ function fakeServer(
   const flag = (args: string[], name: string) => args[args.indexOf(name) + 1]
   const call = async (args: string[]): Promise<any> => {
     calls.push(args)
-    assert.equal(flag(args, '--environment'), host.id)
+    assert.ok((options.hosts ?? [host.id]).includes(flag(args, '--environment')))
     const key = `${args[0]} ${args[1]}`
     if (key === 'worktree list')
       return { worktrees: options.worktrees ?? [{ id: 'repo::/Users/me', isMainWorktree: true }] }
+    if (key === 'terminal list') {
+      if (options.listFails?.()) throw new Error('list failed')
+      return {
+        terminals: [...terminals].filter(([, t]) => t.status === 'running').map(([handle]) => ({ handle })),
+        truncated: false
+      }
+    }
     if (key === 'terminal create') {
       const handle = `term_${++count}`
       terminals.set(handle, {
@@ -59,7 +66,7 @@ function fakeServer(
       if (!terminal.feed) {
         // The loader's job: take the bundle, then hand the terminal to relay-host.ts.
         const received = JSON.parse(gunzipSync(Buffer.from(text.trim(), 'base64')).toString())
-        assert.deepEqual(received, bundle)
+        assert.ok((options.bundles ?? [bundle]).some((b) => JSON.stringify(b) === JSON.stringify(received)))
         terminal.feed = createRelay(
           { hash: received.hash, write, load: () => undefined, save: () => {} },
           (api) => {
@@ -265,11 +272,215 @@ test('the server terminal closes after the link sits idle, and the next request 
   // Each request replaces the pending idle close, so only one is ever waiting.
   assert.equal(timers.length, 1)
   timers[0]()
-  await new Promise((resolve) => setImmediate(resolve))
+  for (let i = 0; i < 20 && server.terminals.get('term_1')!.status !== 'exited'; i++)
+    await new Promise((resolve) => setImmediate(resolve))
   assert.equal(server.terminals.get('term_1')!.status, 'exited')
   assert.equal(store.saved, undefined)
   await link.request(host, 'status', {})
   assert.equal(server.terminals.size, 2)
+})
+
+test('the link stays open until a running private desktop step ends, and keeps waiting through unanswered checks', async () => {
+  // A replace is "remove" then "run" inside the host's worker: closing between them would
+  // leave the desktop removed. The step finishes on the fourth check; one check goes unanswered.
+  let checks = 0
+  const server = fakeServer({
+    status: () => ({ state: 'running', message: '' }),
+    'desktop.step': () => {
+      checks++
+      return { step: { id: 1, action: 'recreate', running: checks < 4 } }
+    }
+  })
+  // After the first check, one read of the terminal fails: that check goes unanswered.
+  const deps = linkDeps(server)
+  let dropped = false
+  deps.call = async (args) => {
+    if (checks === 1 && !dropped && args[0] === 'terminal' && args[1] === 'read' && args.includes('--cursor')) {
+      dropped = true
+      throw new Error('connection reset')
+    }
+    return server.call(args)
+  }
+  const link = createTerminalLink(deps)
+  await link.request(host, 'status', {})
+  await link.disconnect()
+  assert.ok(dropped)
+  assert.equal(checks, 4)
+  assert.equal(server.terminals.get('term_1')!.status, 'exited')
+  // A host whose worker has no job request (an older version) closes without waiting.
+  const plain = fakeServer({ status: () => ({ state: 'running', message: '' }) })
+  const other = createTerminalLink(linkDeps(plain))
+  await other.request(host, 'status', {})
+  await other.disconnect()
+  assert.equal(plain.terminals.get('term_1')!.status, 'exited')
+})
+
+test('switching to another paired host answers at once while the first host finishes its desktop step', async () => {
+  const hostB = { id: 'mini-2', name: 'Mac Studio' }
+  let release!: () => void
+  let running = true
+  const server = fakeServer(
+    {
+      status: () => ({ state: 'running', message: '' }),
+      'desktop.step': () => ({ step: { id: 1, action: 'prepare', running } })
+    },
+    { hosts: [host.id, hostB.id] }
+  )
+  const timers: (() => void)[] = []
+  const deps = linkDeps(server, {}, timers)
+  // Waiting between job checks parks until the test releases it.
+  deps.sleep = () => new Promise<void>((resolve) => { release = () => { running = false; resolve() } })
+  const link = createTerminalLink(deps)
+  await link.request(host, 'status', {})
+  assert.deepEqual(await link.request(hostB, 'status', {}), { state: 'running', message: '' })
+  assert.equal(server.terminals.get('term_1')!.status, 'running', 'host A is still finishing')
+  assert.equal(server.terminals.get('term_2')!.status, 'running')
+  release()
+  for (let i = 0; i < 20 && server.terminals.get('term_1')!.status !== 'exited'; i++)
+    await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(server.terminals.get('term_1')!.status, 'exited')
+})
+
+test('a terminal whose worker stops answering mid-step is left running, never closed on a guess', async () => {
+  const server = fakeServer({
+    status: () => ({ state: 'running', message: '' }),
+    'desktop.step': () => ({ step: { id: 1, action: 'recreate', running: true } })
+  })
+  const deps = linkDeps(server)
+  let failing = false
+  deps.call = async (args) => {
+    // Every read of the answer fails, but the terminal itself is still running.
+    if (failing && args[0] === 'terminal' && args[1] === 'read' && args.includes('--cursor')) throw new Error('read failed')
+    return server.call(args)
+  }
+  const link = createTerminalLink(deps)
+  await link.request(host, 'status', {})
+  failing = true
+  await link.disconnect()
+  assert.equal(server.terminals.get('term_1')!.status, 'running')
+  // Asking the same host again while reads still fail does not close it either.
+  await assert.rejects(link.request(host, 'status', {}))
+  assert.equal(server.terminals.get('term_1')!.status, 'running')
+  // Nor does a restarted plugin that finds it as the saved terminal and gets no answer: it asks
+  // for a retry and starts no second worker.
+  const restarted = createTerminalLink({ ...deps, load: async () => ({ hostId: host.id, handle: 'term_1' }) })
+  const terminalsBefore = server.terminals.size
+  await assert.rejects(restarted.request(host, 'status', {}), /Try again in a moment/)
+  assert.equal(server.terminals.get('term_1')!.status, 'running')
+  assert.equal(server.terminals.size, terminalsBefore)
+  const closed = server.calls.filter((args) => args[0] === 'terminal' && args[1] === 'close').map((args) => args[args.indexOf('--terminal') + 1])
+  assert.equal(closed.includes('term_1'), false)
+})
+
+test('a return to the host while its last check is in flight keeps the terminal, even if that check says idle', async () => {
+  const server = fakeServer({
+    status: () => ({ state: 'running', message: '' }),
+    'desktop.step': () => ({ step: { id: 1, action: 'recreate', running: false } })
+  })
+  const link = createTerminalLink(linkDeps(server))
+  await link.request(host, 'status', {})
+  const leaving = link.disconnect()
+  await link.request(host, 'status', {})
+  await leaving
+  for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r))
+  assert.equal(server.terminals.get('term_1')!.status, 'running')
+  assert.equal(server.terminals.size, 1)
+})
+
+test('returning to a host before its desktop step ends takes back the same terminal and job', async () => {
+  const hostB = { id: 'mini-2', name: 'Mac Studio' }
+  let running = true
+  const server = fakeServer(
+    {
+      status: () => ({ state: 'running', message: '' }),
+      'desktop.step': () => ({ step: { id: 1, action: 'prepare', running } })
+    },
+    { hosts: [host.id, hostB.id] }
+  )
+  const store: { saved?: Saved } = {}
+  const deps = linkDeps(server, store)
+  let parked: (() => void)[] = []
+  deps.sleep = () => new Promise<void>((resolve) => parked.push(resolve))
+  const flushAll = async () => { for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r)) }
+  const link = createTerminalLink(deps)
+  // A → This computer → A.
+  await link.request(host, 'status', {})
+  void link.disconnect()
+  await flushAll()
+  await link.request(host, 'status', {})
+  assert.equal(server.terminals.size, 1, 'no second terminal on A')
+  for (const wake of parked.splice(0)) wake()
+  await flushAll()
+  assert.equal(server.terminals.get('term_1')!.status, 'running', 'the old retirement does not close the reclaimed terminal')
+  // A → B → A: B gets its own terminal; A is taken back, and saved as the current one again.
+  await link.request(hostB, 'status', {})
+  await flushAll()
+  assert.equal(server.terminals.get('term_2')!.status, 'running')
+  assert.equal(store.saved?.hostId, hostB.id)
+  await link.request(host, 'status', {})
+  assert.equal(store.saved?.handle, 'term_1')
+  assert.equal(server.terminals.get('term_1')!.status, 'running')
+  // When A's step ends and the link lets A go, it closes.
+  running = false
+  void link.disconnect()
+  await flushAll()
+  for (const wake of parked.splice(0)) wake()
+  await flushAll()
+  assert.equal(server.terminals.get('term_1')!.status, 'exited')
+})
+
+test('after a restart, one unanswered check of the saved terminal asks for a retry, and the retry takes it back', async () => {
+  let running = true
+  const newer: Bundle = { ...bundle, hash: 'fedcba9876543210' }
+  const server = fakeServer(
+    {
+      status: () => ({ state: 'running', message: '' }),
+      'desktop.step': () => ({ step: { id: 1, action: 'prepare', running } })
+    },
+    { bundles: [bundle, newer] }
+  )
+  const store: { saved?: Saved } = {}
+  const first = createTerminalLink(linkDeps(server, store))
+  await first.request(host, 'status', {})
+  assert.equal(store.saved?.handle, 'term_1')
+  // The plugin restarts. Its first check of term_1 goes unanswered once.
+  const deps = linkDeps(server, store)
+  let drop = true
+  deps.call = async (args) => {
+    if (drop && args[0] === 'terminal' && args[1] === 'read' && args.includes('--cursor')) { drop = false; throw new Error('timed out') }
+    return server.call(args)
+  }
+  const restarted = createTerminalLink(deps)
+  await assert.rejects(restarted.request(host, 'status', {}), /Try again in a moment/)
+  assert.equal(store.saved?.handle, 'term_1')
+  assert.deepEqual(await restarted.request(host, 'status', {}), { state: 'running', message: '' })
+  assert.equal(server.terminals.size, 1, 'no second worker')
+  // A saved terminal running another plugin version is not replaced while it runs a step.
+  const upgraded = linkDeps(server, store)
+  upgraded.bundle = async () => newer
+  await assert.rejects(createTerminalLink(upgraded).request(host, 'status', {}), /still finishing a private desktop step/)
+  assert.equal(server.terminals.size, 1)
+  running = false
+  // Once its step is done, the new version replaces it and serves the host.
+  assert.deepEqual(await createTerminalLink(upgraded).request(host, 'status', {}), { state: 'running', message: '' })
+  assert.equal(server.terminals.get('term_1')!.status, 'exited')
+  assert.equal(server.terminals.get('term_2')!.status, 'running')
+  assert.equal(store.saved?.handle, 'term_2')
+})
+
+test('a saved terminal that no longer exists is replaced; one that cannot be checked asks for a retry', async () => {
+  let listFails = true
+  const server = fakeServer({ status: () => ({ state: 'running', message: '' }) }, { listFails: () => listFails })
+  // The plugin was stopped; meanwhile the saved terminal was removed from the server.
+  const store: { saved?: Saved } = { saved: { hostId: host.id, handle: 'term_gone' } }
+  // The list of live terminals cannot be read either: nothing is known for sure.
+  await assert.rejects(createTerminalLink(linkDeps(server, store)).request(host, 'status', {}), /Try again in a moment/)
+  assert.equal(store.saved?.handle, 'term_gone')
+  assert.equal(server.terminals.size, 0)
+  // The list confirms it is gone: a fresh worker starts and is saved.
+  listFails = false
+  assert.deepEqual(await createTerminalLink(linkDeps(server, store)).request(host, 'status', {}), { state: 'running', message: '' })
+  assert.equal(store.saved?.handle, 'term_1')
 })
 
 test('paired launcher detaches with fake process dependencies and validates the returned pid', async () => {

@@ -59,8 +59,11 @@ Good to know:
   The computer icon in a chat (or **Backend** in the bot context menu) opens the
   Backend panel: where the bot may use a computer (Auto, Cloud desktop, Private
   desktop, This computer, Browser or Off), with what OpenMausBot reports about each.
-  Setting up or repairing a computer, and putting a full-access bot on This computer,
-  stay in native OpenMausBot.
+  With **Private desktop** chosen, the panel shows OpenMausBot's setup steps and the
+  next action (prepare, create, start, stop, or delete and recreate); **Browser** offers
+  **Turn on the browser**. **Settings → Private desktops** holds the same setup plus
+  Isolation (Shared or Per bot) and the idle stop time. Cloud desktops, and putting a
+  full-access bot on This computer, stay in native OpenMausBot.
   Newly enabled connectors start with no bots assigned. Existing custom servers appear
   under **OpenMausBot**. Disable keeps credentials there; Remove deletes the server and
   its stored credentials and clears its bot assignments. First-run setup never imports tools.

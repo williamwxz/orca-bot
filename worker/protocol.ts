@@ -3,7 +3,7 @@ import type { Connectors, ConnectorAction } from './mcp-connectors.ts'
 import type { FoundAgents } from '../shared/agents.ts'
 import type { Thread } from '../shared/chat.ts'
 import type { Upload, Uploaded } from '../shared/attachments.ts'
-import type { BotCreate, BotCreated, Bot, BotAction, ComputerStatus, GroupRename } from '../shared/roster.ts'
+import type { BotCreate, BotCreated, Bot, BotAction, ComputerStatus, DesktopAction, DesktopSettings, DesktopStatus, GroupRename } from '../shared/roster.ts'
 import type { Hosts } from './paired-host.ts'
 import type { Updates } from './updates.ts'
 
@@ -29,6 +29,11 @@ export type Requests = {
   'thread.read': { input: { botId: string; limit?: number }; output: Thread }
   'message.send': { input: { botId: string; text: string; attachments?: string[] }; output: { sendId: string } }
   'computer.status': { input: { botId: string }; output: ComputerStatus }
+  'desktop.status': { input: { botId?: string }; output: DesktopStatus }
+  'desktop.step': { input: Record<string, never>; output: { step?: NonNullable<DesktopStatus['step']> } }
+  'desktop.act': { input: { action: DesktopAction; botId?: string }; output: { step: NonNullable<DesktopStatus['step']> } }
+  'desktop.settings': { input: Partial<DesktopSettings>; output: DesktopSettings }
+  'browser.install': { input: Record<string, never>; output: { installing: true } }
   'attachment.upload': { input: Upload; output: Uploaded }
   'chat.open': { input: { botId?: string }; output: { message: string } }
   'bots.addMausBot': { input: { botId: string }; output: { message: string } }

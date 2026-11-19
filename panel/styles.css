@@ -384,3 +384,26 @@ html.dark .mcp-icon { background: #292b30; }
 .capability-menu.sheet:focus { outline: none; }
 .computer-screen small { font-size: 11.5px; font-style: italic; color: var(--bd-tertiary); margin-top: -4px; }
 .computer-native .backend-chevron { margin-left: auto; color: var(--bd-muted); }
+/* Private desktop setup: OpenMausBot's numbered steps, the next step, and its one action. */
+.desktop-setup { display: flex; flex-direction: column; gap: 10px; }
+.desktop-steps { display: flex; flex-direction: column; gap: 5px; margin: 2px 0 0; padding: 0; list-style: none; font-size: 12.5px; color: var(--bd-muted); }
+.desktop-steps li { display: flex; align-items: center; gap: 8px; }
+.desktop-steps li.current { color: var(--bd-ink); font-weight: 500; }
+.desktop-steps li.done { color: var(--bd-muted); }
+.desktop-step-mark { display: inline-grid; place-items: center; flex: none; width: 18px; height: 18px; border-radius: 50%; font-size: 10.5px; font-weight: 600; background: var(--bd-composer); box-shadow: inset 0 0 0 1px var(--bd-composer-ring); }
+.desktop-steps li.done .desktop-step-mark { background: color-mix(in srgb, var(--bd-accent) 14%, transparent); color: var(--bd-accent); box-shadow: none; }
+.desktop-steps li.current .desktop-step-mark { background: var(--bd-accent); color: #fff; box-shadow: none; }
+.desktop-state strong { font-size: 13px; font-weight: 600; }
+.desktop-state .bot-menu-note { margin: 2px 0 0; }
+.desktop-action { align-self: flex-start; height: 28px; padding: 0 12px; }
+.capability-menu.sheet .desktop-action { width: auto; justify-content: center; }
+#desktops-setup { margin: 4px 0 10px; }
+.desktop-option { display: flex; flex-direction: column; gap: 2px; margin: 12px 0 0; padding-top: 12px; border-top: 1px solid var(--bd-composer-ring); font-size: 12px; }
+.desktop-option strong { font-size: 13px; font-weight: 600; }
+.desktop-option small, .desktop-option-note { display: block; font-size: 11.5px; line-height: 16px; color: var(--bd-muted); }
+.desktop-option-note { margin: 4px 0 0; }
+.desktop-inline { flex-direction: row; align-items: center; gap: 8px; cursor: default; }
+.desktop-inline select, .desktop-inline input { width: 64px; height: 26px; padding: 0 6px; font: inherit; border: 1px solid var(--bd-border); border-radius: 7px; background: var(--bd-card); color: var(--bd-ink); }
+.desktop-segmented { display: flex; gap: 3px; margin-top: 8px; padding: 3px; border-radius: 999px; background: var(--bd-card); box-shadow: inset 0 0 0 1px var(--bd-composer-ring); }
+.desktop-segmented button { flex: 1; height: 26px; border: 0; border-radius: 999px; background: transparent; color: var(--bd-muted); font-size: 12px; }
+.desktop-segmented button[aria-checked="true"] { background: var(--bd-composer); color: var(--bd-ink); box-shadow: 0 1px 3px var(--bd-composer-ring); }

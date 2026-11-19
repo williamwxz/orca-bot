@@ -334,13 +334,18 @@ test('Backend is a panel from the right with the bot\'s screen, a Works on grid 
     assert.equal(tile('vm').attrs.get('aria-label'), 'Private desktop: Needs repair')
     assert.equal(tile('browser').attrs.get('aria-label'), 'Browser: Only websites')
     assert.match(tile('cloud').className, /flagged/)
-    assert.ok(text().some((t) => /Private desktop needs repair\. Do that in native OpenMausBot/.test(t)))
+    assert.ok(text().some((t) => /Private desktop needs repair\. Do that below/.test(t)))
+    // No desktop detail in this status: no setup block, and no native link for Private desktop.
+    assert.equal(all(root).some((n) => n.dataset.key === 'native'), false)
     tile('browser').emit()
     await flush()
     assert.deepEqual(acts, [{ botId: 'a', action: 'computer', computer: 'browser' }])
     assert.deepEqual(notes, ['Backend updated.'])
     assert.equal(tile('browser').attrs.get('aria-checked'), 'true')
     assert.ok(text().includes('The built-in browser only: websites, no desktop.'))
+    tile('cloud').emit()
+    await flush()
+    assert.ok(text().includes('Connect a cloud desktop in native OpenMausBot'))
     all(root).find((n) => n.dataset.key === 'native')!.emit()
     assert.deepEqual(opened, ['a'])
     assert.equal(root.hidden, true)
@@ -353,6 +358,209 @@ test('Backend is a panel from the right with the bot\'s screen, a Works on grid 
     assert.equal(root.hidden, true)
   } finally {
     for (const [i, k] of ['document', 'window'].entries()) {
+      if (saved[i]) Object.defineProperty(globalThis, k, saved[i]!)
+      else delete (globalThis as any)[k]
+    }
+  }
+})
+
+test('the Backend panel explains a desktop it must replace, follows the step to the end, and resumes a browser install', async () => {
+  const saved = ['document', 'window', 'setTimeout'].map((k) => Object.getOwnPropertyDescriptor(globalThis, k))
+  const doc = Object.assign(new Element(), { createElement: () => new Element() })
+  Object.defineProperty(globalThis, 'document', { configurable: true, value: doc })
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: Object.assign(new Element(), { innerWidth: 380, innerHeight: 600 }) })
+  // Poll timers fire on the next turn instead of after 2.5 seconds.
+  Object.defineProperty(globalThis, 'setTimeout', { configurable: true, value: (fn: () => void) => { setImmediate(fn); return 0 } })
+  const all = (n: Element): Element[] => [n, ...n.children.flatMap(all)]
+  try {
+    const root = new Element()
+    const requests: [string, any][] = []
+    const notes: string[] = []
+    let desktop: any = { mode: 'shared', maxInstances: 2, idleMinutes: 480, state: 'repair', reason: 'no-folder', runtime: 'Docker' }
+    let browser: any = { browser: 'setup' }
+    let polls = 0
+    let failNextPoll = false
+    let holdDesktop = false
+    const frame = { plugin: { request: async (name: string, input: any) => {
+      requests.push([name, input])
+      if (name === 'computer.status') {
+        // The first poll after the step starts times out: that must not end the step.
+        if (failNextPoll) { failNextPoll = false; throw new Error('timed out') }
+        // The step runs for two polls, then finishes.
+        if (desktop.step?.running && !holdDesktop && ++polls > 2) desktop = { ...desktop, state: 'running', reason: undefined, step: { ...desktop.step, running: false } }
+        return { vm: 'repair', ...browser, desktop }
+      }
+      if (name === 'desktop.act') {
+        desktop = { ...desktop, step: { id: 7, action: input.action, running: true } }
+        return { step: desktop.step }
+      }
+      return { ok: true }
+    } } }
+    const picker = createCapabilityPicker(root as any, frame as any, { changed: async () => {}, manage: () => {}, notify: (t) => notes.push(t) })
+    const bot = { id: 'a', name: 'Scout', state: 'idle', computer: 'vm' } as any
+    await picker.open('computer', bot, new Element() as any)
+    const text = () => all(root).map((n) => n.textContent)
+    const key = (k: string) => all(root).find((n) => n.dataset.key === k)!
+    // You did not make this desktop: say what is wrong with it in plain words.
+    assert.ok(text().includes('A private desktop already exists, but it cannot be used'))
+    assert.ok(text().some((t) => /could not confirm the writable folder/.test(t)))
+    // An unconfirmed folder is not promised to survive the replacement.
+    assert.ok(text().some((t) => /may not be kept/.test(t)))
+    assert.equal(text().some((t) => /folder and browser sign-ins are kept/.test(t)), false)
+    const steps = all(root).filter((n) => /: (done|next|not yet)$/.test(n.attrs.get('aria-label') ?? ''))
+    assert.deepEqual(steps.map((n) => n.attrs.get('aria-label')), [
+      'Install the container app: done', 'Start it: done', 'Get the desktop ready: done', 'Replace the desktop: next'
+    ])
+    assert.equal(key('desktop:recreate').textContent, 'Replace with a fresh desktop')
+    failNextPoll = true
+    key('desktop:recreate').emit()
+    await flush()
+    assert.deepEqual(requests.find(([n]) => n === 'desktop.act')![1], { action: 'recreate', botId: 'a' })
+    assert.equal(key('desktop:recreate').textContent, 'Replacing…')
+    await flush()
+    await flush()
+    assert.equal(key('desktop:recreate').textContent, 'Replacing…', 'a failed poll keeps following the step')
+    assert.equal(key('desktop:recreate').disabled, true)
+    for (let i = 0; i < 8; i++) await flush()
+    assert.deepEqual(notes, ['Private desktop updated.'])
+    assert.ok(text().includes('Running'))
+    assert.equal(key('desktop:stop').textContent, 'Stop')
+    picker.close()
+    // A step that fails reports its fixed wording.
+    desktop = { ...desktop, state: 'stopped', step: { id: 8, action: 'start', running: false, error: 'The container app is not ready. Start Docker or Podman, then try again.' } }
+    polls = 0
+    await picker.open('computer', bot, new Element() as any)
+    assert.equal(notes.length, 1, 'an old finished step is not announced again on reopen')
+    picker.close()
+    // Reopened while the browser installs and a desktop step runs: each is followed on its own,
+    // and the browser button frees up even though the desktop step is still going.
+    desktop = { ...desktop, step: { id: 9, action: 'prepare', running: true } }
+    holdDesktop = true
+    browser = { browser: 'setup', browserInstalling: true }
+    let browserPolls = 0
+    const status = frame.plugin.request
+    frame.plugin.request = (async (name: string, input: any) => {
+      if (name === 'computer.status' && ++browserPolls > 2) browser = { browser: 'ready' }
+      return status(name, input)
+    }) as any
+    await picker.open('computer', { ...bot, computer: 'browser' }, new Element() as any)
+    assert.equal(key('browser:install').textContent, 'Installing…')
+    for (let i = 0; i < 8; i++) await flush()
+    assert.equal(notes.at(-1), 'The browser is ready.')
+    assert.equal(desktop.step.running, true)
+    picker.close()
+  } finally {
+    for (const [i, k] of ['document', 'window', 'setTimeout'].entries()) {
+      if (saved[i]) Object.defineProperty(globalThis, k, saved[i]!)
+      else delete (globalThis as any)[k]
+    }
+  }
+})
+
+test('a desktop that did not start warns what replacing it removes', async () => {
+  const { desktopStep } = await import('./desktop-setup.ts')
+  const failed = desktopStep({ mode: 'shared', maxInstances: 2, idleMinutes: 480, state: 'failed' }, false)
+  assert.equal(failed.action, 'recreate')
+  assert.match(failed.line, /apps and files stored anywhere else inside it are removed/)
+  const old = desktopStep({ mode: 'shared', maxInstances: 2, idleMinutes: 480, state: 'repair', reason: 'old-image' }, false)
+  assert.match(old.line, /older OpenMausBot.*keeps its shared folder and browser sign-ins/)
+  // Old image and an unconfirmed folder at once: the shown reason is the image, but nothing is
+  // promised about the folder.
+  const both = desktopStep({ mode: 'shared', maxInstances: 2, idleMinutes: 480, state: 'repair', reason: 'old-image', folderUnverified: true }, false)
+  assert.match(both.line, /older OpenMausBot/)
+  assert.match(both.line, /may not be kept/)
+  assert.doesNotMatch(both.line, /keeps its shared folder/)
+  const failedUnverified = desktopStep({ mode: 'shared', maxInstances: 2, idleMinutes: 480, state: 'failed', folderUnverified: true }, false)
+  assert.match(failedUnverified.line, /may not be kept/)
+})
+
+test('a step whose host stops answering is given up after a bounded wait, not followed forever', async () => {
+  const saved = ['document', 'window', 'setTimeout'].map((k) => Object.getOwnPropertyDescriptor(globalThis, k))
+  Object.defineProperty(globalThis, 'document', { configurable: true, value: Object.assign(new Element(), { createElement: () => new Element() }) })
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: Object.assign(new Element(), { innerWidth: 380, innerHeight: 600 }) })
+  Object.defineProperty(globalThis, 'setTimeout', { configurable: true, value: (fn: () => void) => { setImmediate(fn); return 0 } })
+  const all = (n: Element): Element[] => [n, ...n.children.flatMap(all)]
+  try {
+    const { FOLLOW_MISSES } = await import('./capability-picker.ts')
+    const root = new Element()
+    const notes: string[] = []
+    let polls = 0
+    let online = true
+    let wentOffline = false
+    const lifecycle: string[] = []
+    // A replace was running; it finishes while the host is unreachable.
+    let desktop: any = { mode: 'shared', maxInstances: 2, idleMinutes: 480, state: 'repair', reason: 'old-image', step: { id: 3, action: 'recreate', running: true } }
+    const frame = { plugin: { request: async (name: string, input: any) => {
+      if (name === 'desktop.act') { lifecycle.push(input.action); return { step: { id: 4, action: input.action, running: true } } }
+      if (name !== 'computer.status') return { ok: true }
+      polls++
+      // One good "still running" answer after opening, then the host goes away.
+      if (polls > 2 && online && !wentOffline) { wentOffline = true; online = false; desktop = { ...desktop, state: 'running', reason: undefined, step: { id: 3, action: 'recreate', running: false } } }
+      if (!online) throw new Error('offline')
+      return { vm: 'ready', desktop }
+    } } }
+    const picker = createCapabilityPicker(root as any, frame as any, { changed: async () => {}, manage: () => {}, notify: (t) => notes.push(t) })
+    await picker.open('computer', { id: 'a', name: 'Scout', state: 'idle', computer: 'vm' } as any, new Element() as any)
+    const key = (k: string) => all(root).find((n) => n.dataset.key === k)!
+    assert.equal(key('desktop:recreate').textContent, 'Replacing…')
+    for (let i = 0; i < FOLLOW_MISSES * 3 + 10; i++) await new Promise<void>((r) => setImmediate(r))
+    assert.deepEqual(notes, ['Could not confirm how the step ended. Check the private desktop again.'])
+    const settled = polls
+    for (let i = 0; i < 10; i++) await new Promise<void>((r) => setImmediate(r))
+    assert.equal(polls, settled, 'no more polling once given up')
+    // Only a re-check is offered: the cached status still says "replace".
+    assert.equal(all(root).some((n) => n.dataset.key === 'desktop:recreate'), false)
+    assert.equal(key('desktop:check').textContent, 'Check again')
+    online = true
+    key('desktop:check').emit()
+    for (let i = 0; i < 6; i++) await new Promise<void>((r) => setImmediate(r))
+    assert.deepEqual(lifecycle, [], 'the first click sends no lifecycle step')
+    // The fresh status shows the replace already worked.
+    assert.equal(key('desktop:stop').textContent, 'Stop')
+    picker.close()
+  } finally {
+    for (const [i, k] of ['document', 'window', 'setTimeout'].entries()) {
+      if (saved[i]) Object.defineProperty(globalThis, k, saved[i]!)
+      else delete (globalThis as any)[k]
+    }
+  }
+})
+
+test('a re-check that finds the step still running follows it again to the end', async () => {
+  const saved = ['document', 'window', 'setTimeout'].map((k) => Object.getOwnPropertyDescriptor(globalThis, k))
+  Object.defineProperty(globalThis, 'document', { configurable: true, value: Object.assign(new Element(), { createElement: () => new Element() }) })
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: Object.assign(new Element(), { innerWidth: 380, innerHeight: 600 }) })
+  Object.defineProperty(globalThis, 'setTimeout', { configurable: true, value: (fn: () => void) => { setImmediate(fn); return 0 } })
+  const all = (n: Element): Element[] => [n, ...n.children.flatMap(all)]
+  try {
+    const { FOLLOW_MISSES } = await import('./capability-picker.ts')
+    const root = new Element()
+    const notes: string[] = []
+    let online = false
+    let polls = 0
+    let desktop: any = { mode: 'shared', maxInstances: 2, idleMinutes: 480, state: 'not-prepared', step: { id: 6, action: 'prepare', running: true } }
+    const frame = { plugin: { request: async (name: string) => {
+      if (name !== 'computer.status') return { ok: true }
+      // The first status (on open) answers; then the host is unreachable until the re-check.
+      if (++polls > 1 && !online) throw new Error('offline')
+      if (online && polls > 3) desktop = { ...desktop, state: 'not-created', step: { ...desktop.step, running: false } }
+      return { vm: 'setup', desktop }
+    } } }
+    const picker = createCapabilityPicker(root as any, frame as any, { changed: async () => {}, manage: () => {}, notify: (t) => notes.push(t) })
+    await picker.open('computer', { id: 'a', name: 'Scout', state: 'idle', computer: 'vm' } as any, new Element() as any)
+    for (let i = 0; i < FOLLOW_MISSES * 3 + 10; i++) await new Promise<void>((r) => setImmediate(r))
+    const key = (k: string) => all(root).find((n) => n.dataset.key === k)!
+    assert.equal(key('desktop:check').textContent, 'Check again')
+    online = true
+    polls = 1
+    key('desktop:check').emit()
+    for (let i = 0; i < 12; i++) await new Promise<void>((r) => setImmediate(r))
+    assert.equal(notes.at(-1), 'Private desktop updated.')
+    assert.equal(key('desktop:create').textContent, 'Create private desktop')
+    assert.equal(key('desktop:create').disabled, false)
+    picker.close()
+  } finally {
+    for (const [i, k] of ['document', 'window', 'setTimeout'].entries()) {
       if (saved[i]) Object.defineProperty(globalThis, k, saved[i]!)
       else delete (globalThis as any)[k]
     }

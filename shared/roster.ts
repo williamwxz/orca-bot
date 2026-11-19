@@ -35,12 +35,44 @@ export const COMPUTER_CHOICES: { value: Computer | 'auto'; label: string; descri
 ]
 /** Real state of each place a bot can work, as far as the server reports it. */
 export type ComputerState = 'ready' | 'stopped' | 'setup' | 'repair'
+/** A private desktop's setup state, in the order OpenMausBot's setup steps go. */
+export type DesktopState =
+  | 'no-runtime'
+  | 'runtime-stopped'
+  | 'not-prepared'
+  | 'unsupported'
+  | 'not-created'
+  | 'repair'
+  | 'failed'
+  | 'stopped'
+  | 'starting'
+  | 'running'
+/** Why an existing desktop must be replaced, from OpenMausBot's own checks. */
+export type DesktopReason = 'no-folder' | 'old-image' | 'not-managed' | 'unsafe'
+/** Private desktops for the whole bot host: how they are shared, and for how long they idle. */
+export type DesktopSettings = { mode: 'shared' | 'per-bot' | 'pool'; maxInstances: number; idleMinutes: number }
+export type DesktopStatus = DesktopSettings & {
+  state: DesktopState
+  /** The container app found, by product name. */
+  runtime?: 'Docker' | 'Podman' | 'Apple container'
+  /** Set when the state is 'repair'. */
+  reason?: DesktopReason
+  /** OpenMausBot could not confirm the desktop's writable shared folder, whatever else is wrong. */
+  folderUnverified?: boolean
+  /** The latest setup step started from this plugin: running, done, or failed with fixed words. */
+  step?: { id: number; action: DesktopAction; running: boolean; error?: string }
+}
+export type DesktopAction = 'prepare' | 'create' | 'start' | 'stop' | 'recreate'
 export type ComputerStatus = {
   /** Where the bot's open conversation is working right now. */
   now?: Exclude<Computer, 'off'>
   cloud?: ComputerState
   vm?: ComputerState
   browser?: ComputerState
+  /** This bot's private desktop in detail (its own in per-bot mode, otherwise the shared one). */
+  desktop?: DesktopStatus
+  /** The built-in browser is being installed. */
+  browserInstalling?: boolean
 }
 /** A short status for a tile, or undefined when the plain description says enough. */
 export function computerNote(value: Computer | 'auto', status: ComputerStatus | undefined): string | undefined {
@@ -53,8 +85,11 @@ export function computerNote(value: Computer | 'auto', status: ComputerStatus | 
 /** One line under the grid about the chosen place, in OpenMausBot's manner. */
 export function computerHint(value: Computer | 'auto', status: ComputerStatus | undefined): string {
   const state = value === 'cloud' ? status?.cloud : value === 'vm' ? status?.vm : value === 'browser' ? status?.browser : undefined
-  if (state === 'setup' || state === 'repair')
-    return `${computerLabel(value === 'auto' ? undefined : value)} ${state === 'setup' ? 'is not set up yet' : 'needs repair'}. Do that in native OpenMausBot; until then this bot works without it.`
+  if (state === 'setup' || state === 'repair') {
+    const place = computerLabel(value === 'auto' ? undefined : value)
+    const where = value === 'cloud' ? 'in native OpenMausBot' : 'below'
+    return `${place} ${state === 'setup' ? 'is not set up yet' : 'needs repair'}. Do that ${where}; until then this bot works without it.`
+  }
   switch (value) {
     case 'auto': return 'Uses a computer that is already set up and ready. It never sets one up or takes over this computer on its own.'
     case 'cloud': return 'A remote desktop that stays available while this computer is off.'

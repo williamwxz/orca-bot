@@ -211,6 +211,8 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
             }
             reject = fail
           })
+        if (name === 'desktop.status')
+          return { mode: 'shared', maxInstances: 2, idleMinutes: 480, state: host === 'local' ? 'stopped' : 'running' }
         throw new Error('Unexpected request')
       }
     }
@@ -659,6 +661,15 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
     await flush()
     assert.match(get('toast').children[0].textContent, /Pairing unavailable/)
     selectionFails = false
+    // With Settings open, a host switch reads the new host's private desktop again.
+    const desktopReads = calls.filter((call) => call.name === 'desktop.status').length
+    get('host').value = 'local'
+    get('host').emit('change')
+    await flush()
+    await flush()
+    await flush()
+    assert.ok(calls.filter((call) => call.name === 'desktop.status').length > desktopReads)
+    assert.ok(get('desktops-setup').children.length > 0, 'the section is not left empty')
     // Switching clears the old host's bots at once, and a late answer from that host is dropped.
     holdNextBots = true
     win.emit('pageshow')

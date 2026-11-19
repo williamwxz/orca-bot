@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.10 (19 November 2026)
+
+- **Set up private desktops in the panel**: choosing **Private desktop** in a
+  bot's Backend panel shows OpenMausBot's setup steps with checkmarks and the
+  one action for the current state (Prepare desktop, Create, Start it now,
+  Stop, or Delete and recreate). Steps use OpenMausBot's own routes, so it
+  still refuses while a bot is using the desktop, and recreating keeps the
+  desktop's folder and browser sign-ins.
+- **Settings → Private desktops**: the same setup for the bot host, plus
+  **Isolation** (Shared or Per bot), the per-bot maximum and the idle stop time.
+- **Turn on the browser**: install OpenMausBot's built-in browser from the
+  Backend panel when a bot is set to **Browser**.
+
 ## 0.1.9 (18 November 2026)
 
 - **Wide two-pane layout**: at 720px or wider the panel keeps the bot list on the

@@ -11,6 +11,8 @@ const safeErrors: Record<string, string> = {
 export class HttpStatusError extends Error {
   status: number
   code?: string
+  /** The server's own error text, for classifying a refusal in the worker. Never shown as is. */
+  detail?: string
   constructor(status: number, details?: unknown) {
     const body = details && typeof details === 'object' ? details as Record<string, unknown> : {}
     const key = body.errorKey ?? body.code
@@ -18,13 +20,15 @@ export class HttpStatusError extends Error {
     super(code ? safeErrors[code] : 'OpenMausBot request failed.')
     this.status = status
     this.code = code
+    if (typeof body.error === 'string') this.detail = body.error.slice(0, 500)
   }
 }
 
 export type HttpMethod = 'GET' | 'PATCH' | 'POST' | 'DELETE'
 
 export type HttpDeps = {
-  request: (port: number, path: string, body?: object, method?: HttpMethod) => Promise<unknown>
+  /** `timeoutMs` defaults to 10 seconds; setup steps that download or build pass longer. */
+  request: (port: number, path: string, body?: object, method?: HttpMethod, timeoutMs?: number) => Promise<unknown>
   avatar: (port: number, path: string) => Promise<string | undefined>
 }
 
@@ -35,13 +39,13 @@ export function defaultHttpDeps(): HttpDeps {
 
 export function httpDeps(fetcher: typeof fetch): HttpDeps {
   return {
-    request: async (port, path, body, method = body ? 'PATCH' : 'GET') => {
+    request: async (port, path, body, method = body ? 'PATCH' : 'GET', timeoutMs = 10000) => {
       const response = await fetcher(`http://127.0.0.1:${port}${path}`, {
         method,
         headers: body ? { 'content-type': 'application/json' } : {},
         body: body ? JSON.stringify(body) : undefined,
         redirect: 'error',
-        signal: AbortSignal.timeout(10000)
+        signal: AbortSignal.timeout(timeoutMs)
       })
       if (!response.ok) {
         // Only recognized public error codes reach the UI; raw messages may contain internals.
