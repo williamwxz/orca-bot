@@ -68,69 +68,79 @@
         <button id="settings-back" type="button" aria-label="Back to bots" title="Back to bots">←</button>
         <h2 id="settings-title">Settings</h2>
       </div>
-      <div class="settings-group">
-        <h3>Bots run on</h3>
-        <select id="host" aria-label="Bots run on"></select>
-        <p class="settings-note">This computer, or an Orca server paired with it in Orca.</p>
+      <h3 class="settings-section-title" id="settings-host-title">Bot host</h3>
+      <div class="settings-group" role="group" aria-labelledby="settings-host-title">
+        <div class="settings-row">
+          <span class="setup-copy"><strong>Bots run on</strong><small>This computer, or an Orca server paired with it in Orca.</small></span>
+          <select id="host" aria-label="Bots run on"></select>
+        </div>
+        <div class="settings-row">
+          <span class="setup-copy"><strong>OpenMausBot</strong><small id="omb-status"></small></span>
+          <button id="stop-server" type="button">Stop</button>
+        </div>
+        <div id="settings-install-card" class="settings-row" hidden>
+          <p id="settings-install-card-notice" class="settings-note"></p>
+          <button id="settings-install-omb" type="button">Install OpenMausBot</button>
+        </div>
       </div>
-      <div class="settings-group">
-        <h3>Permissions</h3>
+      <h3 class="settings-section-title" id="settings-bots-title">Bots</h3>
+      <div class="settings-group" role="group" aria-labelledby="settings-bots-title">
+        <div class="settings-row">
+          <span class="setup-copy"><strong>Connectors</strong><small id="mcp-summary" role="status"></small></span>
+          <button id="mcp-manage" class="settings-open" type="button">Manage</button>
+        </div>
+        <div class="settings-row">
+          <span class="setup-copy"><strong>Private desktops</strong><small>Each bot can have its own desktop on the bot host, kept apart from yours.</small></span>
+          <button id="desktops-manage" class="settings-open" type="button">Set up</button>
+        </div>
+        <label class="setup-option settings-row">
+          <span class="setup-copy"><strong>Learn skills on their own</strong><small>After a task with many steps, a bot may save or improve a skill. Uses the bot's own AI. See a bot's skills under <b>Skills</b> in its chat.</small></span>
+          <input id="learning-auto" class="switch" type="checkbox" role="switch" />
+        </label>
+        <p id="learning-note" class="settings-note" role="status"></p>
+      </div>
+      <h3 class="settings-section-title" id="settings-permissions-title">Permissions</h3>
+      <div class="settings-group" role="group" aria-labelledby="settings-permissions-title">
         <p id="permissions-note" class="settings-note"></p>
-        <label class="setup-option">
+        <label class="setup-option settings-row">
           <span class="setup-copy"><strong>Bots can use my tools</strong><small id="pref-share-tools-copy"></small></span>
           <input id="pref-share-tools" class="switch" type="checkbox" role="switch" />
         </label>
-        <label class="setup-option" id="pref-link-agents-label">
+        <label class="setup-option settings-row" id="pref-link-agents-label">
           <span class="setup-copy"><strong>My Orca agents can talk to the bots</strong><small>Adds Bot Team for Orca's tools to <span id="pref-agent-names">Claude, Codex, opencode and Antigravity</span><span id="pref-agent-host"></span>, so an agent can message a bot or read its replies.</small></span>
           <input id="pref-link-agents" class="switch" type="checkbox" role="switch" />
         </label>
       </div>
-      <div class="settings-group">
-        <h3>Connectors</h3>
-        <p id="mcp-summary" class="settings-note" role="status"></p>
-        <button id="mcp-manage" class="bot-menu-btn" type="button">Manage</button>
-      </div>
-      <div class="settings-group">
-        <h3>Learning</h3>
-        <p id="learning-note" class="settings-note" role="status"></p>
-        <label class="setup-option">
-          <span class="setup-copy"><strong>Bots learn skills on their own</strong><small>After a task with many steps, a bot looks back over it and may save or improve a skill. This uses the bot's own AI and counts toward its usage. Each new skill shows in the chat. See a bot's skills and memory under <b>Skills</b> in its chat.</small></span>
-          <input id="learning-auto" class="switch" type="checkbox" role="switch" />
+      <h3 class="settings-section-title" id="settings-plugin-title">Updates and export</h3>
+      <div class="settings-group" role="group" aria-labelledby="settings-plugin-title">
+        <div class="settings-row">
+          <span class="setup-copy"><strong>Updates</strong><small id="update-status"></small></span>
+          <span class="settings-row-actions">
+            <button id="update-install" type="button" hidden>Update</button>
+            <button id="update-check" type="button">Check now</button>
+          </span>
+        </div>
+        <label class="setup-option settings-row">
+          <span class="setup-copy"><strong>Install updates automatically</strong><small>An update that asks for new access always waits for your approval.</small></span>
+          <input id="update-auto" class="switch" type="checkbox" role="switch" />
         </label>
+        <div class="settings-row">
+          <span class="setup-copy"><strong>Export bots</strong><small>Each bot's persona, memory and own skills as plain files in Downloads on the bot host, for Hermes Agent, Claude Code or Codex. No chats or credentials.</small></span>
+          <button id="export-team" type="button">Export</button>
+        </div>
+        <p id="export-note" class="settings-note" role="status"></p>
+      </div>
+    </section>
+    <section id="desktops-view" aria-labelledby="desktops-title" hidden>
+      <div class="settings-header">
+        <button id="desktops-back" type="button" aria-label="Back to Settings" title="Back to Settings">←</button>
+        <h2 id="desktops-title">Private desktops</h2>
       </div>
       <div class="settings-group" id="desktops-group">
-        <h3>Private desktops</h3>
         <p class="settings-note">Your bots get their own desktop on the bot host, kept apart from yours.</p>
         <p id="desktops-note" class="settings-note" role="status"></p>
         <div id="desktops-setup"></div>
         <div id="desktops-options"></div>
-      </div>
-      <div class="settings-group">
-        <h3>Updates</h3>
-        <p id="update-status" class="settings-note"></p>
-        <div class="settings-actions">
-          <button id="update-check" type="button">Check now</button>
-          <button id="update-install" type="button" hidden>Update</button>
-        </div>
-        <label class="setup-option">
-          <span class="setup-copy"><strong>Install updates automatically</strong><small>Otherwise the panel asks when a new version is out. An update that asks for new access always waits for your approval.</small></span>
-          <input id="update-auto" class="switch" type="checkbox" role="switch" />
-        </label>
-      </div>
-      <div class="settings-group">
-        <h3>Export</h3>
-        <p class="settings-note">Saves each bot's persona, memory and own skills as plain files in a new folder in Downloads on the bot host, ready for Hermes Agent, Claude Code or Codex. Chats and credentials are not included.</p>
-        <p id="export-note" class="settings-note" role="status"></p>
-        <button id="export-team" type="button">Export bots</button>
-      </div>
-      <div class="settings-group">
-        <h3>OpenMausBot</h3>
-        <p id="omb-status" class="settings-note"></p>
-        <div id="settings-install-card" hidden>
-          <p id="settings-install-card-notice"></p>
-          <button id="settings-install-omb" type="button">Install OpenMausBot</button>
-        </div>
-        <button id="stop-server" type="button">Stop OpenMausBot</button>
       </div>
     </section>
     <section id="mcp-view" aria-labelledby="mcp-title" hidden>

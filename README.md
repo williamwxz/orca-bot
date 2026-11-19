@@ -62,7 +62,7 @@ Good to know:
   desktop, This computer, Browser or Off), with what OpenMausBot reports about each.
   With **Private desktop** chosen, the panel shows OpenMausBot's setup steps and the
   next action (prepare, create, start, stop, or delete and recreate); **Browser** offers
-  **Turn on the browser**. **Settings → Private desktops** holds the same setup plus
+  **Turn on the browser**. **Settings → Private desktops → Set up** holds the same setup plus
   Isolation (Shared or Per bot) and the idle stop time. Cloud desktops, and putting a
   full-access bot on This computer, stay in native OpenMausBot.
   Newly enabled connectors start with no bots assigned. Existing custom servers appear
@@ -91,29 +91,36 @@ Good to know:
 
 ## Settings
 
-The gear button in the panel header opens Settings:
+The gear button in the panel header opens Settings, in four parts:
 
-- **Bots run on**: this computer or a paired Orca server (see below).
+- **Bot host**: **Bots run on** this computer or a paired Orca server (see below),
+  and whether **OpenMausBot** is running there, with **Stop**.
+- **Bots**:
+  - **Connectors** → **Manage** opens the connector list (see above).
+  - **Private desktops** → **Set up** opens OpenMausBot's setup steps for the
+    bots' own desktops, with **Isolation** (Shared or Per bot), the per-bot
+    maximum and the idle stop time.
+  - **Learn skills on their own** (off by default in OpenMausBot). After a task
+    with many tool steps, a bot looks back over it and may save or improve a
+    skill. The review uses the bot's own AI and counts toward its usage. It
+    applies to every bot on the selected host.
 - **Permissions**: the choices from the setup card, which you can change at any
-  time: whether bots can use your Claude tools, whether your Orca agents can
-  talk to the bots, and bringing in tools from your other AI apps. They apply to
-  the selected bot host. Remote changes also sync with Orca on that host.
-- **Learning**: **Bots learn skills on their own** (off by default in
-  OpenMausBot). After a task with many tool steps, a bot looks back over it and
-  may save or improve a skill. The review uses the bot's own AI and counts toward
-  its usage. It applies to every bot on the selected host.
-- **Export**: **Export bots** writes each bot's persona (`SOUL.md`), memory
-  (`memories/`) and own skills (`skills/`) as plain files to a new folder in
-  Downloads on the bot host, with `team.json` and a README. Each bot folder is
-  laid out like a Hermes Agent profile, and the skills use the `SKILL.md` format
-  Claude Code and Codex read. Chats, files, credentials and connector settings are
-  not included; for a full backup use OpenMausBot's own **Export full backup**.
-- **Updates**: the version you have and whether a newer one is out. By default
-  the panel shows a banner and asks before updating; **Install updates
-  automatically** updates by itself, once per new version. An update that asks
-  for new access always waits for your approval in Orca. A development folder
-  updates with git instead.
-- **OpenMausBot**: whether it is running, and a button to stop it.
+  time: whether bots can use your Claude tools and whether your Orca agents can
+  talk to the bots. They apply to the selected bot host. Remote changes also
+  sync with Orca on that host.
+- **Updates and export**:
+  - **Updates**: the version you have and whether a newer one is out. By
+    default the panel shows a banner and asks before updating; **Install
+    updates automatically** updates by itself, once per new version. An update
+    that asks for new access always waits for your approval in Orca. A
+    development folder updates with git instead.
+  - **Export bots** writes each bot's persona (`SOUL.md`), memory
+    (`memories/`) and own skills (`skills/`) as plain files to a new folder in
+    Downloads on the bot host, with `team.json` and a README. Each bot folder is
+    laid out like a Hermes Agent profile, and the skills use the `SKILL.md`
+    format Claude Code and Codex read. Chats, files, credentials and connector
+    settings are not included; for a full backup use OpenMausBot's own **Export
+    full backup**.
 
 ## Use bots on a paired Orca server
 
@@ -255,7 +262,7 @@ of that `orca` command on this computer.
    services; we found nothing else in them.
 
 9. **Learned skills are instructions the bot wrote for itself.** With
-   **Bots learn skills on their own** on, a bot can save or change a skill
+   **Learn skills on their own** on, a bot can save or change a skill
    without asking; each change shows in its chat with **Undo** in the full chat.
    A skill can be wrong like any other instruction. Switch it off under
    **Skills** in the chat, or delete it in the full chat.

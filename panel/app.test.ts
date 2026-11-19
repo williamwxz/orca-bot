@@ -367,8 +367,14 @@ test('panel keeps bots below setup, opens the main page from the header, and ret
     assert.match(get('update-banner-text').textContent, /^Updated/)
     assert.equal(get('update-banner-install').hidden, true)
     assert.match(get('toast').children[0].textContent, /^Updated/)
+    // Private desktops is a page of its own: Set up opens it, its back button returns to Settings.
+    get('desktops-manage').emit('click')
+    assert.deepEqual([get('settings-view').hidden, get('desktops-view').hidden], [true, false])
+    get('desktops-back').emit('click')
+    assert.deepEqual([get('settings-view').hidden, get('desktops-view').hidden], [false, true])
+    get('desktops-manage').emit('click')
     get('settings-back').emit('click')
-    assert.deepEqual([get('main-view').hidden, get('settings-view').hidden], [false, true])
+    assert.deepEqual([get('main-view').hidden, get('settings-view').hidden, get('desktops-view').hidden], [false, true, true])
     const listed = calls.filter((call) => call.name === 'bots.list').length
     get('host').value = 'mini-1'
     get('host').emit('change')

@@ -8,12 +8,16 @@
   and how much of it loads each turn. Each skill is tagged with where it
   comes from: learned by the bot, Claude Code, Codex, the agents folder, a
   project, a team package or added.
-- **Settings → Learning**: **Bots learn skills on their own** turns on
+- **Settings → Bots → Learn skills on their own** turns on
   OpenMausBot's automatic skill review. After a task with many tool steps, a bot
   looks back over it and may save or improve a skill.
-- **Export bots** (Settings → Export): each bot's persona, memory and own
+- **Export bots** (Settings → Updates and export): each bot's persona, memory and own
   skills as plain files in Downloads, laid out like Hermes Agent profiles, so
   the team can move to another agent without OpenMausBot.
+- **Settings, reorganized**: four titled parts (Bot host, Bots, Permissions,
+  Updates and export) of one-line rows with the control on the right.
+  Private desktops moved to a page of its own, opened with **Set up**, like
+  Connectors.
 - **MCP Connectors is now Connectors**, and each provider's list folds; long
   lists start folded.
 - **Settled cards read as one line**: a card that asks nothing, such as

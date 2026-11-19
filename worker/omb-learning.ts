@@ -9,8 +9,12 @@ const object = (v: unknown): Record<string, any> =>
 const count = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.floor(v) : 0)
 const text = (v: unknown, max: number): string => (typeof v === 'string' ? v.slice(0, max) : '')
 
-/** Where a skill comes from, as a label. The source path itself never leaves the worker. */
-export function skillFrom(s: Record<string, any>): SkillFrom {
+/**
+ * Where a skill comes from, as a label. The source path itself never leaves the worker. A skill the
+ * engine loads by itself is named by its folder, or else by the bot's engine (`engine`, the
+ * OpenMausBot instance ID): a Claude bot's own folder may be any Claude profile.
+ */
+export function skillFrom(s: Record<string, any>, engine = ''): SkillFrom {
   const source = typeof s.source === 'string' ? s.source : ''
   if (source.startsWith('learn:')) return 'learned'
   if (source.startsWith('package:')) return 'package'
@@ -20,6 +24,9 @@ export function skillFrom(s: Record<string, any>): SkillFrom {
     const path = source.replace(/\\/g, '/')
     if (/\/\.claude(\/|$)/.test(path)) return 'claude'
     if (/\/\.codex(\/|$)/.test(path) || path.startsWith('/etc/codex')) return 'codex'
+    if (/\/\.agents(\/|$)/.test(path)) return 'agents'
+    if (/^claude/i.test(engine)) return 'claude'
+    if (/^codex/i.test(engine)) return 'codex'
     return 'agents'
   }
   return 'added'
@@ -31,7 +38,7 @@ const FROM_ORDER: SkillFrom[] = ['learned', 'added', 'package', 'computer', 'cla
  * The skills a bot can use, by name, description, switch and where each comes from. Only these
  * cross: the reply also holds file hashes, scan warnings and the folders skills come from.
  */
-export function skillsView(raw: unknown): Pick<Learning, 'skills' | 'waiting'> {
+export function skillsView(raw: unknown, engine = ''): Pick<Learning, 'skills' | 'waiting'> {
   const reply = object(raw)
   const skills: Skill[] = []
   const seen = new Set<string>()
@@ -39,7 +46,7 @@ export function skillsView(raw: unknown): Pick<Learning, 'skills' | 'waiting'> {
     const s = object(entry)
     if (typeof s.name !== 'string' || !SKILL_NAME.test(s.name) || s.name.length > 64 || seen.has(s.name)) continue
     seen.add(s.name)
-    const from = skillFrom(s)
+    const from = skillFrom(s, engine)
     skills.push({
       name: s.name,
       description: text(s.description, 300),
@@ -74,7 +81,7 @@ export function memoryView(raw: unknown, file: unknown, upkeep: unknown): Memory
 }
 
 export async function readLearning(
-  input: { port: number; botId: string },
+  input: { port: number; botId: string; engine?: string },
   deps: HttpDeps = defaultHttpDeps()
 ): Promise<Learning> {
   if (!validBotId(input.botId)) throw new Error('Invalid bot ID.')
@@ -90,11 +97,11 @@ export async function readLearning(
     optional(`${bot}/memory/upkeep`)
   ])
   const view = memoryView(memory, file, upkeep)
-  return { ...skillsView(skills), ...(view ? { memory: view } : {}) }
+  return { ...skillsView(skills, input.engine), ...(view ? { memory: view } : {}) }
 }
 
 export async function setSkill(
-  input: { port: number; botId: string; name: string; enabled: boolean },
+  input: { port: number; botId: string; name: string; enabled: boolean; engine?: string },
   deps: HttpDeps = defaultHttpDeps()
 ): Promise<Learning> {
   if (!validBotId(input.botId)) throw new Error('Invalid bot ID.')

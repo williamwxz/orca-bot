@@ -721,15 +721,17 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
     await deps.installBrowser({ port })
     return { installing: true as const }
   })
+  /** The bot's OpenMausBot instance ID, such as `claude` or `codex`, from the roster's `instance/model`. */
+  const botEngine = (botId: string) => lastRoster.find((bot) => bot.id === botId)?.model?.split('/')[0] ?? ''
   orca.panels.handle('learning.read', (input: { botId: string }) => {
     const port = knownBot(input)
     if (!deps.readLearning) throw new Error('Skills and memory are unavailable.')
-    return deps.readLearning({ port, botId: input.botId })
+    return deps.readLearning({ port, botId: input.botId, engine: botEngine(input.botId) })
   })
   orca.panels.handle('learning.skill', (input: { botId: string; name: string; enabled: boolean }) => {
     const port = knownBot(input)
     if (!deps.setSkill) throw new Error('Skills and memory are unavailable.')
-    return deps.setSkill({ port, botId: input.botId, name: input.name, enabled: input.enabled })
+    return deps.setSkill({ port, botId: input.botId, name: input.name, enabled: input.enabled, engine: botEngine(input.botId) })
   })
   orca.panels.handle('learning.settings', (input: { autoLearn?: boolean }) => {
     const port = runningPort()

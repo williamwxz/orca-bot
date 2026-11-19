@@ -59,6 +59,12 @@ test('skills list keeps only names, descriptions and switches, learned ones firs
   assert.equal(skillFrom({ origin: 'native', source: '/home/x/.codex/skills/a' }), 'codex')
   assert.equal(skillFrom({ origin: 'native', source: 'C:\\Users\\x\\.claude\\skills\\a' }), 'claude')
   assert.equal(skillFrom({ origin: 'imported', source: '/x' }), 'computer')
+  // A Claude bot's own folder can be any Claude profile: the engine names it.
+  const profile = { origin: 'native', source: '/Users/me/Library/Application Support/orca/claude-profiles/p/home/skills/orca-cli' }
+  assert.equal(skillFrom(profile, 'claude'), 'claude')
+  assert.equal(skillFrom(profile, 'codex-own'), 'codex')
+  assert.equal(skillFrom(profile), 'agents')
+  assert.equal(skillFrom({ origin: 'native', source: '/Users/me/.agents/skills/x' }, 'claude'), 'agents')
   assert.equal(skillFrom({ source: 'package:grok-bot-1e1dee' }), 'package')
   assert.deepEqual(skillsView(undefined), { skills: [], waiting: 0 })
   const many = skillsView({ skills: Array.from({ length: 150 }, (_, i) => ({ name: `s-${i}`, description: 'd'.repeat(500) })) })

@@ -72,7 +72,7 @@ export function createLearningSheet(root: HTMLElement, frame: FrameApi, hooks: L
         children.push(
           node(
             'p',
-            'No skills yet. Type /learn in the chat to save what the bot just did, or turn on Bots learn skills on their own in Settings.',
+            'No skills yet. Type /learn in the chat to save what the bot just did, or turn on Learn skills on their own in Settings.',
             'bot-menu-note'
           )
         )
