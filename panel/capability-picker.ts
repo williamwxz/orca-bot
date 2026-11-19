@@ -120,9 +120,23 @@ export function createCapabilityPicker(
     let status: ComputerStatus | undefined
     let setupBusy: DesktopAction | 'check' | 'browser' | undefined
     let browserPoll: ReturnType<typeof setTimeout> | undefined
+    let stepPoll: ReturnType<typeof setTimeout> | undefined
     const refreshStatus = async () => {
       const next = await frame.plugin.request('computer.status', { botId: bot.id }).catch(() => undefined)
       if (current() && next) status = next
+    }
+    // A step runs in the worker; the panel follows it through the status until it ends.
+    const followStep = (id: number) => {
+      clearTimeout(stepPoll)
+      stepPoll = setTimeout(async () => {
+        await refreshStatus()
+        if (!current()) return
+        const step = status?.desktop?.step
+        if (step?.id === id && step.running) return followStep(id)
+        setupBusy = undefined
+        if (step?.id === id) hooks.notify?.(step.error ?? 'Private desktop updated.')
+        draw()
+      }, 2500)
     }
     // A setup step or a re-check, as OpenMausBot's own setup buttons do; the panel stays open.
     const runDesktop = async (action?: DesktopAction) => {
@@ -130,18 +144,21 @@ export function createCapabilityPicker(
       setupBusy = action ?? 'check'
       focusKey = `desktop:${action ?? 'check'}`
       draw()
-      try {
-        if (action) {
-          await frame.plugin.request('desktop.act', { action, botId: bot.id })
-          if (current()) hooks.notify?.('Private desktop updated.')
-        }
-      } catch (error) {
-        if (current()) hooks.notify?.(error instanceof Error ? error.message : 'Could not finish this step.')
+      if (!action) {
+        await refreshStatus()
+        if (!current()) return
+        setupBusy = undefined
+        return draw()
       }
-      await refreshStatus()
-      if (!current()) return
-      setupBusy = undefined
-      draw()
+      try {
+        const { step } = await frame.plugin.request('desktop.act', { action, botId: bot.id })
+        if (current()) followStep(step.id)
+      } catch (error) {
+        if (!current()) return
+        hooks.notify?.(error instanceof Error ? error.message : 'Could not start this step.')
+        setupBusy = undefined
+        draw()
+      }
     }
     // The browser installs on the server; its status says when it is done.
     const pollBrowser = (tries: number) => {
@@ -517,7 +534,17 @@ export function createCapabilityPicker(
           controls.find((c) => c.dataset.key === (currentBot?.computer ?? 'auto'))?.focus()
         // Status is a bonus: without it the tiles keep their plain descriptions.
         status = await frame.plugin.request('computer.status', { botId: bot.id }).catch(() => undefined)
-        if (current() && status) draw()
+        if (!current() || !status) return
+        // Reopened while a step or the browser install is still going: keep following it.
+        const step = status.desktop?.step
+        if (step?.running) {
+          setupBusy = step.action
+          followStep(step.id)
+        } else if (status.browserInstalling) {
+          setupBusy = 'browser'
+          pollBrowser(60)
+        }
+        draw()
         return
       }
       if (kind === 'model') models = await frame.plugin.request('models.list', {})

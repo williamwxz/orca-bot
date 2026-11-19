@@ -2,7 +2,7 @@ import { defaultHttpDeps } from './omb-http.ts'
 import type { HttpDeps } from './omb-http.ts'
 import { validBotId } from './omb-open.ts'
 import type { ComputerStatus } from '../shared/roster.ts'
-import { desktopSettings, desktopState } from './omb-desktops.ts'
+import { desktopSettings, desktopView } from './omb-desktops.ts'
 
 const object = (v: unknown): Record<string, any> =>
   v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, any>) : {}
@@ -44,17 +44,14 @@ export async function computerStatus(
   try {
     // The bot's own desktop answers in per-bot mode and the shared one otherwise.
     const raw = await deps.request(input.port, `/api/bots/${input.botId}/local-computer`)
-    const state = desktopState(raw)
-    const runtime = ({ docker: 'Docker', podman: 'Podman', container: 'Apple container' } as const)[
-      String(object(raw).runtime) as 'docker'
-    ]
-    status.desktop = { ...desktopSettings(config), state, ...(runtime ? { runtime } : {}) }
+    status.desktop = desktopView(raw, desktopSettings(config))
+    const state = status.desktop.state
     status.vm =
       state === 'running'
         ? 'ready'
         : state === 'stopped' || state === 'starting'
           ? 'stopped'
-          : state === 'repair'
+          : state === 'repair' || state === 'failed'
             ? 'repair'
             : 'setup'
   } catch {}

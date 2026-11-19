@@ -43,17 +43,22 @@ export type DesktopState =
   | 'unsupported'
   | 'not-created'
   | 'repair'
+  | 'failed'
   | 'stopped'
   | 'starting'
   | 'running'
+/** Why an existing desktop must be replaced, from OpenMausBot's own checks. */
+export type DesktopReason = 'no-folder' | 'old-image' | 'not-managed' | 'unsafe'
 /** Private desktops for the whole bot host: how they are shared, and for how long they idle. */
 export type DesktopSettings = { mode: 'shared' | 'per-bot' | 'pool'; maxInstances: number; idleMinutes: number }
 export type DesktopStatus = DesktopSettings & {
   state: DesktopState
   /** The container app found, by product name. */
   runtime?: 'Docker' | 'Podman' | 'Apple container'
-  /** A setup step is running on the server right now. */
-  busy?: boolean
+  /** Set when the state is 'repair'. */
+  reason?: DesktopReason
+  /** The latest setup step started from this plugin: running, done, or failed with fixed words. */
+  step?: { id: number; action: DesktopAction; running: boolean; error?: string }
 }
 export type DesktopAction = 'prepare' | 'create' | 'start' | 'stop' | 'recreate'
 export type ComputerStatus = {

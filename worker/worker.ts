@@ -15,6 +15,8 @@ import { readThread, sendMessage, newSendId } from './omb-chat.ts'
 import { uploadAttachment } from './omb-attachments.ts'
 import { computerStatus } from './omb-computer.ts'
 import { desktopAct, desktopStatus, installBrowser, updateDesktopSettings } from './omb-desktops.ts'
+import type { DesktopAction } from '../shared/roster.ts'
+const DESKTOP_ACTIONS: DesktopAction[] = ['prepare', 'create', 'start', 'stop', 'recreate']
 import { MAX_ATTACHMENTS, composeMessage } from '../shared/attachments.ts'
 import type { Attachment } from '../shared/attachments.ts'
 import type { OrcaWorkerApi } from 'orca/worker'
@@ -651,32 +653,44 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
       }
     }
   )
-  orca.panels.handle('computer.status', (input: { botId: string }) => {
+
+  const desktopBot = (input: { botId?: string } | undefined) =>
+    input?.botId === undefined ? {} : { botId: (knownBot({ botId: input.botId }), input.botId) }
+  // Setup steps can take many minutes (the first one downloads and builds the desktop), longer
+  // than a panel request or the paired-server relay waits. So a step runs here in the
+  // background, one at a time, and the panel follows it through the desktop status.
+  let desktopJob: { id: number; action: DesktopAction; running: boolean; error?: string } | undefined
+  let desktopJobs = 0
+  const withStep = <T extends object>(status: T): T =>
+    desktopJob ? { ...status, step: { ...desktopJob } } : status
+  orca.panels.handle('desktop.status', async (input: { botId?: string }) => {
+    const port = runningPort()
+    if (!deps.desktopStatus) throw new Error('Private desktops are unavailable.')
+    return withStep(await deps.desktopStatus({ port, ...desktopBot(input) }))
+  })
+  orca.panels.handle('computer.status', async (input: { botId: string }) => {
     const port = knownBot(input)
     if (!deps.computerStatus) return {}
     const threadId = lastRoster.find((bot) => bot.id === input.botId)?.activeTaskId
-    return deps.computerStatus({ port, botId: input.botId, threadId })
+    const status = await deps.computerStatus({ port, botId: input.botId, threadId })
+    return status.desktop ? { ...status, desktop: withStep(status.desktop) } : status
   })
-  const desktopBot = (input: { botId?: string } | undefined) =>
-    input?.botId === undefined ? {} : { botId: (knownBot({ botId: input.botId }), input.botId) }
-  orca.panels.handle('desktop.status', (input: { botId?: string }) => {
-    const port = runningPort()
-    if (!deps.desktopStatus) throw new Error('Private desktops are unavailable.')
-    return deps.desktopStatus({ port, ...desktopBot(input) })
-  })
-  // Setup steps can take minutes (the first one downloads the desktop); one runs at a time.
-  let desktopStep: Promise<unknown> | undefined
-  orca.panels.handle('desktop.act', async (input: { action: any; botId?: string }) => {
+  orca.panels.handle('desktop.act', (input: { action: DesktopAction; botId?: string }) => {
     const port = runningPort()
     if (!deps.desktopAct) throw new Error('Private desktops are unavailable.')
-    if (desktopStep) throw new Error('Another private desktop step is still running.')
-    const step = deps.desktopAct({ port, action: input?.action, ...desktopBot(input) })
-    desktopStep = step
-    try {
-      return await step
-    } finally {
-      desktopStep = undefined
-    }
+    if (!DESKTOP_ACTIONS.includes(input?.action)) throw new Error('Unknown desktop step.')
+    if (desktopJob?.running) throw new Error('Another private desktop step is still running.')
+    const job = { id: ++desktopJobs, action: input.action, running: true } as NonNullable<typeof desktopJob>
+    desktopJob = job
+    deps.desktopAct({ port, action: input.action, ...desktopBot(input) }).then(
+      () => { job.running = false },
+      (error) => {
+        job.running = false
+        // desktopAct only throws fixed wording; anything else gets a fixed line too.
+        job.error = error instanceof Error && error.message.length < 300 ? error.message : 'Could not finish this step.'
+      }
+    )
+    return { step: { ...job } }
   })
   orca.panels.handle('desktop.settings', (input: Record<string, unknown>) => {
     const port = runningPort()

@@ -28,7 +28,9 @@ const all = (n: Element): Element[] => [n, ...n.children.flatMap(all)]
 
 test('Settings → Private desktops sets up the shared desktop, switches isolation and saves the idle time', async () => {
   const saved = Object.getOwnPropertyDescriptor(globalThis, 'document')
+  const savedTimer = Object.getOwnPropertyDescriptor(globalThis, 'setTimeout')
   Object.defineProperty(globalThis, 'document', { configurable: true, value: { createElement: (tag: string) => new Element(tag) } })
+  Object.defineProperty(globalThis, 'setTimeout', { configurable: true, value: (fn: () => void) => { setImmediate(fn); return 0 } })
   try {
     const els = new Map<string, Element>()
     const get = (id: string) => els.get(id) ?? (els.set(id, new Element()), els.get(id)!)
@@ -38,7 +40,11 @@ test('Settings → Private desktops sets up the shared desktop, switches isolati
     const frame = { plugin: { request: async (name: string, input: any) => {
       calls.push([name, input])
       if (name === 'desktop.status') return status
-      if (name === 'desktop.act') { status = { ...status, state: 'not-created' }; return status }
+      if (name === 'desktop.act') {
+        status = { ...status, step: { id: 1, action: input.action, running: true } }
+        setImmediate(() => { status = { ...status, state: 'not-created', step: { id: 1, action: input.action, running: false } } })
+        return { step: status.step }
+      }
       if (name === 'desktop.settings') { status = { ...status, ...input }; return status }
       return {}
     } } }
@@ -48,8 +54,7 @@ test('Settings → Private desktops sets up the shared desktop, switches isolati
     const find = (id: string, match: (n: Element) => boolean) => all(get(id)).find(match)!
     assert.ok(text('desktops-setup').includes('Get the desktop ready'))
     find('desktops-setup', (n) => n.dataset.key === 'desktop:prepare').emit()
-    await flush()
-    await flush()
+    for (let i = 0; i < 8; i++) await flush()
     assert.deepEqual(calls.find(([n]) => n === 'desktop.act')![1], { action: 'prepare' })
     assert.deepEqual(notes, ['Private desktop updated.'])
     assert.ok(text('desktops-setup').includes('Create the private desktop'))
@@ -84,5 +89,6 @@ test('Settings → Private desktops sets up the shared desktop, switches isolati
   } finally {
     if (saved) Object.defineProperty(globalThis, 'document', saved)
     else delete (globalThis as any).document
+    if (savedTimer) Object.defineProperty(globalThis, 'setTimeout', savedTimer)
   }
 })

@@ -364,28 +364,32 @@ test('Backend is a panel from the right with the bot\'s screen, a Works on grid 
   }
 })
 
-test('the Backend panel sets up a private desktop and installs the browser in place', async () => {
-  const saved = ['document', 'window'].map((k) => Object.getOwnPropertyDescriptor(globalThis, k))
+test('the Backend panel explains a desktop it must replace, follows the step to the end, and resumes a browser install', async () => {
+  const saved = ['document', 'window', 'setTimeout'].map((k) => Object.getOwnPropertyDescriptor(globalThis, k))
   const doc = Object.assign(new Element(), { createElement: () => new Element() })
   Object.defineProperty(globalThis, 'document', { configurable: true, value: doc })
   Object.defineProperty(globalThis, 'window', { configurable: true, value: Object.assign(new Element(), { innerWidth: 380, innerHeight: 600 }) })
+  // Poll timers fire on the next turn instead of after 2.5 seconds.
+  Object.defineProperty(globalThis, 'setTimeout', { configurable: true, value: (fn: () => void) => { setImmediate(fn); return 0 } })
   const all = (n: Element): Element[] => [n, ...n.children.flatMap(all)]
   try {
     const root = new Element()
     const requests: [string, any][] = []
     const notes: string[] = []
-    let desktop: any = { mode: 'shared', maxInstances: 2, idleMinutes: 480, state: 'repair', runtime: 'Docker' }
+    let desktop: any = { mode: 'shared', maxInstances: 2, idleMinutes: 480, state: 'repair', reason: 'no-folder', runtime: 'Docker' }
     let browser: any = { browser: 'setup' }
-    let finishStep!: () => void
+    let polls = 0
     const frame = { plugin: { request: async (name: string, input: any) => {
       requests.push([name, input])
-      if (name === 'computer.status') return { vm: 'repair', ...browser, desktop }
-      if (name === 'desktop.act') {
-        await new Promise<void>((resolve) => { finishStep = resolve })
-        desktop = { ...desktop, state: 'running' }
-        return desktop
+      if (name === 'computer.status') {
+        // The step runs for two polls, then finishes.
+        if (desktop.step?.running && ++polls > 2) desktop = { ...desktop, state: 'running', reason: undefined, step: { ...desktop.step, running: false } }
+        return { vm: 'repair', ...browser, desktop }
       }
-      if (name === 'browser.install') { browser = { browser: 'setup', browserInstalling: true }; return { installing: true } }
+      if (name === 'desktop.act') {
+        desktop = { ...desktop, step: { id: 7, action: input.action, running: true } }
+        return { step: desktop.step }
+      }
       return { ok: true }
     } } }
     const picker = createCapabilityPicker(root as any, frame as any, { changed: async () => {}, manage: () => {}, notify: (t) => notes.push(t) })
@@ -393,35 +397,45 @@ test('the Backend panel sets up a private desktop and installs the browser in pl
     await picker.open('computer', bot, new Element() as any)
     const text = () => all(root).map((n) => n.textContent)
     const key = (k: string) => all(root).find((n) => n.dataset.key === k)!
-    assert.ok(text().includes('Private desktop'))
-    assert.ok(text().includes('Replace the older or unsafe desktop'))
-    const steps = all(root).filter((n) => n.tag === 'li' || n.attrs.has('aria-label') && /: (done|next|not yet)$/.test(n.attrs.get('aria-label')!))
+    // You did not make this desktop: say what is wrong with it in plain words.
+    assert.ok(text().includes('A private desktop already exists, but it cannot be used'))
+    assert.ok(text().some((t) => /folder it keeps its files in is gone/.test(t)))
+    const steps = all(root).filter((n) => /: (done|next|not yet)$/.test(n.attrs.get('aria-label') ?? ''))
     assert.deepEqual(steps.map((n) => n.attrs.get('aria-label')), [
-      'Install the container app: done', 'Start it: done', 'Get the desktop ready: done', 'Create the desktop: done'
+      'Install the container app: done', 'Start it: done', 'Get the desktop ready: done', 'Replace the desktop: next'
     ])
-    assert.equal(key('desktop:recreate').textContent, 'Delete and recreate')
+    assert.equal(key('desktop:recreate').textContent, 'Replace with a fresh desktop')
     key('desktop:recreate').emit()
     await flush()
     assert.deepEqual(requests.find(([n]) => n === 'desktop.act')![1], { action: 'recreate', botId: 'a' })
-    assert.equal(key('desktop:recreate').textContent, 'Recreating…')
+    assert.equal(key('desktop:recreate').textContent, 'Replacing…')
     assert.equal(key('desktop:recreate').disabled, true)
-    finishStep()
-    await flush()
-    await flush()
+    for (let i = 0; i < 8; i++) await flush()
     assert.deepEqual(notes, ['Private desktop updated.'])
     assert.ok(text().includes('Running'))
     assert.equal(key('desktop:stop').textContent, 'Stop')
     picker.close()
+    // A step that fails reports its fixed wording.
+    desktop = { ...desktop, state: 'stopped', step: { id: 8, action: 'start', running: false, error: 'The container app is not ready. Start Docker or Podman, then try again.' } }
+    polls = 0
+    await picker.open('computer', bot, new Element() as any)
+    assert.equal(notes.length, 1, 'an old finished step is not announced again on reopen')
+    picker.close()
+    // Reopened while the browser is still installing: it keeps following until done.
+    browser = { browser: 'setup', browserInstalling: true }
+    let browserPolls = 0
+    const status = frame.plugin.request
+    frame.plugin.request = (async (name: string, input: any) => {
+      if (name === 'computer.status' && ++browserPolls > 2) browser = { browser: 'ready' }
+      return status(name, input)
+    }) as any
     await picker.open('computer', { ...bot, computer: 'browser' }, new Element() as any)
-    assert.ok(text().includes('Built-in browser'))
-    key('browser:install').emit()
-    await flush()
-    assert.ok(requests.some(([n]) => n === 'browser.install'))
     assert.equal(key('browser:install').textContent, 'Installing…')
-    assert.equal(key('browser:install').disabled, true)
+    for (let i = 0; i < 8; i++) await flush()
+    assert.equal(notes.at(-1), 'The browser is ready.')
     picker.close()
   } finally {
-    for (const [i, k] of ['document', 'window'].entries()) {
+    for (const [i, k] of ['document', 'window', 'setTimeout'].entries()) {
       if (saved[i]) Object.defineProperty(globalThis, k, saved[i]!)
       else delete (globalThis as any)[k]
     }

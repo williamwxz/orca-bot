@@ -165,6 +165,7 @@ async function chooseHost(id: string): Promise<void> {
   await refreshAfterChange()
   await settings.hostChanged(hostProblem)
   await mcp.refresh()
+  if (settingsShown) await desktops.refresh()
 }
 hostSelect.addEventListener('change', () => void chooseHost(hostSelect.value))
 const mcp = createMcpView(frame, element, toast.show)

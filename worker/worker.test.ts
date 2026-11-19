@@ -241,6 +241,7 @@ test('thread and send require a roster bot, with fresh worker-generated send IDs
   const botId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
   let pollPending = true
   let finishPoll!: () => void
+  let finishDesktop!: (error?: Error) => void
   const calls: any[] = []
   const worker = await mountWorker(
     {
@@ -288,7 +289,13 @@ test('thread and send require a roster bot, with fresh worker-generated send IDs
             kind: 'image',
             path: '/server/data/attachments/secret-place.png',
             name: input.name
-          })
+          }),
+          desktopStatus: async () => ({ mode: 'shared', maxInstances: 2, idleMinutes: 480, state: 'stopped' }),
+          desktopAct: (input) =>
+            new Promise((resolve, reject) => {
+              finishDesktop = (error) => (error ? reject(error) : resolve({} as any))
+              calls.push({ desktop: input.action })
+            })
         })
     },
     { host: mockHost() }
@@ -324,6 +331,21 @@ test('thread and send require a roster bot, with fresh worker-generated send IDs
     assert.equal(calls.at(-1).text, 'Look\n\n<attached-image path="/server/data/attachments/secret-place.png" name="shot.png" />')
     // An ID is spent once sent.
     await assert.rejects(worker.request('message.send', { botId, text: 'x', attachments: [uploaded.id] }), /Attach the files again/)
+    // A desktop step answers at once and runs in the background; status follows it.
+    const started = await worker.request('desktop.act', { action: 'prepare' })
+    assert.deepEqual(started, { step: { id: 1, action: 'prepare', running: true } })
+    assert.deepEqual((await worker.request('desktop.status', {})).step, { id: 1, action: 'prepare', running: true })
+    await assert.rejects(worker.request('desktop.act', { action: 'create' }), /still running/)
+    await assert.rejects(worker.request('desktop.act', { action: 'explode' }), /Unknown desktop step/)
+    finishDesktop(new Error('The container app is not ready. Start Docker or Podman, then try again.'))
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    assert.deepEqual((await worker.request('desktop.status', {})).step, {
+      id: 1, action: 'prepare', running: false, error: 'The container app is not ready. Start Docker or Podman, then try again.'
+    })
+    assert.deepEqual((await worker.request('desktop.act', { action: 'create' })).step, { id: 2, action: 'create', running: true })
+    finishDesktop()
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    assert.deepEqual((await worker.request('desktop.status', {})).step, { id: 2, action: 'create', running: false })
   } finally {
     await worker.deactivate()
   }

@@ -25,6 +25,8 @@ export function createDesktopSettings(
   let status: DesktopStatus | undefined
   let busy: DesktopAction | 'check' | 'settings' | undefined
   let loadedFor: number | undefined
+  let following: number | undefined
+  let poll: ReturnType<typeof setTimeout> | undefined
 
   function render(): void {
     setup.replaceChildren()
@@ -118,20 +120,32 @@ export function createDesktopSettings(
       note.textContent = error instanceof Error ? error.message : 'Could not check the private desktop.'
     }
     loadedFor = at
+    // A step started here or in a Backend panel is still running: follow it to the end.
+    const step = status?.step
+    if (step?.running) follow(step.id, at)
+    else if (step && step.id === following) {
+      following = undefined
+      notify(step.error ?? 'Private desktop updated.')
+    }
     render()
   }
 
+  function follow(id: number, at: number): void {
+    following = id
+    clearTimeout(poll)
+    poll = setTimeout(() => {
+      if (at === generation()) void load()
+    }, 2500)
+  }
+
   async function act(action?: DesktopAction): Promise<void> {
-    if (busy) return
+    if (busy || status?.step?.running) return
     busy = action ?? 'check'
     render()
     try {
-      if (action) {
-        await frame.plugin.request('desktop.act', { action })
-        notify('Private desktop updated.')
-      }
+      if (action) following = (await frame.plugin.request('desktop.act', { action })).step.id
     } catch (error) {
-      notify(error instanceof Error ? error.message : 'Could not finish this step.')
+      notify(error instanceof Error ? error.message : 'Could not start this step.')
     } finally {
       busy = undefined
     }
@@ -157,6 +171,8 @@ export function createDesktopSettings(
     /** Reads the status when Settings opens, and again after a host change. */
     refresh: () => (busy && loadedFor === generation() ? Promise.resolve() : load()),
     clear() {
+      clearTimeout(poll)
+      following = undefined
       status = undefined
       note.textContent = ''
       render()

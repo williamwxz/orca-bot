@@ -1,7 +1,7 @@
 import { defaultHttpDeps, HttpStatusError } from './omb-http.ts'
 import type { HttpDeps } from './omb-http.ts'
 import { validBotId } from './omb-open.ts'
-import type { DesktopAction, DesktopSettings, DesktopState, DesktopStatus } from '../shared/roster.ts'
+import type { DesktopAction, DesktopReason, DesktopSettings, DesktopState, DesktopStatus } from '../shared/roster.ts'
 
 const object = (v: unknown): Record<string, any> =>
   v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, any>) : {}
@@ -22,17 +22,30 @@ export function desktopState(raw: unknown): DesktopState {
   if (s.daemonUp === false) return 'runtime-stopped'
   if (!s.image) return 'not-prepared'
   if (s.container === 'missing') return s.create_supported === false ? 'unsupported' : 'not-created'
-  if (
-    s.imageMatches === false ||
-    s.managed === false ||
-    s.network === 'unsafe' ||
-    s.security === 'unsafe' ||
-    s.persistence === 'unsafe'
-  )
-    return 'repair'
+  if (desktopReason(s)) return 'repair'
   if (s.container === 'stopped') return 'stopped'
   if (s.ready === true) return 'running'
+  // A running container whose desktop reported an error will not become ready by waiting.
+  if (typeof s.desktop_error === 'string' && s.desktop_error) return 'failed'
   return 'starting'
+}
+
+/** Which of OpenMausBot's checks an existing desktop fails, in its own order. */
+export function desktopReason(raw: unknown): DesktopReason | undefined {
+  const s = object(raw)
+  if (s.imageMatches === false) return 'old-image'
+  if (s.managed === false) return 'not-managed'
+  if (s.network === 'unsafe' || s.security === 'unsafe') return 'unsafe'
+  if (s.persistence === 'unsafe') return 'no-folder'
+  return undefined
+}
+
+/** The panel's view of a desktop: state, reason and runtime only. */
+export function desktopView(raw: unknown, settings: DesktopSettings): DesktopStatus {
+  const runtime = RUNTIMES[String(object(raw).runtime)]
+  const state = desktopState(raw)
+  const reason = state === 'repair' ? desktopReason(raw) : undefined
+  return { ...settings, state, ...(reason ? { reason } : {}), ...(runtime ? { runtime } : {}) }
 }
 
 export function desktopSettings(config: unknown): DesktopSettings {
@@ -60,8 +73,7 @@ export async function desktopStatus(
           : '/api/local-computer'
       )
     )
-    const runtime = RUNTIMES[String(raw.runtime)]
-    return { ...settings, state: desktopState(raw), ...(runtime ? { runtime } : {}) }
+    return desktopView(raw, settings)
   } catch {
     throw new Error('Could not check the private desktop. Check that OpenMausBot is running.')
   }
@@ -75,6 +87,8 @@ const ROUTE: Record<DesktopAction, string[]> = {
   // OpenMausBot's "Delete and recreate": keeps the durable folder and browser sign-ins.
   recreate: ['remove', 'run']
 }
+// Preparing downloads and builds the desktop image; creating starts a fresh desktop.
+const DEADLINE: Record<string, number> = { pull: 30 * 60_000, run: 10 * 60_000, remove: 3 * 60_000, start: 3 * 60_000, stop: 3 * 60_000 }
 
 /**
  * Runs one private desktop setup step, as OpenMausBot's own buttons do. In per-bot mode the
@@ -86,9 +100,16 @@ export async function desktopAct(
 ): Promise<DesktopStatus> {
   if (!Object.hasOwn(ROUTE, input.action)) throw new Error('Unknown desktop step.')
   if (input.botId !== undefined && !validBotId(input.botId)) throw new Error('Invalid bot ID.')
-  const { mode } = desktopSettings(await deps.request(input.port, '/api/config').catch(() => ({})))
-  if (mode === 'pool' && input.action === 'create')
-    throw new Error('Pool desktops start by themselves when a bot needs one.')
+  // Shared and per-bot desktops use different routes: never guess which one this host uses.
+  let settings: DesktopSettings
+  try {
+    settings = desktopSettings(await deps.request(input.port, '/api/config'))
+  } catch {
+    throw new Error('Could not check how private desktops are shared on this host. Nothing was changed. Try again.')
+  }
+  const { mode, maxInstances } = settings
+  if (mode === 'pool' && input.action !== 'prepare')
+    throw new Error('OpenMausBot starts and stops pool desktops by itself. Manage them in native OpenMausBot.')
   const perBot = mode === 'per-bot' && input.action !== 'prepare'
   if (perBot && !input.botId) throw new Error('Choose a bot: each one has its own private desktop.')
   for (const step of ROUTE[input.action]) {
@@ -96,10 +117,15 @@ export async function desktopAct(
       ? `/api/bots/${input.botId}/local-computer/${step}`
       : `/api/local-computer/${step}`
     try {
-      await deps.request(input.port, route, {}, 'POST')
+      await deps.request(input.port, route, {}, 'POST', DEADLINE[step])
     } catch (error) {
-      if (error instanceof HttpStatusError && error.status === 409)
+      if (error instanceof HttpStatusError && error.status === 409) {
+        if (/per-bot Local VM limit/i.test(error.detail ?? ''))
+          throw new Error(`This host already has its maximum of ${maxInstances} per-bot desktops. Delete one in native OpenMausBot, or raise the maximum in Settings → Private desktops.`)
+        if (/runtime|Install|Start (docker|podman|container)/i.test(error.detail ?? ''))
+          throw new Error('The container app is not ready. Start Docker or Podman, then try again.')
         throw new Error('A bot is using the private desktop, or another setup step is running. Try again when it finishes.')
+      }
       throw new Error(
         input.action === 'prepare'
           ? 'Could not prepare the private desktop. Check that the container app is running, then try again.'
@@ -134,11 +160,18 @@ export async function updateDesktopSettings(
   try {
     await deps.request(input.port, '/api/config', { localVm: patch }, 'PATCH')
   } catch (error) {
-    if (error instanceof HttpStatusError && error.status === 409)
-      throw new Error('Stop the bots using a private desktop, then change how desktops are shared.')
+    if (error instanceof HttpStatusError && error.status === 409) {
+      if (/delete .*per-bot|before switching to shared/i.test(error.detail ?? ''))
+        throw new Error('Delete the per-bot desktops first, in native OpenMausBot under Settings → Desktops & browser → Details. Then switch to Shared.')
+      throw new Error('Wait until no bot is using a private desktop and no setup step is running, then try again.')
+    }
     throw new Error('Could not save the private desktop setting. Try again.')
   }
-  return desktopSettings(await deps.request(input.port, '/api/config'))
+  try {
+    return desktopSettings(await deps.request(input.port, '/api/config'))
+  } catch {
+    throw new Error('Saved, but the new setting could not be read back. Reopen Settings to check it.')
+  }
 }
 
 /** Installs OpenMausBot's built-in browser. It runs on the server and reports back by status. */

@@ -27,7 +27,7 @@ test('backend status reports only states, never the viewer link, commands or pat
   const status = await computerStatus({ port: 9, botId: id, threadId: 'thread-1' }, deps)
   assert.deepEqual(status, {
     now: 'vm', cloud: 'setup', browser: 'setup', vm: 'repair',
-    desktop: { mode: 'shared', maxInstances: 2, idleMinutes: 480, state: 'repair', runtime: 'Docker' }
+    desktop: { mode: 'shared', maxInstances: 2, idleMinutes: 480, state: 'repair', reason: 'no-folder', runtime: 'Docker' }
   })
   assert.equal(JSON.stringify(status).includes(secret), false)
   assert.deepEqual(paths, [`/api/bots/${id}/computer?threadId=thread-1`, '/api/config', `/api/bots/${id}/local-computer`])

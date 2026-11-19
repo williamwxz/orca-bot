@@ -1,4 +1,4 @@
-import type { DesktopAction, DesktopState, DesktopStatus } from '../shared/roster.ts'
+import type { DesktopAction, DesktopReason, DesktopState, DesktopStatus } from '../shared/roster.ts'
 
 // Private desktop setup, as OpenMausBot's own "Set up private desktops on this computer" shows it:
 // numbered steps that tick off, then the one action that moves the desktop forward.
@@ -16,6 +16,7 @@ const ORDER: DesktopState[] = [
   'not-prepared',
   'not-created',
   'repair',
+  'failed',
   'stopped',
   'starting',
   'running'
@@ -60,10 +61,17 @@ export function desktopStep(status: DesktopStatus, perBot: boolean): {
       }
     case 'repair':
       return {
-        title: 'Replace the older or unsafe desktop',
-        line: 'Recreating keeps its folder and browser sign-ins. Apps installed inside it are removed.',
+        title: 'A private desktop already exists, but it cannot be used',
+        line: `${REASONS[status.reason ?? 'unsafe']} Replace it with a fresh one: its shared folder and browser sign-ins are kept; anything else inside it is removed.`,
         action: 'recreate',
-        label: 'Delete and recreate'
+        label: 'Replace with a fresh desktop'
+      }
+    case 'failed':
+      return {
+        title: "The desktop didn't start",
+        line: 'Its container is running, but the desktop inside it reported an error. Replacing it with a fresh one usually fixes this.',
+        action: 'recreate',
+        label: 'Replace with a fresh desktop'
       }
     case 'stopped':
       return {
@@ -84,12 +92,21 @@ export function desktopStep(status: DesktopStatus, perBot: boolean): {
   }
 }
 
+/** Why an existing desktop cannot be used, in plain words. Most often it was made by an earlier
+ * OpenMausBot version or install, not by you. */
+const REASONS: Record<DesktopReason, string> = {
+  'no-folder': 'The folder it keeps its files in is gone, often because an earlier OpenMausBot install or test made it.',
+  'old-image': 'It was made by an older OpenMausBot and uses an outdated desktop.',
+  'not-managed': 'It was not made by OpenMausBot, so OpenMausBot will not use it.',
+  unsafe: 'It is missing safety limits that OpenMausBot now requires.'
+}
+
 const BUSY: Record<DesktopAction, string> = {
   prepare: 'Preparing… this can take several minutes',
   create: 'Creating…',
   start: 'Starting…',
   stop: 'Stopping…',
-  recreate: 'Recreating…'
+  recreate: 'Replacing…'
 }
 
 /**
@@ -101,17 +118,25 @@ export function desktopBlock(
   options: { perBot: boolean; busy?: DesktopAction | 'check'; run: (action?: DesktopAction) => void }
 ): HTMLElement {
   const block = node('div', '', 'desktop-setup')
-  const at = ORDER.indexOf(status.state)
+  // A desktop that must be replaced has not really finished its last step.
+  const at = status.state === 'repair' || status.state === 'failed'
+    ? ORDER.indexOf('not-created')
+    : ORDER.indexOf(status.state)
   const steps = node('ol', '', 'desktop-steps')
   const names: [string, DesktopState][] = [
     ['Install the container app', 'no-runtime'],
     ['Start it', 'runtime-stopped'],
     ['Get the desktop ready', 'not-prepared'],
-    [options.perBot ? "Create this bot's desktop" : 'Create the desktop', 'not-created']
+    [
+      status.state === 'repair' || status.state === 'failed'
+        ? 'Replace the desktop'
+        : options.perBot ? "Create this bot's desktop" : 'Create the desktop',
+      'not-created'
+    ]
   ]
   for (const [name, state] of names) {
     const done = at > ORDER.indexOf(state)
-    const current = status.state === state
+    const current = ORDER[at] === state
     const step = node('li', '', done ? 'done' : current ? 'current' : '')
     const mark = node('span', done ? '✓' : String(names.findIndex(([, s]) => s === state) + 1), 'desktop-step-mark')
     mark.setAttribute('aria-hidden', 'true')
@@ -119,12 +144,18 @@ export function desktopBlock(
     step.setAttribute('aria-label', `${name}: ${done ? 'done' : current ? 'next' : 'not yet'}`)
     steps.append(step)
   }
+  if (status.mode === 'pool' && !['no-runtime', 'runtime-stopped', 'not-prepared'].includes(status.state)) {
+    block.append(steps, node('p', 'Pool desktops start and stop by themselves when bots need them. Manage them in native OpenMausBot.', 'bot-menu-note'))
+    return block
+  }
+  const running = status.step?.running ? status.step.action : undefined
+  const busy = options.busy ?? running
   const next = desktopStep(status, options.perBot)
   const head = node('div', '', 'desktop-state')
   head.append(node('strong', next.title), node('p', next.line, 'bot-menu-note'))
-  const act = node('button', options.busy ? (options.busy === 'check' ? 'Checking…' : BUSY[options.busy]) : next.label, 'bot-menu-btn primary desktop-action') as HTMLButtonElement
+  const act = node('button', busy ? (busy === 'check' ? 'Checking…' : BUSY[busy]) : next.label, 'bot-menu-btn primary desktop-action') as HTMLButtonElement
   act.type = 'button'
-  act.disabled = !!options.busy || !!status.busy
+  act.disabled = !!busy
   act.dataset.key = `desktop:${next.action ?? 'check'}`
   if (next.action === 'stop' || next.action === 'recreate') act.className = 'bot-menu-btn desktop-action'
   act.addEventListener('click', (event) => {
