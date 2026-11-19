@@ -1,5 +1,7 @@
 import { connectorIcon } from './connector-icon.ts'
 import type { Bot } from '../shared/roster.ts'
+import { COMPUTER_CHOICES, computerHint, computerLabel, computerNote } from '../shared/roster.ts'
+import type { ComputerStatus } from '../shared/roster.ts'
 import type { Models } from '../shared/models.ts'
 import type { Connectors } from '../worker/mcp-connectors.ts'
 import type { FrameApi } from './chat-view.ts'
@@ -11,6 +13,21 @@ export type CapabilityHooks = {
   changed(): Promise<void>
   manage(botId: string, enabled: boolean): void
   hostGeneration?(): number
+  /** True in a narrow panel: the picker slides in from the right instead of dropping down. */
+  sheet?(): boolean
+  /** Opens the bot in OpenMausBot's own page, where computers are set up and repaired. */
+  openNative?(botId: string): void
+  nativeAvailable?(): boolean
+}
+const stroke = (paths: string) =>
+  `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`
+const COMPUTER_ICONS: Record<string, string> = {
+  auto: stroke('<path d="M8 1.75 9.4 6.1l4.35 1.4-4.35 1.4L8 13.25 6.6 8.9 2.25 7.5 6.6 6.1Z"/>'),
+  cloud: stroke('<path d="M4.5 12.5a3 3 0 0 1-.4-5.97 4 4 0 0 1 7.75.97A2.5 2.5 0 0 1 11.5 12.5Z"/>'),
+  vm: stroke('<path d="M8 1.75 13.5 4.75v6.5L8 14.25 2.5 11.25v-6.5Z"/><path d="M2.5 4.75 8 7.75l5.5-3M8 7.75v6.5"/>'),
+  local: stroke('<rect x="1.75" y="2.5" width="12.5" height="8.5" rx="1.5"/><path d="M5.5 13.75h5M8 11v2.75"/>'),
+  browser: stroke('<circle cx="8" cy="8" r="6.25"/><path d="M1.75 8h12.5M8 1.75c2 2 2 10.5 0 12.5M8 1.75c-2 2-2 10.5 0 12.5"/>'),
+  off: stroke('<path d="M8 2v5.5"/><path d="M4.4 4.4a5.25 5.25 0 1 0 7.2 0"/>')
 }
 export function createCapabilityPicker(
   root: HTMLElement,
@@ -26,6 +43,11 @@ export function createCapabilityPicker(
   let controls: HTMLButtonElement[] = []
   let busy = false
   let redraw: (() => void) | undefined
+  let sheet = false
+  const setSheet = (on: boolean) => {
+    sheet = on
+    root.className = root.className.replace(/ sheet\b/g, '') + (on ? ' sheet' : '')
+  }
   const node = (tag: string, text = '', cls = '') => {
     const el = document.createElement(tag)
     el.textContent = text
@@ -40,10 +62,15 @@ export function createCapabilityPicker(
     redraw = undefined
     root.hidden = true
     root.replaceChildren()
+    setSheet(false)
     dismissed()
     if (restore) trigger?.focus()
   }
   function position() {
+    if (sheet && root.style) {
+      root.style.left = root.style.top = ''
+      return
+    }
     const rect = trigger?.getBoundingClientRect?.()
     if (!rect || !root.style) return
     const bounds = root.getBoundingClientRect()
@@ -65,7 +92,13 @@ export function createCapabilityPicker(
     controls.push(el)
     return el
   }
-  async function open(kind: 'model' | 'connectors', bot: Bot, from: HTMLElement) {
+  /** For models, start on the backend list or straight on the current backend's models. */
+  async function open(
+    kind: 'model' | 'connectors' | 'computer',
+    bot: Bot,
+    from: HTMLElement,
+    start: 'backends' | 'models' = 'backends'
+  ) {
     close()
     active = true
     currentBot = bot
@@ -73,13 +106,18 @@ export function createCapabilityPicker(
     const token = revision
     const host = hooks.hostGeneration?.()
     const current = () => active && token === revision && host === hooks.hostGeneration?.()
+    // Backend is always a panel from the right, as OpenMausBot's Computer panel is.
+    setSheet(kind === 'computer' || (kind === 'model' && !!hooks.sheet?.()))
     root.hidden = false
     root.setAttribute('role', 'menu')
-    root.setAttribute('aria-label', `${kind === 'model' ? 'Model' : 'Connectors'} for ${bot.name}`)
+    const heading = kind === 'model' ? 'Model' : kind === 'computer' ? 'Backend' : 'Connectors'
+    root.setAttribute('aria-label', `${heading} for ${bot.name}`)
     let models: Models | undefined
     let connectors: Connectors | undefined
     let problem = ''
     let focusKey: string | undefined
+    let status: ComputerStatus | undefined
+    let browsing: string | undefined = start === 'models' ? bot.model?.split('/')[0] : undefined
     const draw = () => {
       if (!current()) return
       const wasInside = root.contains(document.activeElement)
@@ -92,18 +130,34 @@ export function createCapabilityPicker(
         )
       hooks.busyChanged?.()
       controls = []
-      const children: HTMLElement[] = [
-        node(
-          'div',
-          `${kind === 'model' ? 'Model' : 'Connectors'} for ${bot.name}`,
-          'bot-menu-title'
-        )
-      ]
+      const title = node(
+        'div',
+        `${heading} for ${bot.name}`,
+        'bot-menu-title'
+      )
+      const children: HTMLElement[] = [title]
+      if (sheet) {
+        const head = node('div', '', 'sheet-head')
+        const dismiss = node('button', '×', 'sheet-close') as HTMLButtonElement
+        dismiss.type = 'button'
+        dismiss.setAttribute('aria-label', 'Close')
+        dismiss.addEventListener('click', (event) => {
+          event.stopPropagation()
+          close(true)
+        })
+        head.append(title, dismiss)
+        children[0] = head
+      }
       const wait = currentBot?.state === 'working'
       if (problem) children.push(node('p', problem, 'bot-menu-note'))
       if (kind === 'model') {
         const selected = currentBot?.model
-        const available = models?.groups.some((g) =>
+        const currentBackend = selected?.split('/')[0]
+        const groups = models?.groups.filter((g) => g.models.length) ?? []
+        const single = groups.length === 1
+        // Several providers: pick one first, then its model. One provider: its models at once.
+        const shown = single ? groups[0] : groups.find((g) => g.instanceId === browsing)
+        const available = groups.some((g) =>
           g.models.some((m) => `${g.instanceId}/${m.id}` === selected)
         )
         if (!available)
@@ -119,7 +173,7 @@ export function createCapabilityPicker(
             )
           )
         if (!models && !problem) children.push(node('p', 'Loading models…', 'bot-menu-note'))
-        else if (models && !models.groups.some((g) => g.models.length))
+        else if (models && !groups.length)
           children.push(
             node(
               'p',
@@ -127,8 +181,37 @@ export function createCapabilityPicker(
               'bot-menu-note'
             )
           )
-        for (const group of models?.groups ?? []) {
-          if (!group.models.length) continue
+        if (!shown) {
+          for (const group of groups) {
+            const current = group.instanceId === currentBackend
+            const choice = item(
+              `${current ? '✓ ' : ''}${group.label}${current && currentBot?.modelLabel ? ` · ${currentBot.modelLabel}` : ''}`,
+              () => {
+                browsing = group.instanceId
+                focusKey = `${group.instanceId}/${group.models[0].id}`
+                draw()
+              },
+              current
+            )
+            choice.setAttribute('aria-haspopup', 'menu')
+            const chevron = node('span', '›', 'backend-chevron')
+            chevron.setAttribute('aria-hidden', 'true')
+            choice.append(chevron)
+            choice.className += ' backend-choice'
+            choice.dataset.key = `backend:${group.instanceId}`
+            children.push(choice)
+          }
+        } else {
+          if (!single) {
+            const back = item('‹ All providers', () => {
+              browsing = undefined
+              focusKey = `backend:${shown.instanceId}`
+              draw()
+            })
+            back.dataset.key = 'backends'
+            children.push(back)
+          }
+          const group = shown
           children.push(node('div', group.label, 'bot-menu-title capability-group'))
           for (const model of group.models) {
             const id = `${group.instanceId}/${model.id}`
@@ -146,7 +229,13 @@ export function createCapabilityPicker(
                     instanceId: group.instanceId,
                     model: model.id
                   })
-                  if (current()) currentBot = { ...currentBot!, model: id, modelLabel: model.label }
+                  if (current())
+                    currentBot = {
+                      ...currentBot!,
+                      model: id,
+                      modelLabel: model.label,
+                      backendLabel: group.label
+                    }
                 }),
               id === selected
             )
@@ -154,6 +243,79 @@ export function createCapabilityPicker(
             choice.disabled ||= !!wait
             children.push(choice)
           }
+        }
+      } else if (kind === 'computer') {
+        // The same parts as OpenMausBot's Computer panel: the bot's screen, then "Works on".
+        const selected = currentBot?.computer ?? 'auto'
+        const screen = node('div', '', 'computer-screen')
+        const place = selected === 'off' ? 'off' : (status?.now ?? selected)
+        const glyph = node('span', '', 'computer-screen-icon')
+        glyph.innerHTML = COMPUTER_ICONS[place === 'auto' ? 'local' : place]
+        screen.append(
+          glyph,
+          node(
+            'span',
+            selected === 'off'
+              ? "This bot's computer is off"
+              : status?.now
+                ? `Right now: ${computerLabel(status.now)}`
+                : selected === 'auto'
+                  ? 'Not using a computer right now'
+                  : `Set to ${computerLabel(selected)}`
+          )
+        )
+        const trouble = selected === 'off' ? undefined : computerNote(status?.now ?? selected, status)
+        if (trouble) screen.append(node('small', trouble))
+        const label = node('div', `${bot.name}'s screen`, 'computer-section')
+        const works = node('div', '', 'computer-card')
+        works.append(
+          node('div', 'Works on', 'computer-card-title'),
+          node('p', 'Choose where this bot can use a computer.', 'bot-menu-note')
+        )
+        const grid = node('div', '', 'works-on')
+        for (const choice of COMPUTER_CHOICES) {
+          const chosen = choice.value === selected
+          const flagged = computerNote(choice.value, status)
+          const button = item(
+            '',
+            () =>
+              void mutate(choice.value, async () => {
+                await frame.plugin.request('bots.act', {
+                  botId: bot.id,
+                  action: 'computer',
+                  computer: choice.value
+                })
+                if (current())
+                  currentBot = {
+                    ...currentBot!,
+                    computer: choice.value === 'auto' ? undefined : choice.value
+                  }
+              }),
+            chosen
+          )
+          const icon = node('span', '', 'works-icon')
+          icon.innerHTML = chosen ? stroke('<path d="m3.5 8.5 3 3 6-7"/>') : COMPUTER_ICONS[choice.value]
+          const text = node('span', '', 'works-text')
+          text.append(node('strong', choice.label), node('small', flagged ?? choice.description))
+          button.replaceChildren(icon, text)
+          button.className = `bot-menu-item works-tile${flagged ? ' flagged' : ''}`
+          button.setAttribute('aria-label', `${choice.label}: ${flagged ?? choice.description}`)
+          button.dataset.key = choice.value
+          grid.append(button)
+        }
+        works.append(grid, node('p', computerHint(selected, status), 'computer-hint'))
+        children.push(label, screen, works)
+        if (hooks.openNative && hooks.nativeAvailable?.() !== false) {
+          const native = item('Set up computers in native OpenMausBot', () => {
+            close(false)
+            hooks.openNative!(bot.id)
+          })
+          native.className += ' computer-native'
+          const chevron = node('span', '›', 'backend-chevron')
+          chevron.setAttribute('aria-hidden', 'true')
+          native.append(chevron)
+          native.dataset.key = 'native'
+          children.push(native)
         }
       } else {
         const rows =
@@ -219,7 +381,9 @@ export function createCapabilityPicker(
       try {
         await operation()
         if (!current()) return
-        hooks.notify?.(kind === 'model' ? 'Model updated.' : 'Connector access updated.')
+        hooks.notify?.(
+          kind === 'model' ? 'Model updated.' : kind === 'computer' ? 'Backend updated.' : 'Connector access updated.'
+        )
         await hooks.changed()
       } catch (error) {
         if (!current()) return
@@ -245,6 +409,14 @@ export function createCapabilityPicker(
     root.tabIndex = -1
     root.focus()
     try {
+      if (kind === 'computer') {
+        if (root.contains(document.activeElement))
+          controls.find((c) => c.dataset.key === (currentBot?.computer ?? 'auto'))?.focus()
+        // Status is a bonus: without it the tiles keep their plain descriptions.
+        status = await frame.plugin.request('computer.status', { botId: bot.id }).catch(() => undefined)
+        if (current() && status) draw()
+        return
+      }
       if (kind === 'model') models = await frame.plugin.request('models.list', {})
       else connectors = await frame.plugin.request('mcp.list', {})
       if (!current()) return

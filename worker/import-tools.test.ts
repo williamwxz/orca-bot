@@ -180,3 +180,52 @@ test('new import sources reject malformed V2 and unknown Antigravity shapes', as
   })
   assert.deepEqual(await findTools(deps), [])
 })
+test('Claude plugins contribute MCP servers from the live synced generation and enabled installs only', async () => {
+  const org = '/orca/plugins/synced/org'
+  const { deps } = fake({
+    [`${org}/manifest.json`]: {
+      plugins: [
+        { name: 'design', generation: 3 },
+        { name: 'solo', generation: 1 },
+        { name: 'gone', generation: 2 },
+        { name: '../escape', generation: 1 }
+      ]
+    },
+    [`${org}/design~g3/.mcp.json`]: source({
+      linear: { type: 'http', url: 'https://mcp.linear.app/mcp' },
+      rooted: { command: '${CLAUDE_PLUGIN_ROOT}/bin/tool' },
+      blank: { type: 'http', url: '' }
+    }),
+    [`${org}/design/.mcp.json`]: source({ stale: { url: 'https://stale' } }),
+    [`${org}/solo/.claude-plugin/plugin.json`]: { mcpServers: './agents/claude/.mcp.json' },
+    [`${org}/solo/agents/claude/.mcp.json`]: source({
+      supabase: { type: 'http', url: 'https://mcp.supabase.com/mcp', headers: { 'X-Source-Name': 'claude' } }
+    }),
+    '/home/.claude/settings.json': { enabledPlugins: { 'on@market': true, 'off@market': false } },
+    '/home/.claude/plugins/installed_plugins.json': {
+      plugins: {
+        'on@market': [{ installPath: '/home/.claude/plugins/cache/on' }],
+        'off@market': [{ installPath: '/home/.claude/plugins/cache/off' }]
+      }
+    },
+    '/home/.claude/plugins/cache/on/.claude-plugin/plugin.json': {
+      mcpServers: { inline: { command: 'inline-tool' }, escape: '../../outside' }
+    },
+    '/home/.claude/plugins/cache/off/.mcp.json': source({ off: { command: 'off-tool' } })
+  })
+  deps.list = (dir) => {
+    if (dir === '/orca/plugins/synced') return ['org']
+    if (dir === org) return ['manifest.json', 'design', 'design~g3', 'solo', 'gone']
+    throw new Error('missing')
+  }
+  assert.deepEqual(await findTools(deps), [
+    { name: 'linear', source: 'Claude plugins' },
+    { name: 'supabase', source: 'Claude plugins' },
+    { name: 'inline', source: 'Claude plugins' }
+  ])
+  delete deps.list
+  assert.deepEqual(
+    (await findTools(deps)).map((t) => t.name),
+    ['inline']
+  )
+})

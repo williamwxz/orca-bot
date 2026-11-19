@@ -12,6 +12,8 @@ import { defaultImportDeps } from './import-tools.ts'
 import { defaultLinkDeps, findAgents, syncAgentLinks } from './agent-link.ts'
 import type { Preferences, SetupAnswer } from './protocol.ts'
 import { readThread, sendMessage, newSendId } from './omb-chat.ts'
+import { uploadAttachment } from './omb-attachments.ts'
+import { computerStatus } from './omb-computer.ts'
 import type { OrcaWorkerApi } from 'orca/worker'
 import { openChat, repairChat, validBotId } from './omb-open.ts'
 import type { OpenInput, OpenResult } from './omb-open.ts'
@@ -69,6 +71,8 @@ export type WorkerDeps = {
   actOnBot?: (input: { port: number } & BotAction) => Promise<void>
   readThread: typeof readThread
   sendMessage: typeof sendMessage
+  computerStatus?: typeof computerStatus
+  uploadAttachment?: (input: { port: number; name: string; mime: string; data: string }) => ReturnType<typeof uploadAttachment>
   listBots: (input: { port: number }) => Promise<Bot[]>
 }
 
@@ -120,6 +124,8 @@ export function defaultWorkerDeps(): WorkerDeps {
     actOnBot: (input) => actOnBot(input, http),
     readThread: (input) => readThread(input, cli),
     sendMessage: (input) => sendMessage(input, cli),
+    uploadAttachment: (input) => uploadAttachment(input),
+    computerStatus: (input) => computerStatus(input, http),
     listBots: (input) => listBots(input, http)
   }
 }
@@ -623,6 +629,18 @@ export function register(orca: OrcaWorkerApi, deps: WorkerDeps = defaultWorkerDe
     } finally {
       sends--
     }
+  })
+  orca.panels.handle('computer.status', (input: { botId: string }) => {
+    const port = knownBot(input)
+    if (!deps.computerStatus) return {}
+    const threadId = lastRoster.find((bot) => bot.id === input.botId)?.activeTaskId
+    return deps.computerStatus({ port, botId: input.botId, threadId })
+  })
+  // Not relayed: on a paired server the bytes would crawl through the terminal link.
+  orca.panels.handle('attachment.upload', (input: { name: string; mime: string; data: string }) => {
+    const port = runningPort()
+    if (!deps.uploadAttachment) throw new Error('Attachments are unavailable.')
+    return deps.uploadAttachment({ port, name: input?.name, mime: input?.mime, data: input?.data })
   })
   orca.panels.handle('chat.open', (input: { botId?: string }) => chat(input))
   orca.panels.handle('models.list', async () => {

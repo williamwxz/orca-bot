@@ -28,6 +28,17 @@ const label = (value: unknown, fallback: string): string =>
     ? value.trim().slice(0, 200)
     : fallback
 
+/** Names the backend (provider instance) each bot runs on, keyed by instance ID. */
+export function backendLabels(reply: unknown): Map<string, string> {
+  const labels = new Map<string, string>()
+  const instances = object(reply).instances
+  if (!Array.isArray(instances)) return labels
+  for (const i of instances.map(object))
+    if (validInstance(i.instanceId))
+      labels.set(i.instanceId, label(i.displayName, names[i.driverKind] ?? i.instanceId))
+  return labels
+}
+
 export async function listModels(
   port: number,
   deps: HttpDeps = defaultHttpDeps()

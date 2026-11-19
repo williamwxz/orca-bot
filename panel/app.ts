@@ -5,9 +5,9 @@ import { createChatView } from './chat-view.ts'
 import { createSettings } from './settings.ts'
 import { createBotMenu } from './bot-menu.ts'
 import { INSTALL_NOTICE } from '../shared/omb-version.ts'
-import { groupRoster } from '../shared/roster.ts'
+import { dropActions, groupRoster, groupTarget, modelText } from '../shared/roster.ts'
 import type { FrameApi } from './chat-view.ts'
-import type { Bot, BotAction } from '../shared/roster.ts'
+import type { Bot, BotAction, DropTarget } from '../shared/roster.ts'
 import type { Hosts } from '../worker/paired-host.ts'
 import { avatarSvg } from '../shared/appearance.ts'
 
@@ -38,6 +38,15 @@ const hostSelect = element<HTMLSelectElement>('host')
 let hosts: Hosts | undefined
 const hostChosen = () =>
   !hosts || hosts.selected === 'local' || hosts.hosts.some((host) => host.id === hosts!.selected)
+// The Dashboard is a web page served on the bot host; through a paired server it opens in
+// Orca's remote browser, which works poorly. Remote bots are managed in the panel instead.
+const REMOTE_DASHBOARD =
+  'The Bot Dashboard opens only when bots run on this computer. Manage these bots here in the panel.'
+const dashboardNote = () =>
+  hosts && hosts.selected !== 'local' ? REMOTE_DASHBOARD : undefined
+function markDashboardButton(button: HTMLElement): void {
+  button.hidden = !!dashboardNote()
+}
 const remoteName = () =>
   hosts && hosts.selected !== 'local'
     ? hosts.hosts.find((host) => host.id === hosts!.selected)?.name
@@ -98,8 +107,8 @@ function updateConnectorHost(id: string, name?: string): void {
     chatView.close()
     bots = []
     selected = undefined
-    rosterView.hidden = false
-    element('list-header').hidden = false
+    chatting = undefined
+    layout()
     renderBots()
   }
   connectorHostId = id
@@ -180,11 +189,16 @@ function askForHost(): void {
 }
 element('setup-allow').addEventListener('click', () => void answerSetup(true))
 element('setup-skip').addEventListener('click', () => void answerSetup(false))
-element('open-page').addEventListener('click', () => void open())
 let timer: ReturnType<typeof setTimeout> | undefined
 let refreshPending: Promise<void> | undefined
 let opening = false
 let selected: string | undefined
+// The bot whose chat is open; its row is highlighted in the wide layout.
+let chatting: string | undefined
+// Wide panels show the list and the chat side by side, like OpenMausBot; narrow ones show one at a time.
+const wideQuery =
+  typeof window.matchMedia === 'function' ? window.matchMedia('(min-width: 720px)') : undefined
+const wide = () => !!wideQuery?.matches
 let bots: Bot[] = []
 let rosterKey = ''
 const changing = new Set<string>()
@@ -249,7 +263,7 @@ const botMenu = createBotMenu(element('bot-menu'), async (input: BotAction) => {
       toast.show(`${target?.defaultBot ? 'Hidden' : 'Deleted'} ${target?.name ?? 'bot'}.`)
     else if (input.action === 'rename') toast.show(`Renamed to ${input.name}.`)
     else if (input.action === 'pin') toast.show(input.pinned ? 'Pinned.' : 'Unpinned.')
-    else toast.show(input.action === 'model' ? 'Model updated.' : 'Group updated.')
+    else toast.show(input.action === 'model' ? 'Model updated.' : input.action === 'computer' ? 'Backend updated.' : 'Group updated.')
   } catch (error) {
     if (generation === hostGeneration) toast.show(error instanceof Error ? error.message : 'Could not update this bot.')
   } finally {
@@ -277,7 +291,7 @@ const botMenu = createBotMenu(element('bot-menu'), async (input: BotAction) => {
   list: () => frame.plugin.request('mcp.list', {}),
   act: input => frame.plugin.request('mcp.act', input),
   manage: (botId, enabled) => manageCapabilities(botId, enabled)
-}, { frame, hooks: { notify: toast.show, changed: refreshCapabilities, manage: (botId, enabled) => manageCapabilities(botId, enabled), hostGeneration: () => hostGeneration } }, async input => {
+}, { frame, hooks: { notify: toast.show, changed: refreshCapabilities, manage: (botId, enabled) => manageCapabilities(botId, enabled), hostGeneration: () => hostGeneration, sheet: () => !wide(), openNative: (botId) => void open(botId), nativeAvailable: () => !dashboardNote() } }, async input => {
   if (creating || !serverRunning) throw new Error('Wait until the server is ready.')
   const generation = hostGeneration
   creating = true
@@ -297,7 +311,7 @@ const botMenu = createBotMenu(element('bot-menu'), async (input: BotAction) => {
   } finally {
     if (generation === hostGeneration) { creating = false; updateAddButton(); renderBots() }
   }
-}
+}, { open: (botId) => void open(botId), available: () => !dashboardNote() }
 )
 
 const chatView = createChatView(
@@ -306,25 +320,34 @@ const chatView = createChatView(
   makeAvatar,
   (id) => void open(id),
   () => {
-    rosterView.hidden = false
-    element('list-header').hidden = false
+    chatting = undefined
+    layout()
     renderHosts()
-    renderSetup()
     renderBots()
   },
   (id, preview) => {
     if (preview) previews.set(id, preview)
     else previews.delete(id)
   },
-  { notify: toast.show, changed: refreshCapabilities, manage: (botId, enabled) => manageCapabilities(botId, enabled, true), hostGeneration: () => hostGeneration }
+  { notify: toast.show, changed: refreshCapabilities, manage: (botId, enabled) => manageCapabilities(botId, enabled, true), hostGeneration: () => hostGeneration, sheet: () => !wide(), openNative: (botId) => void open(botId), nativeAvailable: () => !dashboardNote() },
+  dashboardNote
 )
+function layout(): void {
+  const showList = !chatting || wide()
+  rosterView.hidden = !showList
+  element('list-header').hidden = !showList
+  renderSetup()
+}
+wideQuery?.addEventListener?.('change', () => {
+  layout()
+  renderBots()
+})
 function showBot(bot: Bot): void {
   botMenu.close()
   readBots.add(bot.id)
-  rosterView.hidden = true
-  element('list-header').hidden = true
+  chatting = bot.id
+  layout()
   renderHosts()
-  renderSetup()
   chatView.open(bot)
   renderBots()
 }
@@ -364,9 +387,13 @@ function icon(kind: keyof typeof icons): SVGElement {
 }
 async function open(botId?: string, success?: string): Promise<void> {
   if (opening) return
+  const note = dashboardNote()
+  if (note) {
+    toast.show(success ?? note)
+    return
+  }
   const generation = hostGeneration
   opening = true
-  element<HTMLButtonElement>('open-page').disabled = true
   selected = botId
   renderBots()
   try {
@@ -376,7 +403,6 @@ async function open(botId?: string, success?: string): Promise<void> {
     if (generation === hostGeneration) toast.show(error instanceof Error ? error.message : 'Could not open chat.')
   } finally {
     opening = false
-    element<HTMLButtonElement>('open-page').disabled = false
     renderBots()
   }
 }
@@ -398,9 +424,99 @@ async function addMausBot(bot: Bot): Promise<void> {
   }
 }
 
-function makeBotRow(bot: Bot, sections: string[]): HTMLElement {
+// Drag a bot onto a group heading or any bot in it to move it there.
+let dragging: Bot | undefined
+let renderDeferred = false
+const dropKey = (target: DropTarget) =>
+  target.kind === 'section' ? `section:${target.name}` : target.kind
+function highlightDrop(key?: string): void {
+  for (const node of roster.querySelectorAll<HTMLElement>('[data-drop]'))
+    node.classList.toggle('drop-target', node.dataset.drop === key)
+}
+function endDrag(): void {
+  dragging = undefined
+  highlightDrop()
+  for (const node of roster.querySelectorAll<HTMLElement>('.dragging')) node.classList.remove('dragging')
+  if (renderDeferred) {
+    renderDeferred = false
+    renderBots()
+  }
+}
+roster.addEventListener('dragover', (event) => {
+  if (dragging && !event.defaultPrevented) highlightDrop()
+})
+roster.addEventListener('dragleave', (event) => {
+  if (dragging && !roster.contains(event.relatedTarget as Node | null)) highlightDrop()
+})
+function acceptDrop(node: HTMLElement, target: DropTarget): void {
+  node.dataset.drop = dropKey(target)
+  node.addEventListener('dragover', (event) => {
+    if (!dragging || !dropActions(dragging, target).length) return
+    event.preventDefault()
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
+    highlightDrop(dropKey(target))
+  })
+  node.addEventListener('drop', (event) => {
+    const bot = dragging
+    if (!bot) return
+    event.preventDefault()
+    endDrag()
+    void moveBot(bot, target)
+  })
+}
+async function moveBot(bot: Bot, target: DropTarget): Promise<void> {
+  const actions = dropActions(bot, target)
+  if (!actions.length || changing.has(bot.id)) return
+  const generation = hostGeneration
+  changing.add(bot.id)
+  renderBots()
+  try {
+    for (const input of actions) {
+      await frame.plugin.request('bots.act', input)
+      if (generation !== hostGeneration) return
+    }
+    ++rosterRevision
+    bots = bots.map((item) => {
+      if (item.id !== bot.id) return item
+      const moved = { ...item }
+      for (const input of actions) {
+        if (input.action === 'pin') moved.pinned = input.pinned
+        if (input.action === 'group') moved.section = input.section ?? undefined
+      }
+      return moved
+    })
+    renderBots()
+    toast.show(
+      target.kind === 'pinned'
+        ? `Pinned ${bot.name}.`
+        : target.kind === 'section'
+          ? `Moved ${bot.name} to ${target.name}.`
+          : `Moved ${bot.name} out of its group.`
+    )
+  } catch (error) {
+    if (generation === hostGeneration)
+      toast.show(error instanceof Error ? error.message : 'Could not move this bot.')
+  } finally {
+    changing.delete(bot.id)
+    renderBots()
+  }
+  await refreshAfterChange()
+}
+
+function makeBotRow(bot: Bot, sections: string[], target: DropTarget): HTMLElement {
   const row = document.createElement('div')
-  row.className = `bot-row${selected === bot.id ? ' selected' : ''}`
+  row.className = `bot-row${selected === bot.id || (chatting === bot.id && wide()) ? ' selected' : ''}`
+  row.draggable = !opening && !changing.has(bot.id)
+  row.addEventListener('dragstart', (event) => {
+    if (opening || changing.has(bot.id)) return event.preventDefault()
+    dragging = bot
+    botMenu.close()
+    event.dataTransfer?.setData('text/plain', bot.name)
+    if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'
+    row.classList.add('dragging')
+  })
+  row.addEventListener('dragend', () => endDrag())
+  acceptDrop(row, target)
   const chat = document.createElement('button')
   chat.type = 'button'
   chat.className = 'bot-chat'
@@ -440,7 +556,7 @@ function makeBotRow(bot: Bot, sections: string[]): HTMLElement {
   })
   const model = document.createElement('span')
   model.className = 'model'
-  model.textContent = previews.get(bot.id) ?? bot.modelLabel
+  model.textContent = previews.get(bot.id) ?? modelText(bot)
   copy.append(model)
   const state = document.createElement('span')
   state.className = 'state'
@@ -461,7 +577,12 @@ function makeBotRow(bot: Bot, sections: string[]): HTMLElement {
 }
 
 function renderBots(): void {
-  const key = JSON.stringify([bots, creating, addButton.disabled, selected, opening, [...changing], [...deleting], [...readBots], [...previews]])
+  // Rebuilding the list mid-drag would drop the row being dragged.
+  if (dragging) {
+    renderDeferred = true
+    return
+  }
+  const key = JSON.stringify([bots, creating, addButton.disabled, selected, chatting, wide(), opening, dashboardNote(), [...changing], [...deleting], [...readBots], [...previews]])
   if (key === rosterKey) return
   rosterKey = key
   const focused = (document.activeElement as HTMLElement)?.dataset.focus
@@ -476,6 +597,7 @@ function renderBots(): void {
     openButton.type = 'button'
     openButton.textContent = 'Jump to Bot Dashboard'
     openButton.disabled = opening
+    markDashboardButton(openButton)
     openButton.addEventListener('click', () => void open())
     const add = document.createElement('button')
     add.type = 'button'
@@ -486,7 +608,7 @@ function renderBots(): void {
     roster.append(add, openButton)
   }
   for (const bot of grouped.ungroupedTop) {
-    roster.append(makeBotRow(bot, grouped.sections))
+    roster.append(makeBotRow(bot, grouped.sections, { kind: 'rest' }))
   }
   for (const group of grouped.groups) {
     const heading = document.createElement('div')
@@ -504,9 +626,10 @@ function renderBots(): void {
           openGroup(event)
       })
     }
+    acceptDrop(heading, groupTarget(group))
     roster.append(heading)
     for (const bot of group.bots) {
-      roster.append(makeBotRow(bot, grouped.sections))
+      roster.append(makeBotRow(bot, grouped.sections, groupTarget(group)))
     }
   }
   for (const bot of grouped.addable) {
@@ -567,7 +690,6 @@ async function refreshNow(explicitRetry: boolean): Promise<void> {
       mcpStatus = connectorStatus
       if (settingsShown) void mcp.refresh()
     }
-    element<HTMLButtonElement>('open-page').disabled = opening || status.state !== 'running'
     // Avoid duplicating the install notice in both #message and #install-card.
     const installShown = !element('install-card').hidden
     const headerMessage = installShown

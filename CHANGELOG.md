@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.1.9 (18 November 2026)
+
+- **Wide two-pane layout**: at 720px or wider the panel keeps the bot list on the
+  left and the open chat on the right, as OpenMausBot does. The bot list no
+  longer runs past a narrow panel's edge.
+- **Backend panel**: the computer icon in a chat, or **Backend** in a bot's
+  context menu, opens a panel from the right showing where the bot is working
+  and a **Works on** grid (Auto, Cloud desktop, Private desktop, This computer,
+  Browser, Off) with the state OpenMausBot reports for each.
+- **Files and photos in chat**: attach with **+**, paste or drop when bots run on
+  this computer; messages show attachment names.
+- **Drag bots between groups**, including onto **Pinned**.
+- **Model picker by provider**: the chat's model chip and the **Model** menu open
+  on the current provider's models, with the other providers one step away; bot
+  rows show the provider next to the model.
+- **Claude plugin connectors**: MCP servers from enabled Claude Code plugins
+  appear under **Claude plugins** in **Settings → MCP Connectors**.
+- **Open native OpenMausBot** moved from the header and chat into each bot's
+  context menu, and is hidden for bots on a paired server.
+
 ## 0.1.8 (18 November 2026)
 
 - **Add bot button & creation flow**: adds an accessible **Add bot** (`+`)

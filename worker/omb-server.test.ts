@@ -684,7 +684,7 @@ test('outdated owned server requests an idle update while unowned or newer serve
 
 test('fresh status and direct install require consent before downloads or starting a process', async () => {
   const { deps, calls, files } = fake()
-  await assert.rejects(ensureServer(deps), /Install openmausbot@0.1.169/)
+  await assert.rejects(ensureServer(deps), new RegExp(`Install openmausbot@${version}`))
   await assert.rejects(ensureInstalled(version, deps), /Install openmausbot/)
   assert.deepEqual(calls, [])
   assert.deepEqual([...files.keys()], ['/fake/.orca-bot'])

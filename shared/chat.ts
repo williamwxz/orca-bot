@@ -1,4 +1,6 @@
 import type { Bot } from './roster.ts'
+import { composeMessage } from './attachments.ts'
+import type { Attachment } from './attachments.ts'
 
 export type ChatMessage = {
   id: string
@@ -55,7 +57,15 @@ export function collapseActivities(messages: ChatMessage[]): ChatMessage[] {
   return result
 }
 
-export type Attempt = { text: string; state: 'pending' | 'sent' | 'failed'; error?: string; sentAt: number }
+/** text is what was sent, attachment tags included; draft is what the person typed. */
+export type Attempt = {
+  text: string
+  state: 'pending' | 'sent' | 'failed'
+  error?: string
+  sentAt: number
+  draft?: string
+  attachments?: Attachment[]
+}
 export type Composer = {
   draft: string
   attempts: Attempt[]
@@ -69,10 +79,18 @@ export async function sendDraft(
   baseline: string[],
   send: (text: string) => Promise<unknown>,
   changed: () => void,
-  now: () => number = Date.now
+  now: () => number = Date.now,
+  attachments: Attachment[] = []
 ): Promise<void> {
-  if (state.sending || !state.draft.trim() || state.draft.length > 16000) return
-  const attempt: Attempt = { text: state.draft, state: 'pending', sentAt: now() }
+  if (state.sending || (!state.draft.trim() && !attachments.length)) return
+  const text = composeMessage(state.draft, attachments)
+  if (text.length > 16000) return
+  const attempt: Attempt = {
+    text,
+    state: 'pending',
+    sentAt: now(),
+    ...(attachments.length ? { draft: state.draft, attachments } : {})
+  }
   state.attempts.push(attempt)
   state.draft = ''
   state.sending = true
@@ -88,7 +106,8 @@ export async function sendDraft(
     state.wait = undefined
     attempt.error =
       error instanceof Error ? error.message : 'Could not send. Check the full chat before trying again.'
-    state.draft = attempt.text + (state.draft ? '\n' + state.draft : '')
+    const typed = attempt.draft ?? attempt.text
+    state.draft = typed + (state.draft && typed ? '\n' : '') + state.draft
   } finally {
     state.sending = false
     changed()

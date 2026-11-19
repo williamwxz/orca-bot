@@ -1,8 +1,14 @@
 import type { ChatMessage } from '../shared/chat.ts'
+import { splitAttachments } from '../shared/attachments.ts'
 
 export function threadPreview(messages: ChatMessage[]): string | undefined {
   const last = messages.findLast((message) => message.kind === 'text')
-  return last?.text.split(/\r?\n/, 1)[0].trim() || undefined
+  if (!last) return undefined
+  const { text, attachments } = splitAttachments(last.text)
+  if (!attachments.length) return last.text.split(/\r?\n/, 1)[0].trim() || undefined
+  const first = text.split(/\r?\n/, 1)[0].trim()
+  if (first) return first
+  return attachments.length === 1 ? `Sent ${attachments[0].name}` : `Sent ${attachments.length} files`
 }
 
 export function dayLabel(at: number, previous: number | undefined, now = Date.now()): string | undefined {

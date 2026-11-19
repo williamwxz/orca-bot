@@ -3,6 +3,7 @@ import type { CapabilityHooks } from './capability-picker.ts'
 import { dayLabel, threadPreview } from './presentation.ts'
 import type { Requests } from '../worker/protocol.ts'
 import type { Bot } from '../shared/roster.ts'
+import { computerLabel, modelText } from '../shared/roster.ts'
 import {
   collapseActivities,
   refreshInterval,
@@ -12,6 +13,24 @@ import {
   displayText
 } from '../shared/chat.ts'
 import type { Thread, Composer } from '../shared/chat.ts'
+import { MAX_ATTACHMENTS, composeMessage, splitAttachments, uploadProblem } from '../shared/attachments.ts'
+import type { Attachment } from '../shared/attachments.ts'
+
+/** A file picked for the next message: uploaded at once, sent with the message. */
+type Pending = {
+  id: number
+  name: string
+  kind: Attachment['kind']
+  state: 'uploading' | 'ready' | 'failed'
+  attachment?: Attachment
+  preview?: string
+}
+function base64(bytes: Uint8Array): string {
+  let binary = ''
+  for (let i = 0; i < bytes.length; i += 0x8000)
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+  return btoa(binary)
+}
 
 export type FrameApi = {
   plugin: {
@@ -41,7 +60,9 @@ export function createChatView(
   open: (id: string) => void,
   back: () => void,
   preview?: (id: string, text: string | undefined) => void,
-  capabilities?: CapabilityHooks
+  capabilities?: CapabilityHooks,
+  /** Why the Bot Dashboard can't open here, or undefined when it can. */
+  dashboardNote: () => string | undefined = () => undefined
 ) {
   let bot: Bot | undefined
   let generation = 0
@@ -56,30 +77,137 @@ export function createChatView(
   let thread: Thread = { messages: [], hasMore: false }
   const drafts = new Map<string, Composer>()
   let state: Composer = { draft: '', attempts: [], sending: false }
+  const pendingByBot = new Map<string, Pending[]>()
+  let nextPending = 0
+  const pending = () => (bot ? (pendingByBot.get(bot.id) ?? []) : [])
+  const ready = () => pending().filter((p) => p.state === 'ready').map((p) => p.attachment!)
+  const notify = (text: string) => (capabilities?.notify ? capabilities.notify(text) : (note.textContent = text))
+  function addFiles(files: File[]): void {
+    if (!bot || !files.length) return
+    if (dashboardNote()) {
+      notify('Files and photos can be sent only when bots run on this computer.')
+      return
+    }
+    const id = bot.id
+    const list = pendingByBot.get(id) ?? []
+    pendingByBot.set(id, list)
+    for (const file of files) {
+      if (list.length >= MAX_ATTACHMENTS) {
+        notify(`Send at most ${MAX_ATTACHMENTS} files in one message.`)
+        break
+      }
+      const mime = file.type || 'application/octet-stream'
+      const problem = uploadProblem(file.name || 'File', mime, file.size)
+      if (problem) {
+        notify(problem)
+        continue
+      }
+      const entry: Pending = {
+        id: ++nextPending,
+        name: file.name || 'Pasted image',
+        kind: mime.startsWith('image/') ? 'image' : 'file',
+        state: 'uploading',
+        ...(mime.startsWith('image/') && typeof URL.createObjectURL === 'function'
+          ? { preview: URL.createObjectURL(file) }
+          : {})
+      }
+      list.push(entry)
+      void (async () => {
+        try {
+          const data = base64(new Uint8Array(await file.arrayBuffer()))
+          entry.attachment = await frame.plugin.request('attachment.upload', { name: entry.name, mime, data })
+          entry.kind = entry.attachment.kind
+          entry.state = 'ready'
+        } catch (error) {
+          entry.state = 'failed'
+          notify(error instanceof Error ? error.message : `Could not upload ${entry.name}.`)
+        }
+        if (bot?.id === id) renderTray()
+      })()
+    }
+    renderTray()
+  }
+  function removePending(entry: Pending): void {
+    if (!bot) return
+    const list = pendingByBot.get(bot.id) ?? []
+    pendingByBot.set(bot.id, list.filter((p) => p !== entry))
+    if (entry.preview) URL.revokeObjectURL?.(entry.preview)
+    renderTray()
+    input.focus()
+  }
+  function renderTray(): void {
+    const items = pending()
+    tray.hidden = !items.length
+    tray.replaceChildren(
+      ...items.map((entry) => {
+        const chip = node('div')
+        chip.className = `composer-file ${entry.state}`
+        if (entry.preview) {
+          const img = node('img')
+          img.src = entry.preview
+          img.alt = ''
+          chip.append(img)
+        } else chip.append(node('span', entry.kind === 'image' ? '🖼' : '📎'))
+        const name = node('span', entry.name)
+        name.className = 'composer-file-name'
+        chip.append(name)
+        if (entry.state !== 'ready')
+          chip.append(node('small', entry.state === 'uploading' ? 'Uploading…' : 'Failed'))
+        const remove = button(`Remove ${entry.name}`, () => removePending(entry))
+        remove.textContent = '×'
+        remove.className = 'composer-file-remove'
+        chip.append(remove)
+        return chip
+      })
+    )
+    updateSend()
+  }
+  function updateSend(): void {
+    const files = ready()
+    send.disabled =
+      state.sending ||
+      pending().some((p) => p.state === 'uploading') ||
+      (!state.draft.trim() && !files.length) ||
+      composeMessage(state.draft, files).length > 16000
+  }
+  function messageBody(parent: HTMLElement, text: string): void {
+    const split = splitAttachments(text)
+    if (split.text) linkedText(parent, displayText(split.text))
+    if (!split.attachments.length) return
+    const files = node('div')
+    files.className = 'chat-files'
+    for (const file of split.attachments)
+      files.append(node('span', `${file.kind === 'image' ? '🖼' : '📎'} ${file.name}`))
+    parent.append(files)
+  }
   const header = node('div')
   header.className = 'thread-header'
   const identity = node('div')
   identity.className = 'thread-identity'
-  const full = button('Open bot', () => {
-    if (bot) open(bot.id)
+  const backButton = button('←', () => {
+    close()
+    back()
   })
-  full.textContent = '↗ Open bot'
-  full.title = 'Open bot'
-  header.append(
-    button('←', () => {
-      close()
-      back()
-    }),
-    identity,
-    full
-  )
-  header.firstElementChild!.setAttribute('aria-label', 'Back to bots')
+  backButton.className = 'thread-back'
+  backButton.setAttribute('aria-label', 'Back to bots')
+  // Where the bot works, as OpenMausBot's chat header shows it: a computer icon.
+  const computerButton = button('Backend', () => {
+    if (!bot || !picker) return
+    void picker.open('computer', bot, computerButton)
+    computerButton.setAttribute('aria-expanded', 'true')
+  })
+  computerButton.className = 'computer-button'
+  computerButton.innerHTML =
+    '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1.75" y="2.5" width="12.5" height="8.5" rx="1.5"/><path d="M5.5 13.75h5M8 11v2.75"/></svg>'
+  computerButton.setAttribute('aria-haspopup', 'menu')
+  computerButton.setAttribute('aria-expanded', 'false')
+  header.append(backButton, identity, ...(capabilities ? [computerButton] : []))
   const capabilityMenu = node('div')
   capabilityMenu.className = 'bot-menu capability-menu'
   capabilityMenu.hidden = true
   const modelPill = button('Model', () => {
     if (!bot || !picker) return
-    void picker.open('model', bot, modelPill)
+    void picker.open('model', bot, modelPill, 'models')
     modelPill.setAttribute('aria-expanded', 'true')
   })
   const connectorPill = button('Connectors', () => {
@@ -110,6 +238,7 @@ export function createChatView(
           changed: () => capabilities.changed()
         },
         () => {
+          computerButton.setAttribute('aria-expanded', 'false')
           modelPill.setAttribute('aria-expanded', 'false')
           connectorPill.setAttribute('aria-expanded', 'false')
           renderCapabilities()
@@ -118,15 +247,21 @@ export function createChatView(
     : undefined
   function renderCapabilities() {
     if (!bot) return
-    modelPill.textContent = `${bot.modelLabel || 'Model'} ▾`
-    modelPill.setAttribute('aria-label', `Model: ${bot.modelLabel || 'not selected'}`)
-    modelPill.disabled = bot.state === 'working' || !!picker?.switching()
-    modelPill.title =
+    const busy = bot.state === 'working' || !!picker?.switching()
+    const why =
       bot.state === 'working'
         ? 'Wait until the reply finishes to change models.'
         : picker?.switching()
           ? 'Saving capability changes…'
-          : 'Choose model'
+          : undefined
+    const where = computerLabel(bot.computer)
+    computerButton.title = `Backend: ${where}`
+    computerButton.setAttribute('aria-label', `Backend: ${where}`)
+    computerButton.disabled = !!picker?.switching()
+    modelPill.textContent = `${modelText(bot) || 'Model'} ▾`
+    modelPill.setAttribute('aria-label', `Model: ${modelText(bot) || 'not selected'}`)
+    modelPill.disabled = busy
+    modelPill.title = why ?? 'Choose a model'
     const count = bot.connectorCount ?? 0
     connectorPill.title = 'Choose connectors for this bot'
     connectorPill.textContent = `${count ? `Connectors · ${count}` : 'Connectors'} ▾`
@@ -152,7 +287,28 @@ export function createChatView(
   send.type = 'submit'
   send.setAttribute('aria-label', 'Send')
   send.title = 'Send'
-  composer.append(label, input, send)
+  const fileInput = node('input')
+  fileInput.type = 'file'
+  fileInput.multiple = true
+  fileInput.hidden = true
+  fileInput.setAttribute('aria-hidden', 'true')
+  const attach = node('button', '+')
+  attach.type = 'button'
+  attach.className = 'attach'
+  attach.setAttribute('aria-label', 'Attach files or photos')
+  attach.title = 'Attach files or photos'
+  attach.addEventListener('click', () => fileInput.click())
+  fileInput.addEventListener('change', () => {
+    addFiles(Array.from(fileInput.files ?? []))
+    fileInput.value = ''
+  })
+  const tray = node('div')
+  tray.className = 'composer-files'
+  tray.setAttribute('aria-label', 'Attachments')
+  const box = node('div')
+  box.className = 'composer-box'
+  box.append(tray, input)
+  composer.append(label, attach, fileInput, box, send)
   working.hidden = true
   const workingText = node('span')
   const workingLabel = document.createTextNode('')
@@ -193,7 +349,7 @@ export function createChatView(
     const nextIdentityKey = JSON.stringify([
       bot.id,
       bot.name,
-      capabilities ? '' : bot.modelLabel,
+      capabilities ? '' : modelText(bot),
       bot.avatar
     ])
     if (identityKey !== nextIdentityKey) {
@@ -201,7 +357,7 @@ export function createChatView(
       identity.replaceChildren(avatar(bot))
       const names = node('div')
       names.append(node('strong', bot.name))
-      if (!capabilities) names.append(node('small', bot.modelLabel))
+      if (!capabilities) names.append(node('small', modelText(bot)))
       identity.append(names)
     }
     renderCapabilities()
@@ -223,7 +379,7 @@ export function createChatView(
       previousAt = message.at
       const item = node('div')
       item.className = `chat-message ${message.kind} ${message.role}`
-      if (message.kind === 'text') linkedText(item, displayText(message.text))
+      if (message.kind === 'text') messageBody(item, message.text)
       else item.append(document.createTextNode(message.text))
       if (message.kind === 'unsupported')
         item.append(
@@ -236,14 +392,15 @@ export function createChatView(
     for (const attempt of state.attempts) {
       const item = node('div')
       item.className = `chat-message text user ${attempt.state}`
-      linkedText(item, displayText(attempt.text))
+      messageBody(item, attempt.text)
       if (attempt.error || attempt.state === 'pending')
         item.append(node('small', attempt.error ?? 'Sending…'))
       list.append(item)
     }
     if (!thread.messages.length && !state.attempts.length)
       list.append(node('p', 'No recent messages.'))
-    send.disabled = state.sending || !state.draft.trim() || state.draft.length > 16000
+    attach.hidden = !!dashboardNote()
+    renderTray()
     if (input.value !== state.draft) input.value = state.draft
     list.scrollTop = bottom ? list.scrollHeight : top
   }
@@ -326,6 +483,12 @@ export function createChatView(
     if (!bot) return
     const id = bot.id,
       current = state
+    const all = pending()
+    if (all.some((p) => p.state === 'uploading')) return
+    const sending = all.filter((p) => p.state === 'ready')
+    const files = sending.map((p) => p.attachment!)
+    if (current.sending || (!current.draft.trim() && !files.length)) return
+    pendingByBot.set(id, all.filter((p) => p.state !== 'ready'))
     void sendDraft(
       current,
       thread.messages.map((message) => message.id),
@@ -335,14 +498,42 @@ export function createChatView(
           render()
           schedule()
         }
-      }
+      },
+      Date.now,
+      files
     ).then(() => {
-      if (bot?.id === id) void read()
+      if (current.sendFailed) {
+        // Keep failed files with the restored draft so the person can retry as is.
+        pendingByBot.set(id, [...sending, ...(pendingByBot.get(id) ?? [])])
+      } else for (const entry of sending) if (entry.preview) URL.revokeObjectURL?.(entry.preview)
+      if (bot?.id === id) {
+        renderTray()
+        void read()
+      }
     })
   })
   input.addEventListener('input', () => {
     state.draft = input.value
-    send.disabled = state.sending || !state.draft.trim() || state.draft.length > 16000
+    updateSend()
+  })
+  input.addEventListener('paste', (event) => {
+    const files = Array.from(event.clipboardData?.files ?? [])
+    if (!files.length) return
+    event.preventDefault()
+    addFiles(files)
+  })
+  composer.addEventListener('dragover', (event) => {
+    if (!event.dataTransfer?.types?.includes('Files')) return
+    event.preventDefault()
+    composer.classList?.add('dropping')
+  })
+  composer.addEventListener('dragleave', () => composer.classList?.remove('dropping'))
+  composer.addEventListener('drop', (event) => {
+    composer.classList?.remove('dropping')
+    const files = Array.from(event.dataTransfer?.files ?? [])
+    if (!files.length) return
+    event.preventDefault()
+    addFiles(files)
   })
   input.addEventListener('keydown', (event) => {
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && event.keyCode !== 229) {

@@ -147,3 +147,19 @@ test('elapsed working time counts whole seconds and minutes', () => {
   ] as const)
     assert.equal(elapsedTime(1000, 1000 + ms), label)
 })
+
+test('a message can be only attachments, and a failed send restores the typed text without tags', async () => {
+  const file = { kind: 'image' as const, path: '/data/attachments/a.png', name: 'a.png' }
+  const sent: string[] = []
+  const state = { draft: '', attempts: [], sending: false } as any
+  await sendDraft(state, [], async (text) => { sent.push(text) }, () => {}, () => 10, [file])
+  assert.deepEqual(sent, ['<attached-image path="/data/attachments/a.png" name="a.png" />'])
+  assert.equal(state.attempts[0].text, sent[0])
+  state.draft = 'Look'
+  await sendDraft(state, [], async () => { throw new Error('offline') }, () => {}, () => 20, [file])
+  assert.equal(state.attempts[1].state, 'failed')
+  assert.equal(state.draft, 'Look')
+  state.draft = ''
+  await sendDraft(state, [], async () => { sent.push('nothing') }, () => {})
+  assert.equal(sent.length, 1)
+})

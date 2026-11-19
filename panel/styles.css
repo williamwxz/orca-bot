@@ -78,10 +78,14 @@ button:disabled { opacity: .55; cursor: default; }
 svg { width: 16px; height: 16px; flex: none; }
 #refresh-note:empty { display: none; }
 #refresh-note { margin: 8px 4px; font-size: 12px; }
-#roster { display: grid; gap: 2px; margin-top: 12px; }
+/* minmax(0, 1fr): an auto track would grow to the longest preview and push rows past the panel edge. */
+#roster { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; margin-top: 12px; }
 .roster-group-title { padding: 10px 10px 3px; font-size: 11px; font-weight: 600; letter-spacing: .02em; color: var(--bd-muted); }
 .empty { margin: 12px 6px; font-size: 12px; }
-.bot-row { position: relative; min-height: var(--bd-row-height); border: 0; border-radius: var(--bd-row-radius); }
+.bot-row { position: relative; min-width: 0; min-height: var(--bd-row-height); border: 0; border-radius: var(--bd-row-radius); }
+.bot-row.dragging { opacity: .45; }
+.bot-row.drop-target, .roster-group-title.drop-target { background: color-mix(in srgb, var(--bd-accent) 10%, transparent); }
+.roster-group-title.drop-target { color: var(--bd-accent-text); border-radius: 8px; }
 .bot-row:hover { background: color-mix(in srgb, var(--bd-selected) 50%, transparent); }
 .bot-row.selected { background: var(--bd-selected); }
 .bot-chat { width: 100%; min-height: var(--bd-row-height); justify-content: start; gap: var(--bd-row-gap); padding: 8px 28px 8px 10px; border: 0; border-radius: inherit; background: none; text-align: left; }
@@ -90,7 +94,7 @@ svg { width: 16px; height: 16px; flex: none; }
 .avatar svg, .avatar img { width: 100%; height: 100%; object-fit: cover; border-radius: 8px; }
 .bot-copy { display: flex; flex: 1; min-width: 0; flex-direction: column; }
 .bot-heading { display: flex; align-items: center; gap: 6px; min-width: 0; flex-wrap: wrap; }
-.bot-name { font-size: var(--bd-name-size); line-height: 20px; font-weight: var(--bd-name-weight); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bot-name { min-width: 0; font-size: var(--bd-name-size); line-height: 20px; font-weight: var(--bd-name-weight); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .main-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 500; line-height: 16px; padding: 2px 8px; border-radius: 9999px; color: var(--bd-accent); background: color-mix(in srgb, var(--bd-accent) 12%, transparent); }
 .main-badge svg { width: 11px; height: 11px; }
 .model { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--bd-preview-size); line-height: 18px; color: var(--bd-muted); }
@@ -187,7 +191,6 @@ label { display: block; margin: 12px 0 5px; font-size: 12px; }
 .settings-actions { display: flex; gap: 8px; margin-bottom: 6px; }
 .settings-group button { height: 28px; padding: 0 12px; border-radius: 999px; font-size: 12px; white-space: nowrap; }
 #host { width: 100%; min-width: 0; height: 28px; padding: 0 6px; font: inherit; border: 1px solid var(--bd-border); border-radius: 7px; background: var(--bd-card); color: var(--bd-ink); }
-#open-page { height: 26px; padding: 0 7px; border-radius: 999px; font-size: 11.5px; font-weight: 500; white-space: nowrap; }
 #setup { padding: 16px; margin-bottom: 14px; border-radius: 14px; background: var(--bd-composer); box-shadow: 0 0 0 1px var(--bd-composer-ring), var(--bd-float-shadow); }
 #setup h2 { margin: 0; font-size: 15px; line-height: 20px; font-weight: 600; }
 .setup-lead { margin: 2px 0 10px; font-size: 13px; line-height: 18px; color: var(--bd-muted); }
@@ -311,3 +314,73 @@ html.dark .mcp-icon { background: #292b30; }
 #toast[hidden] { display: none; }
 #toast button { display: grid; place-items: center; flex: none; width: 24px; height: 24px; padding: 0; }
 #toast svg { width: 16px; height: 16px; }
+.backend-choice .backend-chevron { margin-left: auto; padding-left: 8px; color: var(--bd-muted); }
+/* Attachments: a + button, a tray of uploads above the text, and file names in sent messages. */
+.composer-box { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.composer-files { display: flex; flex-wrap: wrap; gap: 6px; }
+.composer-file { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; min-width: 0; padding: 3px 3px 3px 5px; border-radius: 10px; background: var(--bd-card); font-size: 12px; line-height: 16px; }
+.composer-file img { width: 28px; height: 28px; flex: none; object-fit: cover; border-radius: 6px; }
+.composer-file-name { min-width: 0; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.composer-file small { flex: none; color: var(--bd-muted); }
+.composer-file.failed small { color: var(--bd-danger); }
+.composer-file.uploading img { opacity: .5; }
+.composer .attach, .composer .composer-file-remove { background: transparent; color: var(--bd-muted); }
+.composer .attach { font-size: 22px; font-weight: 300; }
+.composer .attach:hover { background: var(--bd-selected); filter: none; color: var(--bd-ink); }
+.composer .composer-file-remove { width: 20px; height: 20px; font-size: 15px; }
+.composer .composer-file-remove:hover { background: var(--bd-selected); filter: none; color: var(--bd-ink); }
+.composer.dropping { outline: 2px dashed var(--bd-accent); outline-offset: 2px; }
+.chat-files { display: flex; flex-wrap: wrap; gap: 2px 10px; margin-top: 2px; font-size: 12px; line-height: 18px; opacity: .85; }
+.chat-files span { min-width: 0; overflow-wrap: anywhere; }
+/* Two panes when the panel is wide, as in OpenMausBot: the bot list on the left, the open chat on the right. */
+#chat-empty { display: none; }
+#main-view:has(#running[hidden]) #bot-view { display: none; }
+@media (min-width: 720px) {
+  body, body:has(#bot-view:not([hidden])) { background: var(--bd-page); }
+  main:has(#main-view:not([hidden])) { padding: 0; }
+  #main-view { display: flex; height: 100vh; }
+  #sidebar { flex: none; width: clamp(260px, 30vw, 340px); height: 100vh; overflow-y: auto; padding: 14px 10px; background: var(--bd-sidebar); border-right: 1px solid var(--bd-composer-ring); }
+  #bot-view, #chat-empty { flex: 1; min-width: 0; height: 100vh; }
+  #bot-view { display: flex; flex-direction: column; padding: 6px 20px 16px; }
+  #bot-view .thread-back { display: none; }
+  #bot-view .messages { flex: 1; height: auto; min-height: 0; }
+  #bot-view .chat-capabilities { margin-left: 36px; }
+  #bot-view .chat-message.text { max-width: min(88%, 720px); }
+  #bot-view[hidden] + #chat-empty { display: flex; align-items: center; justify-content: center; color: var(--bd-muted); font-size: 13px; }
+  #main-view:has(#running[hidden]) #chat-empty { display: none; }
+}
+/* In a narrow panel, Backend slides in from the right as a full-height sheet, like OpenMausBot's bot panel. */
+.capability-menu.sheet { position: fixed; top: 0; right: 0; bottom: 0; left: auto; width: min(100%, 340px); max-width: none; max-height: none; padding: 10px 8px 16px; border-radius: 14px 0 0 14px; overflow-y: auto; box-shadow: 0 0 0 1px var(--bd-composer-ring), -10px 0 28px #00000026; animation: bd-sheet-in 240ms cubic-bezier(0.22, 1, 0.36, 1); }
+.capability-menu.sheet .sheet-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 2px 0 6px; }
+.capability-menu.sheet .sheet-head .bot-menu-title { font-size: 14px; padding: 4px 6px; }
+.capability-menu.sheet .sheet-close { width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--bd-muted); font-size: 18px; }
+.capability-menu.sheet .sheet-close:hover { background: var(--bd-selected); color: var(--bd-ink); }
+.capability-menu.sheet .bot-menu-item { padding: 9px 10px; font-size: 14px; }
+@keyframes bd-sheet-in { from { transform: translateX(100%); } to { transform: none; } }
+@media (prefers-reduced-motion: reduce) { .capability-menu.sheet { animation: none; } }
+/* Backend: where the bot works, opened from the computer icon in the chat header. */
+.thread-header .computer-button { flex: none; width: 30px; height: 30px; padding: 0; border-radius: 50%; color: var(--bd-muted); }
+.thread-header .computer-button:hover, .thread-header .computer-button[aria-expanded="true"] { background: var(--bd-selected); color: var(--bd-ink); }
+/* The Backend panel follows OpenMausBot's Computer panel: the bot's screen, then a "Works on" grid. */
+.computer-section { padding: 6px 6px 4px; font-size: 12px; color: var(--bd-muted); }
+.computer-screen { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; min-height: 104px; margin: 0 2px 10px; padding: 14px; border-radius: 12px; background: var(--bd-card); color: var(--bd-muted); font-size: 12.5px; text-align: center; }
+.computer-screen-icon svg { width: 22px; height: 22px; }
+.computer-card { margin: 0 2px 8px; padding: 12px; border-radius: 12px; background: var(--bd-card); }
+.computer-card-title { font-size: 14px; font-weight: 600; }
+.computer-card > .bot-menu-note { margin: 2px 0 10px; }
+.works-on { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.capability-menu.sheet .works-tile { align-items: flex-start; gap: 7px; min-width: 0; padding: 8px 9px; border-radius: 9px; background: var(--bd-composer); box-shadow: inset 0 0 0 1px var(--bd-composer-ring); font-size: 13px; }
+.capability-menu.sheet .works-tile:hover:not(:disabled) { background: var(--bd-selected); }
+.works-tile[aria-checked="true"] { box-shadow: inset 0 0 0 1.5px var(--bd-accent) !important; background: color-mix(in srgb, var(--bd-accent) 9%, var(--bd-composer)) !important; }
+.works-icon { display: flex; flex: none; padding-top: 2px; color: var(--bd-muted); }
+.works-tile[aria-checked="true"] .works-icon { color: var(--bd-accent); }
+.works-icon svg { width: 15px; height: 15px; }
+.works-text { display: flex; min-width: 0; flex-direction: column; gap: 1px; text-align: left; }
+.works-text strong { font-weight: 500; overflow-wrap: anywhere; }
+.works-text small { font-size: 11.5px; line-height: 15px; color: var(--bd-muted); overflow-wrap: anywhere; }
+.works-tile.flagged .works-text small { color: var(--bd-tertiary); font-style: italic; }
+.computer-hint { margin: 10px 0 0; font-size: 12px; line-height: 17px; }
+.capability-menu.sheet .computer-native { margin: 0 2px; width: calc(100% - 4px); padding: 11px 12px; border-radius: 12px; background: var(--bd-card); font-size: 13px; }
+.capability-menu.sheet:focus { outline: none; }
+.computer-screen small { font-size: 11.5px; font-style: italic; color: var(--bd-tertiary); margin-top: -4px; }
+.computer-native .backend-chevron { margin-left: auto; color: var(--bd-muted); }

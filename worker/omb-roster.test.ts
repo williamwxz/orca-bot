@@ -20,6 +20,8 @@ function fake(bots: unknown[], sections?: string[]) {
   const deps: HttpDeps = {
     request: async (port, path, patch, method) => {
       calls.push({ port, path, patch, ...(method ? { method } : {}) })
+      if (path === '/api/instances')
+        return { instances: [{ instanceId: 'codex', driverKind: 'codex' }, { instanceId: 'bad/id' }] }
       return { bots, ...(sections ? { sections } : {}) }
     },
     avatar: async () => 'data:image/png;base64,ZmFrZQ=='
@@ -63,6 +65,7 @@ test('raw fleet route carries thread, activity states, pin/section fields and bo
   const result = await listBots({ port: 18799 }, deps)
   assert.deepEqual(calls, [
     { port: 18799, path: '/api/bots?messages=0', patch: undefined },
+    { port: 18799, path: '/api/instances', patch: undefined },
     { port: 18799, path: '/api/mcp/servers', patch: undefined }
   ])
   assert.equal(result[0].state, 'working')
@@ -74,6 +77,7 @@ test('raw fleet route carries thread, activity states, pin/section fields and bo
   assert.match(result[0].avatar!, /^data:image\/png/)
   assert.equal(result[0].model, 'codex/gpt-6')
   assert.equal(result[0].modelLabel, 'GPT-6')
+  assert.equal(result[0].backendLabel, 'Codex')
   const grouped = groupRoster(result)
   assert.deepEqual(grouped.sections, ['Ops', 'EmptyGroup'])
   assert.deepEqual(
@@ -184,7 +188,7 @@ test('model labels prefer supplied labels, remove instance prefix and only capit
       { ...bot, modelSelection: { instanceId: 'codex', ...selection }, modelLabel: label }
     ])
     assert.equal((await listBots({ port: 18799 }, deps))[0].modelLabel, expected)
-    assert.equal(calls.length, 2)
+    assert.equal(calls.length, 3)
   }
 })
 
@@ -342,7 +346,7 @@ test('roster connector counts respect enabled, pinned, allowlist and offFor rule
     (await listBots({ port: 1 }, deps)).map((b) => b.connectorCount),
     [2, 2, 0]
   )
-  assert.deepEqual(paths, ['/api/bots?messages=0', '/api/mcp/servers'])
+  assert.deepEqual(paths, ['/api/bots?messages=0', '/api/instances', '/api/mcp/servers'])
   paths.length = 0
   assert.ok(
     (await listBots({ port: 1, includeAvatars: false }, deps)).every(
@@ -351,10 +355,11 @@ test('roster connector counts respect enabled, pinned, allowlist and offFor rule
   )
   assert.deepEqual(paths, ['/api/bots?messages=0'])
   deps.request = async (_port, path) => {
-    if (path === '/api/mcp/servers') throw new Error('offline')
+    if (path === '/api/mcp/servers' || path === '/api/instances') throw new Error('offline')
     return { bots }
   }
-  assert.ok((await listBots({ port: 1 }, deps)).every((b) => b.connectorCount === undefined))
+  const offline = await listBots({ port: 1 }, deps)
+  assert.ok(offline.every((b) => b.connectorCount === undefined && b.backendLabel === undefined))
 })
 
 test('creation overrides unsafe saved defaults before posting and validates caller input', async () => {
@@ -390,4 +395,22 @@ test('creation handles missing defaults, custom names and safe HTTP errors', asy
     await assert.rejects(createBot({ port: 1, name: ' Helper ', excludeMcp: [] }, deps),
       status === 409 ? /workspace bot limit/ : /creation defaults/)
   }
+})
+
+test('backend (where a bot works) is read from the roster and changed without the local-auto acknowledgement', async () => {
+  const { deps, calls } = fake([{ ...bot, computer: 'vm' }, { ...bot, id: secondId, computer: 'nonsense' }])
+  const listed = await listBots({ port: 18799, includeAvatars: false }, deps)
+  assert.equal(listed[0].computer, 'vm')
+  assert.equal(listed[1].computer, undefined)
+  await actOnBot({ port: 18799, botId: id, action: 'computer', computer: 'auto' }, deps)
+  assert.deepEqual(calls.at(-1), { port: 18799, path: `/api/bots/${id}`, patch: { computer: null } })
+  await actOnBot({ port: 18799, botId: id, action: 'computer', computer: 'local' }, deps)
+  assert.deepEqual(calls.at(-1), { port: 18799, path: `/api/bots/${id}`, patch: { computer: 'local' } })
+  await assert.rejects(actOnBot({ port: 18799, botId: id, action: 'computer', computer: 'moon' as any }, deps), /where this bot works/)
+  deps.request = async (_port, path, patch) => {
+    if (patch) throw new HttpStatusError(400)
+    return { bots: [bot] }
+  }
+  await assert.rejects(actOnBot({ port: 18799, botId: id, action: 'computer', computer: 'local' }, deps), /full access.*native OpenMausBot/)
+  await assert.rejects(actOnBot({ port: 18799, botId: id, action: 'computer', computer: 'cloud' }, deps), /Could not change where this bot works/)
 })

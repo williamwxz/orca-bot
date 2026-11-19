@@ -9,11 +9,11 @@
 <body>
   <main>
     <div id="main-view">
+    <div id="sidebar">
     <header>
       <div id="list-header">
         <h1 id="list-title">Bot Team for Orca</h1>
         <div class="header-actions">
-          <button id="open-page" type="button" disabled>Jump to Bot Dashboard</button>
           <button id="add-bot" type="button" aria-label="Add bot" title="Add bot" disabled>
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10" /></svg>
           </button>
@@ -57,9 +57,11 @@
       <div id="roster" aria-label="Bots"></div>
       <p id="refresh-note" role="status"></p>
       </div>
-      <section id="bot-view" aria-label="Bot conversation" hidden></section>
     </section>
     <button id="retry" type="button" hidden>Retry</button>
+    </div>
+    <section id="bot-view" aria-label="Bot conversation" hidden></section>
+    <div id="chat-empty"><p>Choose a bot to start chatting.</p></div>
     </div>
     <section id="settings-view" aria-labelledby="settings-title" hidden>
       <div class="settings-header">

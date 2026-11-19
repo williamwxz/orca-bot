@@ -225,3 +225,162 @@ test('capability pickers group models, retain missing current choice, assign rep
     }
   }
 })
+
+test('with several backends the model picker chooses a backend first, then its model', async () => {
+  const saved = ['document', 'window'].map((k) => Object.getOwnPropertyDescriptor(globalThis, k))
+  const doc = Object.assign(new Element(), { createElement: () => new Element() })
+  const win = Object.assign(new Element(), { innerWidth: 380, innerHeight: 600 })
+  Object.defineProperty(globalThis, 'document', { configurable: true, value: doc })
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: win })
+  const calls: { name: string; input: any }[] = []
+  const frame = {
+    plugin: {
+      request: async (name: string, input: any) => {
+        calls.push({ name, input })
+        if (name === 'models.list')
+          return {
+            groups: [
+              { instanceId: 'claude', label: 'Claude', models: [{ id: 'sonnet', label: 'Sonnet' }] },
+              { instanceId: 'grok', label: 'Grok', models: [{ id: 'grok-5', label: 'Grok 5' }] },
+              { instanceId: 'empty', label: 'Empty', models: [] }
+            ]
+          }
+        return { ok: true }
+      }
+    }
+  }
+  const root = new Element()
+  const trigger = new Element()
+  const bot = { id: 'a', name: 'Grok Bot', model: 'claude/sonnet', modelLabel: 'Sonnet', backendLabel: 'Claude', state: 'idle' } as any
+  const picker = createCapabilityPicker(root as any, frame as any, { changed: async () => {}, manage: () => {} })
+  const item = (key: string) => root.children.find((n) => n.dataset.key === key)!
+  try {
+    await picker.open('model', bot, trigger as any)
+    assert.equal(root.children[0].textContent, 'Model for Grok Bot')
+    assert.deepEqual(
+      root.children.filter((n) => n.dataset.key?.startsWith('backend:')).map((n) => n.dataset.key),
+      ['backend:claude', 'backend:grok']
+    )
+    assert.equal(item('backend:claude').attrs.get('aria-checked'), 'true')
+    assert.match(item('backend:claude').textContent, /Claude · Sonnet/)
+    assert.equal(item('backend:grok').attrs.get('aria-checked'), 'false')
+    item('backend:grok').emit()
+    assert.equal(root.children[0].textContent, 'Model for Grok Bot')
+    assert.ok(root.children.some((n) => n.textContent === 'Grok'))
+    item('grok/grok-5').emit()
+    await flush()
+    assert.deepEqual(calls.find((c) => c.name === 'bots.act')!.input, {
+      botId: 'a',
+      action: 'model',
+      instanceId: 'grok',
+      model: 'grok-5'
+    })
+    assert.equal(item('grok/grok-5').attrs.get('aria-checked'), 'true')
+    item('backends').emit()
+    assert.equal(item('backend:grok').attrs.get('aria-checked'), 'true')
+    assert.match(item('backend:grok').textContent, /Grok · Grok 5/)
+    // The Model button opens the current backend's models directly.
+    await picker.open('model', { ...bot, model: 'grok/grok-5' }, trigger as any, 'models')
+    assert.equal(root.children[0].textContent, 'Model for Grok Bot')
+    assert.ok(item('grok/grok-5'))
+    assert.ok(item('backends'))
+    picker.close()
+  } finally {
+    for (const [i, k] of ['document', 'window'].entries()) {
+      if (saved[i]) Object.defineProperty(globalThis, k, saved[i]!)
+      else delete (globalThis as any)[k]
+    }
+  }
+})
+
+test('Backend is a panel from the right with the bot\'s screen, a Works on grid with real status, and a hint', async () => {
+  const saved = ['document', 'window'].map((k) => Object.getOwnPropertyDescriptor(globalThis, k))
+  const doc = Object.assign(new Element(), { createElement: () => new Element() })
+  Object.defineProperty(globalThis, 'document', { configurable: true, value: doc })
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: Object.assign(new Element(), { innerWidth: 380, innerHeight: 600 }) })
+  const all = (n: Element): Element[] => [n, ...n.children.flatMap(all)]
+  try {
+    const root = new Element()
+    root.className = 'bot-menu'
+    const acts: any[] = []
+    const notes: string[] = []
+    const opened: string[] = []
+    let native = true
+    const frame = { plugin: { request: async (name: string, input: any) => {
+      if (name === 'computer.status') return { now: 'vm', cloud: 'setup', vm: 'repair', browser: 'ready' }
+      if (name === 'bots.act') acts.push(input)
+      return { ok: true }
+    } } }
+    // Not narrow: Backend is a panel from the right at every width.
+    const picker = createCapabilityPicker(root as any, frame as any, {
+      changed: async () => {}, manage: () => {}, notify: (t) => notes.push(t), sheet: () => false,
+      openNative: (id) => opened.push(id), nativeAvailable: () => native
+    })
+    const bot = { id: 'a', name: 'Scout', model: 'claude/s', modelLabel: 'Sonnet', state: 'idle', computer: 'vm' } as any
+    await picker.open('computer', bot, new Element() as any)
+    assert.match(root.className, / sheet$/)
+    assert.equal(root.style.left, '')
+    assert.equal(root.children[0].className, 'sheet-head')
+    assert.equal(root.children[0].children[0].textContent, 'Backend for Scout')
+    const text = () => all(root).map((n) => n.textContent)
+    assert.ok(text().includes("Scout's screen"))
+    assert.ok(text().includes('Right now: Private desktop'))
+    assert.ok(text().includes('Works on'))
+    const tiles = () => all(root).filter((n) => n.className.includes('works-tile'))
+    assert.deepEqual(tiles().map((n) => n.dataset.key), ['auto', 'cloud', 'vm', 'local', 'browser', 'off'])
+    const tile = (key: string) => tiles().find((n) => n.dataset.key === key)!
+    assert.equal(tile('vm').attrs.get('aria-checked'), 'true')
+    assert.equal(tile('cloud').attrs.get('aria-label'), 'Cloud desktop: Not set up yet')
+    assert.equal(tile('vm').attrs.get('aria-label'), 'Private desktop: Needs repair')
+    assert.equal(tile('browser').attrs.get('aria-label'), 'Browser: Only websites')
+    assert.match(tile('cloud').className, /flagged/)
+    assert.ok(text().some((t) => /Private desktop needs repair\. Do that in native OpenMausBot/.test(t)))
+    tile('browser').emit()
+    await flush()
+    assert.deepEqual(acts, [{ botId: 'a', action: 'computer', computer: 'browser' }])
+    assert.deepEqual(notes, ['Backend updated.'])
+    assert.equal(tile('browser').attrs.get('aria-checked'), 'true')
+    assert.ok(text().includes('The built-in browser only: websites, no desktop.'))
+    all(root).find((n) => n.dataset.key === 'native')!.emit()
+    assert.deepEqual(opened, ['a'])
+    assert.equal(root.hidden, true)
+    assert.doesNotMatch(root.className, /sheet/)
+    native = false
+    await picker.open('computer', { ...bot, computer: 'off' }, new Element() as any)
+    assert.equal(all(root).some((n) => n.dataset.key === 'native'), false)
+    assert.ok(text().includes("This bot's computer is off"))
+    root.children[0].children[1].emit()
+    assert.equal(root.hidden, true)
+  } finally {
+    for (const [i, k] of ['document', 'window'].entries()) {
+      if (saved[i]) Object.defineProperty(globalThis, k, saved[i]!)
+      else delete (globalThis as any)[k]
+    }
+  }
+})
+
+test('in a narrow panel the model picker is also a sheet; in a wide one it is a dropdown', async () => {
+  const saved = ['document', 'window'].map((k) => Object.getOwnPropertyDescriptor(globalThis, k))
+  const doc = Object.assign(new Element(), { createElement: () => new Element() })
+  Object.defineProperty(globalThis, 'document', { configurable: true, value: doc })
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: Object.assign(new Element(), { innerWidth: 380, innerHeight: 600 }) })
+  try {
+    const root = new Element()
+    const frame = { plugin: { request: async () => ({ groups: [{ instanceId: 'claude', label: 'Claude', models: [{ id: 's', label: 'Sonnet' }] }] }) } }
+    let narrow = true
+    const picker = createCapabilityPicker(root as any, frame as any, { changed: async () => {}, manage: () => {}, sheet: () => narrow })
+    const bot = { id: 'a', name: 'Scout', model: 'claude/s', modelLabel: 'Sonnet', state: 'idle' } as any
+    await picker.open('model', bot, new Element() as any)
+    assert.match(root.className, / sheet$/)
+    assert.equal(root.children[0].children[0].textContent, 'Model for Scout')
+    narrow = false
+    await picker.open('model', bot, new Element() as any)
+    assert.doesNotMatch(root.className, /sheet/)
+    picker.close()
+  } finally {
+    for (const [i, k] of ['document', 'window'].entries()) {
+      if (saved[i]) Object.defineProperty(globalThis, k, saved[i]!)
+      else delete (globalThis as any)[k]
+    }
+  }
+})

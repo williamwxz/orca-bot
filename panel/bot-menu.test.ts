@@ -118,7 +118,7 @@ test('bot menu connector checklist loads, toggles repeatedly, handles errors and
     menu.open(bot, [], { clientX: 370, clientY: 590 })
     assert.deepEqual(
       root.children.map((c) => c.textContent),
-      ['Pin', 'Model', 'Connectors', 'Rename', 'Group', '', 'Delete']
+      ['Pin', 'Model', 'Backend', 'Connectors', 'Rename', 'Group', '', 'Delete']
     )
     click('Model')
     menu.openGroup('Team')
@@ -196,6 +196,37 @@ test('bot menu connector checklist loads, toggles repeatedly, handles errors and
     assert.ok(root.children.some((c) => c.textContent === 'Manage connectors'))
     doc.emit('keydown', { key: 'Escape', preventDefault() {} })
     assert.equal(root.hidden, true)
+  } finally {
+    for (const [i, key] of ['document', 'window'].entries()) {
+      if (originals[i]) Object.defineProperty(globalThis, key, originals[i]!)
+      else delete (globalThis as any)[key]
+    }
+  }
+})
+
+test('the bot menu opens a bot in the Dashboard only when the Dashboard is available', () => {
+  const originals = ['document', 'window'].map((key) => Object.getOwnPropertyDescriptor(globalThis, key))
+  const doc = Object.assign(new Element(), { createElement: () => new Element() })
+  Object.defineProperty(globalThis, 'document', { configurable: true, value: doc })
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: Object.assign(new Element(), { innerWidth: 380, innerHeight: 600 }) })
+  try {
+    const root = new Element()
+    const opened: string[] = []
+    let available = true
+    const menu = createBotMenu(root as any, async () => {}, async () => undefined, undefined, undefined, undefined, {
+      open: (id) => opened.push(id),
+      available: () => available
+    })
+    const bot = { id: 'work', name: 'Work' } as any
+    menu.open(bot, [])
+    assert.deepEqual(root.children.map((c) => c.textContent), ['Open native OpenMausBot', 'Pin', 'Rename', 'Group', '', 'Delete'])
+    assert.equal((document as any).activeElement, root.children[0])
+    root.children[0].emit()
+    assert.deepEqual(opened, ['work'])
+    assert.equal(root.hidden, true)
+    available = false
+    menu.open(bot, [])
+    assert.equal(root.children[0].textContent, 'Pin')
   } finally {
     for (const [i, key] of ['document', 'window'].entries()) {
       if (originals[i]) Object.defineProperty(globalThis, key, originals[i]!)
