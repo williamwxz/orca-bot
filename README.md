@@ -1,5 +1,7 @@
 # Bot Team for Orca
 
+> **Retired.** Orca now has bots built in: [Orca Bots](https://orca.dev/bots) gives each bot a chat in Orca's sidebar, runs on your own Claude Code or Codex sign-in, works on paired servers, and can import bots from Hermes. Use that instead. This repository is archived and no longer maintained.
+
 Your [Hermes Agent](https://github.com/NousResearch/hermes-agent) bots in [Orca](https://github.com/stablyai/orca)'s sidebar.
 
 ## Summary
